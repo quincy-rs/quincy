@@ -56,7 +56,7 @@ pub fn add_dns_servers(dns_servers: &[IpAddr], _interface_name: &str) -> Result<
 
         if !get_output.status.success() {
             return Err(anyhow!(
-                "failed to add DNS servers: {}",
+                "Failed to set DNS configuration: {}",
                 String::from_utf8_lossy(&get_output.stdout)
             ));
         }
@@ -79,7 +79,7 @@ pub fn add_dns_servers(dns_servers: &[IpAddr], _interface_name: &str) -> Result<
 
         if !set_output.status.success() {
             return Err(anyhow!(
-                "failed to add DNS servers: {}",
+                "Failed to set DNS configuration: {}",
                 String::from_utf8_lossy(&set_output.stdout)
             ));
         }
@@ -115,7 +115,7 @@ pub fn delete_dns_servers() -> Result<()> {
 
         if !set_output.status.success() {
             return Err(anyhow!(
-                "failed to delete DNS servers: {}",
+                "Failed to clean up DNS configuration: {}",
                 String::from_utf8_lossy(&set_output.stdout)
             ));
         }

@@ -74,7 +74,10 @@ impl InterfaceIO for TunRsInterface {
         let interface = builder.build_async()?;
         let interface = Arc::new(interface);
 
-        info!("Created interface: {:?}", interface.name());
+        info!(
+            "Created interface: {}",
+            interface.name().unwrap_or("Unknown".to_string())
+        );
 
         let (reader_channel_tx, reader_channel_rx) =
             tokio::sync::mpsc::channel(PACKET_CHANNEL_SIZE);
