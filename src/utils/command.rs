@@ -10,6 +10,7 @@ pub fn run_command<I: IntoIterator<Item = S>, S: AsRef<OsStr>>(
         .args(arguments)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .context("failed to execute command")
 }

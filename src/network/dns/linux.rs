@@ -33,10 +33,8 @@ pub fn add_dns_servers(dns_servers: &[IpAddr], interface_name: &str) -> Result<(
         .context("failed to wait for process to exit")?;
 
     if !output.status.success() {
-        return Err(anyhow!(
-            "failed to add DNS servers: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+        let error_message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(anyhow!(error_message));
     }
 
     Ok(())
