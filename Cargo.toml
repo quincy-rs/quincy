@@ -1,6 +1,6 @@
 [package]
 name = "quincy"
-version = "0.15.1"
+version = "0.15.2"
 authors = ["Jakub Kubík <jakub.kubik.it@protonmail.com>"]
 license = "MIT"
 description = "QUIC-based VPN"
