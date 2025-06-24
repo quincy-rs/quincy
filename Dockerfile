@@ -1,4 +1,4 @@
-FROM rust:alpine3.20 AS builder
+FROM rust:alpine3.22 AS builder
 
 # Install pre-requisites
 RUN apk add build-base gcompat jemalloc-dev
@@ -11,10 +11,10 @@ COPY src ./src
 COPY Cargo.toml Cargo.lock ./
 
 # Build the application
-ARG FEATURES="jemalloc"
+ARG FEATURES="jemalloc,offload"
 RUN cargo build --release --no-default-features --features "${FEATURES}"
 
-FROM alpine:3.21
+FROM alpine:3.22 AS runner
 
 # Create needed directories
 RUN mkdir -p /etc/quincy
