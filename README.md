@@ -9,18 +9,22 @@
 
 Quincy is a VPN client and server implementation using the [QUIC](https://en.wikipedia.org/wiki/QUIC) protocol with support for pre-quantum, hybrid and post-quantum cryptography.
 
-## Design
-Quincy uses the QUIC protocol implemented by [`quinn`](https://github.com/quinn-rs/quinn) to create an encrypted tunnel between clients and the server.
-
-This tunnel serves two purposes:
-- authentication using a reliable bi-directional stream
-- data transfer using unreliable datagrams (lower latency and overhead)
-
-After a connection is established and the client is authenticated, a TUN interface is created using an IP address provided by the server.
-
-When all is set up, a connection task is spawned, which handles IO on the TUN interface and the QUIC connection, relaying packets between them.
-
-The [`tokio`](https://github.com/tokio-rs/tokio) runtime is used to provide an efficient and scalable implementation.
+## Table of contents
+- [Supported platforms](#supported-platforms)
+- [Installation](#installation)
+  - [Cargo](#cargo)
+  - [Docker](#docker)
+- [Building from sources](#building-from-sources)
+  - [Requirements](#requirements)
+  - [Build features](#build-features)
+- [Usage](#usage)
+  - [Client](#client)
+  - [Server](#server)
+  - [Users](#users)
+- [Architecture](#architecture)
+- [Certificate management](#certificate-management)
+  - [Certificate signed by a trusted CA](#certificate-signed-by-a-trusted-ca)
+  - [Self-signed certificate](#self-signed-certificate)
 
 ## Supported platforms
 - [X] Windows (x86_64), using [Wintun](https://www.wintun.net/)
@@ -51,7 +55,7 @@ docker run
   --cap-add=NET_ADMIN # needed for creating the TUN interface
   --device=/dev/net/tun # needed for creating the TUN interface
   -p "55555:55555" # server port-forwarding
-  -v <configuration directory>:/etc/quincy # directory with the configuration files 
+  -v <configuration directory>:/etc/quincy # directory with the configuration files
   m0dex/quincy:latest # or any of the other tags
   quincy-server --config-path /etc/quincy/server.toml
 ```
@@ -61,7 +65,7 @@ To add or remove a user to the `users` file, you can run the following command:
 docker run
   --rm # remove the container after it stops
   -it # interactive mode
-  -v <configuration directory>:/etc/quincy # directory with the configuration files 
+  -v <configuration directory>:/etc/quincy # directory with the configuration files
   m0dex/quincy:latest # or any of the other tags
   quincy-users --add /etc/quincy/users
   # quincy-users --delete /etc/quincy/users
@@ -79,12 +83,13 @@ cargo build --release
 The resulting binaries can be found in the `target/debug` and `target/release` directories.
 
 ### Requirements
-A C compiler (Clang or GCC) is required for building due to depending on the `aws-lc-rs` cryptography module. 
+A C compiler (Clang or GCC) is required for building due to depending on the `aws-lc-rs` cryptography module.
 
 For more information, see [aws-lc-rs build instructions](https://github.com/aws/aws-lc-rs/blob/main/aws-lc-rs/README.md#Build).
 
 ### Build features
 - `jemalloc`: Uses the jemalloc memory allocator on UNIX systems for improved performance [default: **disabled**]
+- `offload`: Enables GSO/GRO offload optimization for TUN interfaces on Linux [default: **enabled**]
 
 ## Usage
 Quincy is split into 3 binaries:
@@ -114,7 +119,7 @@ quincy-server --config-path examples/server.toml
 ```
 
 **Please keep in mind that the pre-generated certificate in [`examples/cert/server_cert.pem`](examples/cert/server_cert.pem)
-is self-signed and uses the hostname `quincy`. It should be replaced with a proper certificate, 
+is self-signed and uses the hostname `quincy`. It should be replaced with a proper certificate,
 which can be generated using the instructions in the [Certificate management](#certificate-management) section.**
 
 ### Users
@@ -142,6 +147,22 @@ The prompt will again look something like this:
 ```
 Enter the username: test
 ```
+
+## Architecture
+Quincy uses the QUIC protocol implemented by [`quinn`](https://github.com/quinn-rs/quinn) to create an encrypted tunnel between clients and the server.
+
+This tunnel serves two purposes:
+- authentication using a reliable bi-directional stream
+- data transfer using unreliable datagrams (lower latency and overhead)
+
+After a connection is established and the client is authenticated, a TUN interface is created using an IP address provided by the server.
+
+When all is set up, a connection task is spawned, which handles IO on the TUN interface and the QUIC connection, relaying packets between them.
+
+The [`tokio`](https://github.com/tokio-rs/tokio) runtime is used to provide an efficient and scalable implementation.
+
+### Architecture diagram
+[![Architecture diagram](docs/architecture_diagram.svg)](docs/architecture_diagram.svg)
 
 ## Certificate management
 There are a couple of options when it comes to setting up the certificates used by Quincy.
