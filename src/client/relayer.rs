@@ -42,8 +42,6 @@ impl<I: InterfaceIO> ClientRelayer<I> {
     }
 
     /// Send a shutdown signal to the relayer task.
-    // TODO: remove unused allow after using the shutdown logic
-    #[allow(unused)]
     pub async fn stop(&mut self) -> Result<()> {
         // Send shutdown signal to the relayer task
         self.shutdown_tx
