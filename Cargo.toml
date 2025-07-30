@@ -5,12 +5,17 @@ authors = ["Jakub Kubík <jakub.kubik.it@protonmail.com>"]
 license = "AGPL-3.0-or-later"
 description = "QUIC-based VPN"
 readme = "README.md"
-homepage = "https://github.com/M0dEx/quincy"
-repository = "https://github.com/M0dEx/quincy"
+homepage = "https://github.com/quincy-rs/quincy"
+repository = "https://github.com/quincy-rs/quincy"
 keywords = ["vpn", "quic", "tunnel", "networking", "tokio"]
 categories = ["command-line-utilities", "network-programming"]
 edition = "2021"
 rust-version = "1.80"
+
+[package.metadata.bundle]
+name = "Quincy VPN"
+identifier = "rs.quincy.quincy"
+icon = ["resources/common/icon.png", "resources/common/icon@2x.png"]
 
 [[bin]]
 name = "quincy-client"
@@ -24,6 +29,15 @@ path = "src/bin/server.rs"
 name = "quincy-users"
 path = "src/bin/users.rs"
 
+[[bin]]
+name = "quincy-client-gui"
+path = "src/bin/client_gui.rs"
+required-features = ["gui"]
+
+[[bin]]
+name = "quincy-client-daemon"
+path = "src/bin/client_daemon.rs"
+
 [profile.release]
 strip = true
 lto = "fat"
@@ -33,6 +47,7 @@ panic = "abort"
 [features]
 default = ["offload"]
 
+gui = ["iced"]
 offload = []
 jemalloc = ["jemallocator"]
 
@@ -74,6 +89,9 @@ nu-ansi-term = "^0.50.0"
 # Utils
 anyhow = "^1.0"
 clap = { version = "^4.1", features = ["derive"] }
+
+# GUI
+iced = { version = "^0.13.0", features = ["tokio", "advanced", "highlighter"], optional = true }
 
 # Alloc
 [target.'cfg(unix)'.dependencies]

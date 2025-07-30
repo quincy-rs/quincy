@@ -1,6 +1,7 @@
 mod relayer;
 
 use crate::auth::client::AuthClient;
+use std::fmt::Debug;
 
 use crate::config::ClientConfig;
 use crate::constants::QUINN_RUNTIME;
@@ -64,12 +65,32 @@ impl<I: InterfaceIO> QuincyClient<I> {
         Ok(())
     }
 
+    /// Returns whether the client is currently running.
+    pub fn is_running(&self) -> bool {
+        // TODO: this will return false if something else called `wait_for_shutdown`
+        self.relayer.is_some()
+    }
+
+    /// Attempts to stop the client (if running).
+    pub async fn stop(&mut self) -> Result<()> {
+        if let Some(relayer) = self.relayer.as_mut() {
+            relayer.stop().await?;
+        }
+
+        Ok(())
+    }
+
+    /// Waits for the client to stop relaying packets and finishes the shutdown process.
     pub async fn wait_for_shutdown(&mut self) -> Result<()> {
         if let Some(relayer) = self.relayer.take() {
             relayer.wait_for_shutdown().await?;
         }
 
         Ok(())
+    }
+
+    pub fn relayer(&self) -> Option<&ClientRelayer<I>> {
+        self.relayer.as_ref()
     }
 
     /// Connects to the Quincy server.
@@ -143,5 +164,12 @@ impl<I: InterfaceIO> QuincyClient<I> {
         let endpoint = Endpoint::new(endpoint_config, None, socket, QUINN_RUNTIME.clone())?;
 
         Ok(endpoint)
+    }
+}
+
+impl<I: InterfaceIO> Debug for QuincyClient<I> {
+    // TODO: Implement a more detailed display format if needed
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "QuincyClient ({})", self.config.connection_string)
     }
 }

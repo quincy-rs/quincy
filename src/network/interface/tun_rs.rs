@@ -223,6 +223,19 @@ impl InterfaceIO for TunRsInterface {
 
         Ok(())
     }
+
+    fn down(&self) -> Result<()> {
+        self.inner
+            .enabled(false)
+            .map_err(|e| anyhow!("failed to bring down TUN interface: {e}"))?;
+
+        info!(
+            "TUN interface {} is down",
+            self.name().unwrap_or("Unknown".to_string())
+        );
+
+        Ok(())
+    }
 }
 
 #[cfg(any(not(target_os = "linux"), not(feature = "offload")))]
