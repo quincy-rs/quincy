@@ -34,6 +34,9 @@ pub trait InterfaceIO: Send + Sync + 'static {
     /// Cleans up runtime configuration of DNS servers.
     fn cleanup_dns(&self, dns_servers: &[IpAddr]) -> Result<()>;
 
+    /// Brings the interface down, making it operational.
+    fn down(&self) -> Result<()>;
+
     /// Returns the MTU (Maximum Transmission Unit) of the interface.
     fn mtu(&self) -> u16;
 
@@ -146,6 +149,10 @@ impl<I: InterfaceIO> Drop for Interface<I> {
             if let Err(e) = self.inner.cleanup_dns(dns_servers) {
                 error!("Failed to cleanup DNS servers: {e}");
             }
+        }
+
+        if let Err(e) = self.inner.down() {
+            error!("Failed to bring down TUN interface: {e}");
         }
     }
 }
