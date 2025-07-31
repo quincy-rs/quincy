@@ -11,10 +11,8 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info};
 
 pub struct ClientRelayer<I: InterfaceIO> {
-    // TODO: remove unused allow after stats monitoring is implemented
     #[allow(unused)]
     interface: Arc<Interface<I>>,
-    #[allow(unused)]
     connection: Connection,
     relayer_task: JoinHandle<Result<()>>,
     shutdown_tx: broadcast::Sender<()>,
@@ -57,6 +55,10 @@ impl<I: InterfaceIO> ClientRelayer<I> {
         self.relayer_task
             .await
             .map_err(|_| anyhow!("Relayer task failed"))?
+    }
+
+    pub fn connection(&self) -> &Connection {
+        &self.connection
     }
 
     /// Relays packets between the TUN interface and the Quincy clients.

@@ -89,6 +89,10 @@ impl<I: InterfaceIO> QuincyClient<I> {
         Ok(())
     }
 
+    pub fn relayer(&self) -> Option<&ClientRelayer<I>> {
+        self.relayer.as_ref()
+    }
+
     /// Connects to the Quincy server.
     ///
     /// ### Returns

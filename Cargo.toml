@@ -34,6 +34,10 @@ name = "quincy-client-gui"
 path = "src/bin/client_gui.rs"
 required-features = ["gui"]
 
+[[bin]]
+name = "quincy-client-daemon"
+path = "src/bin/client_daemon.rs"
+
 [profile.release]
 strip = true
 lto = "fat"
