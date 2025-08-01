@@ -3130,18 +3130,15 @@ dependencies = [
  "argon2",
  "async-trait",
  "bytes",
- "clap",
  "dashmap",
  "etherparse",
  "figment",
  "futures",
- "iced",
  "ipnet",
  "jemallocator",
  "nu-ansi-term 0.50.1",
  "quinn",
  "rand_core 0.6.4",
- "rpassword",
  "rstest",
  "rustls",
  "rustls-pemfile",
@@ -3154,6 +3151,45 @@ dependencies = [
  "tracing-test",
  "tun-rs",
  "wintun-bindings",
+]
+
+[[package]]
+name = "quincy-client"
+version = "0.15.2"
+dependencies = [
+ "anyhow",
+ "clap",
+ "quincy",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "quincy-gui"
+version = "0.15.2"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dashmap",
+ "iced",
+ "quincy",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "quincy-server"
+version = "0.15.2"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "clap",
+ "dashmap",
+ "quincy",
+ "rand_core 0.6.4",
+ "rpassword",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

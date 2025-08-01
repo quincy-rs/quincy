@@ -1,0 +1,36 @@
+[package]
+name = "quincy-client"
+description = "QUIC-based VPN - Client binary"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "quincy-client"
+path = "src/main.rs"
+
+[features]
+default = ["offload"]
+offload = ["quincy/offload"]
+jemalloc = ["quincy/jemalloc"]
+
+[dependencies]
+quincy = { path = "../quincy" }
+
+# Configuration
+clap = { workspace = true }
+
+# Utils
+anyhow = { workspace = true }
+
+# Tokio
+tokio = { workspace = true }
+
+# Tracing/Logging
+tracing = { workspace = true }
