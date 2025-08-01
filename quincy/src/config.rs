@@ -1,4 +1,6 @@
-use crate::certificates::{load_certificates_from_file, load_private_key_from_file};
+use crate::certificates::{
+    load_certificates_from_file, load_certificates_from_pem, load_private_key_from_file,
+};
 use crate::constants::{
     QUIC_MTU_OVERHEAD, TLS_ALPN_PROTOCOLS, TLS_INITIAL_CIPHER_SUITE, TLS_PROTOCOL_VERSIONS,
 };
@@ -101,8 +103,12 @@ pub struct ClientAuthenticationConfig {
     pub username: String,
     /// The password to use for authentication
     pub password: String,
-    /// A list of trusted certificates
-    pub trusted_certificates: Vec<PathBuf>,
+    /// A list of trusted certificate file paths
+    #[serde(default = "default_trusted_certificate_paths")]
+    pub trusted_certificate_paths: Vec<PathBuf>,
+    /// A list of trusted certificates as PEM strings
+    #[serde(default = "default_trusted_certificates")]
+    pub trusted_certificates: Vec<String>,
 }
 
 /// QUIC connection configuration
@@ -292,6 +298,14 @@ fn default_false_fn() -> bool {
     false
 }
 
+fn default_trusted_certificate_paths() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+fn default_trusted_certificates() -> Vec<String> {
+    Vec::new()
+}
+
 impl ClientConfig {
     /// Creates Quinn client configuration from this Quincy client configuration.
     ///
@@ -300,11 +314,22 @@ impl ClientConfig {
     pub fn quinn_client_config(&self) -> Result<quinn::ClientConfig> {
         let mut cert_store = RootCertStore::empty();
 
+        // Load certificates from file paths
         self.authentication
-            .trusted_certificates
+            .trusted_certificate_paths
             .iter()
             .map(|cert_path| {
                 load_certificates_from_file(cert_path)
+                    .map(|certs| cert_store.add_parsable_certificates(certs))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Load certificates from PEM strings
+        self.authentication
+            .trusted_certificates
+            .iter()
+            .map(|pem_data| {
+                load_certificates_from_pem(pem_data)
                     .map(|certs| cert_store.add_parsable_certificates(certs))
             })
             .collect::<Result<Vec<_>>>()?;

@@ -2,7 +2,7 @@ use anyhow::Result;
 use anyhow::{anyhow, Context};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Cursor};
 use std::path::Path;
 
 /// Loads certificates from a file.
@@ -21,6 +21,19 @@ pub fn load_certificates_from_file(path: &Path) -> Result<Vec<CertificateDer<'st
 
     let certs: Result<Vec<CertificateDer>, _> = rustls_pemfile::certs(&mut reader).collect();
 
+    Ok(certs?)
+}
+
+/// Loads certificates from a PEM string.
+///
+/// ### Arguments
+/// - `pem_data` - PEM-encoded certificate data as a string.
+///
+/// ### Returns
+/// - `Vec<CertificateDer>` - A list of loaded certificates.
+pub fn load_certificates_from_pem(pem_data: &str) -> Result<Vec<CertificateDer<'static>>> {
+    let mut reader = Cursor::new(pem_data.as_bytes());
+    let certs: Result<Vec<CertificateDer>, _> = rustls_pemfile::certs(&mut reader).collect();
     Ok(certs?)
 }
 
