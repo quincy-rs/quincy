@@ -7,12 +7,15 @@ RUN apk add build-base gcompat jemalloc-dev
 WORKDIR /tmp/quincy-build
 
 # Copy the source code into the container
-COPY src ./src
+COPY quincy ./quincy
+COPY quincy-client ./quincy-client
+COPY quincy-server ./quincy-server
+COPY quincy-gui ./quincy-gui
 COPY Cargo.toml Cargo.lock ./
 
 # Build the application
 ARG FEATURES="jemalloc"
-RUN cargo build --release --no-default-features --features "${FEATURES}"
+RUN cargo build --release --workspace --no-default-features --features "${FEATURES}" --exclude quincy-gui
 
 FROM alpine:3.21
 
