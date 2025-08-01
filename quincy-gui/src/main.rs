@@ -7,9 +7,11 @@ use iced::widget::container::Style;
 use iced::widget::{button, column, container, row, scrollable, text, text_editor, text_input};
 use iced::window::Settings;
 use iced::{border, highlighter, Element, Length, Size, Task, Theme};
-use quincy::ipc::{get_ipc_socket_path, ClientStatus, ConnectionStatus, IpcClient, IpcMessage};
 use quincy::utils::privilege::run_elevated;
 use quincy::utils::tracing::log_subscriber;
+use quincy_gui::ipc::{
+    get_ipc_socket_path, ClientStatus, ConnectionMetrics, ConnectionStatus, IpcClient, IpcMessage,
+};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fs;
@@ -1362,7 +1364,7 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Column element with transfer statistics
-    fn build_metrics_display(&self, metrics: &quincy::ipc::ConnectionMetrics) -> Element<Message> {
+    fn build_metrics_display(&self, metrics: &ConnectionMetrics) -> Element<Message> {
         column![
             text("Transfer Statistics").size(16),
             row![

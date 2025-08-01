@@ -1,11 +1,11 @@
-use crate::{auth::server::AuthServer, utils::tasks::abort_all};
 use anyhow::{anyhow, Error, Result};
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use ipnet::IpNet;
+use quincy::{auth::server::AuthServer, utils::tasks::abort_all};
 
-use crate::network::packet::Packet;
+use quincy::network::packet::Packet;
 use quinn::Connection;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::info;

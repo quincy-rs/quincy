@@ -3,11 +3,9 @@ use anyhow::Result;
 use common::{
     client_config, make_queue_pair, server_config, TestInterface, TestReceiver, TestSender,
 };
-use quincy::{
-    client::QuincyClient,
-    config::{ClientConfig, ServerConfig},
-    server::QuincyServer,
-};
+use quincy::config::{ClientConfig, ServerConfig};
+use quincy_client::client::QuincyClient;
+use quincy_server::server::QuincyServer;
 use rstest::rstest;
 use std::net::Ipv4Addr;
 use std::sync::LazyLock;

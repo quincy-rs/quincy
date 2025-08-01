@@ -1,18 +1,19 @@
 mod relayer;
 
-use crate::auth::client::AuthClient;
+use crate::users_file_auth::UsersFileClientAuthenticator;
+use quincy::auth::client::AuthClient;
 use std::fmt::Debug;
 
-use crate::config::ClientConfig;
-use crate::constants::QUINN_RUNTIME;
-use crate::socket::bind_socket;
 use anyhow::{anyhow, Result};
+use quincy::config::ClientConfig;
+use quincy::constants::QUINN_RUNTIME;
+use quincy::socket::bind_socket;
 use quinn::{Connection, Endpoint};
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
 use crate::client::relayer::ClientRelayer;
-use crate::network::interface::{Interface, InterfaceIO};
+use quincy::network::interface::{Interface, InterfaceIO};
 use tracing::{debug, info};
 
 /// Represents a Quincy client that connects to a server and relays packets between the server and a TUN interface.
@@ -40,10 +41,10 @@ impl<I: InterfaceIO> QuincyClient<I> {
         }
 
         let connection = self.connect_to_server().await?;
-        let auth_client = AuthClient::new(
+        let authenticator = Box::new(UsersFileClientAuthenticator::new(
             &self.config.authentication,
-            self.config.connection.connection_timeout,
-        )?;
+        ));
+        let auth_client = AuthClient::new(authenticator, self.config.connection.connection_timeout);
 
         let (client_address, server_address) = auth_client.authenticate(&connection).await?;
 

@@ -41,6 +41,19 @@ dashmap = { workspace = true }
 
 # Tokio
 tokio = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
 
 # Tracing/Logging
 tracing = { workspace = true }
+
+# Networking
+ipnet = { workspace = true }
+bytes = { workspace = true }
+
+# Quinn
+quinn = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }

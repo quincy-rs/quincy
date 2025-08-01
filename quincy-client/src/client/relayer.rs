@@ -1,8 +1,8 @@
-use crate::network::interface::{Interface, InterfaceIO};
-use crate::utils::tasks::abort_all;
 use anyhow::{anyhow, Result};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use quincy::network::interface::{Interface, InterfaceIO};
+use quincy::utils::tasks::abort_all;
 use quinn::{Connection, VarInt};
 use std::sync::Arc;
 use tokio::signal;

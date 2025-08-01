@@ -103,6 +103,11 @@ macro_rules! interface_impl {
                 Ok(())
             }
 
+            /// Brings the interface down, making it operational.
+            fn down(&self) -> Result<()> {
+                Ok(())
+            }
+
             /// Returns the MTU (Maximum Transmission Unit) of the interface.
             fn mtu(&self) -> u16 {
                 1400

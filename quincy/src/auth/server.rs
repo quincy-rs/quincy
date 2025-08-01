@@ -1,17 +1,11 @@
-use std::{sync::Arc, time::Duration};
-
-use crate::{
-    config::{AuthType, ServerAuthenticationConfig},
-    server::address_pool::AddressPool,
-};
 use anyhow::{anyhow, Result};
 use ipnet::IpNet;
 use quinn::Connection;
+use std::time::Duration;
 use tokio::time::timeout;
 
 use super::{
     stream::{AuthMessage, AuthStreamBuilder, AuthStreamMode},
-    users_file::UsersFileServerAuthenticator,
     ServerAuthenticator,
 };
 
@@ -19,27 +13,21 @@ use super::{
 pub struct AuthServer {
     authenticator: Box<dyn ServerAuthenticator>,
     server_address: IpNet,
-    address_pool: Arc<AddressPool>,
     auth_timeout: Duration,
 }
 
 impl AuthServer {
+    /// Creates a new `AuthServer` with a provided authenticator.
     pub fn new(
-        config: ServerAuthenticationConfig,
+        authenticator: Box<dyn ServerAuthenticator>,
         server_address: IpNet,
-        address_pool: Arc<AddressPool>,
         auth_timeout: Duration,
-    ) -> Result<Self> {
-        let authenticator = match config.auth_type {
-            AuthType::UsersFile => UsersFileServerAuthenticator::new(&config)?,
-        };
-
-        Ok(Self {
-            authenticator: Box::new(authenticator),
+    ) -> Self {
+        Self {
+            authenticator,
             server_address,
-            address_pool,
             auth_timeout,
-        })
+        }
     }
 
     /// Handles authentication for a client.
@@ -56,10 +44,8 @@ impl AuthServer {
 
         let auth_result = match message {
             AuthMessage::Authenticate { payload } => {
-                let (username, client_address) = self
-                    .authenticator
-                    .authenticate_user(&self.address_pool, payload)
-                    .await?;
+                let (username, client_address) =
+                    self.authenticator.authenticate_user(payload).await?;
 
                 auth_stream
                     .send_message(AuthMessage::Authenticated {

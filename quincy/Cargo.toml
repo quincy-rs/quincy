@@ -67,6 +67,8 @@ jemallocator = { workspace = true, optional = true }
 wintun-bindings = { workspace = true }
 
 [dev-dependencies]
+quincy-client = { path = "../quincy-client" }
+quincy-server = { path = "../quincy-server" }
 rstest = { workspace = true }
 etherparse = { workspace = true }
 tracing-test = { workspace = true }

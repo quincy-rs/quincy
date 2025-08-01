@@ -4,24 +4,25 @@ mod connection;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
-use crate::auth::server::AuthServer;
-use crate::config::ServerConfig;
 use crate::server::connection::QuincyConnection;
-use crate::socket::bind_socket;
+use crate::users_file::UsersFileServerAuthenticator;
 use anyhow::Result;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use quincy::auth::server::AuthServer;
+use quincy::config::ServerConfig;
+use quincy::socket::bind_socket;
 use quinn::{Endpoint, VarInt};
 use tokio::signal;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use self::address_pool::AddressPool;
-use crate::constants::{PACKET_BUFFER_SIZE, PACKET_CHANNEL_SIZE, QUINN_RUNTIME};
-use crate::network::interface::{Interface, InterfaceIO};
-use crate::network::packet::Packet;
-use crate::utils::tasks::abort_all;
+use quincy::constants::{PACKET_BUFFER_SIZE, PACKET_CHANNEL_SIZE, QUINN_RUNTIME};
+use quincy::network::interface::{Interface, InterfaceIO};
+use quincy::network::packet::Packet;
+use quincy::utils::tasks::abort_all;
 use tracing::{debug, info, warn};
 
 type ConnectionQueues = Arc<DashMap<IpAddr, Sender<Bytes>>>;
@@ -59,12 +60,15 @@ impl QuincyServer {
         )?;
         let interface = Arc::new(interface);
 
-        let auth_server = AuthServer::new(
-            self.config.authentication.clone(),
-            self.config.tunnel_network,
+        let authenticator = Box::new(UsersFileServerAuthenticator::new(
+            &self.config.authentication,
             self.address_pool.clone(),
+        )?);
+        let auth_server = AuthServer::new(
+            authenticator,
+            self.config.tunnel_network,
             self.config.connection.connection_timeout,
-        )?;
+        );
 
         let (sender, receiver) = channel(PACKET_CHANNEL_SIZE);
 

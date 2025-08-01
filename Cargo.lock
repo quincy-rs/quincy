@@ -3137,6 +3137,8 @@ dependencies = [
  "ipnet",
  "jemallocator",
  "nu-ansi-term 0.50.1",
+ "quincy-client",
+ "quincy-server",
  "quinn",
  "rand_core 0.6.4",
  "rstest",
@@ -3158,8 +3160,13 @@ name = "quincy-client"
 version = "0.15.2"
 dependencies = [
  "anyhow",
+ "async-trait",
  "clap",
+ "futures",
  "quincy",
+ "quinn",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]
@@ -3173,6 +3180,9 @@ dependencies = [
  "dashmap",
  "iced",
  "quincy",
+ "quincy-client",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]
@@ -3183,11 +3193,18 @@ version = "0.15.2"
 dependencies = [
  "anyhow",
  "argon2",
+ "async-trait",
+ "bytes",
  "clap",
  "dashmap",
+ "futures",
+ "ipnet",
  "quincy",
+ "quinn",
  "rand_core 0.6.4",
  "rpassword",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]

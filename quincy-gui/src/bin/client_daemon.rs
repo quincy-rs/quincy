@@ -1,12 +1,13 @@
 use anyhow::Result;
 use clap::Parser;
-use quincy::client::QuincyClient;
 use quincy::config::{ClientConfig, FromPath};
-use quincy::ipc::{
-    get_ipc_socket_path, ClientStatus, ConnectionMetrics, ConnectionStatus, IpcMessage, IpcServer,
-};
 use quincy::network::interface::tun_rs::TunRsInterface;
 use quincy::utils::tracing::log_subscriber;
+use quincy_client::client::QuincyClient;
+use quincy_gui::ipc::{
+    get_ipc_socket_path, ClientStatus, ConnectionMetrics, ConnectionStatus, IpcConnection,
+    IpcMessage, IpcServer,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -239,7 +240,7 @@ impl ClientDaemon {
     ///
     /// # Arguments
     /// * `result` - Result of the connection accept operation
-    fn handle_connection_result(&self, result: Result<quincy::ipc::IpcConnection>) {
+    fn handle_connection_result(&self, result: Result<IpcConnection>) {
         match result {
             Ok(connection) => {
                 info!("IPC client connected");
@@ -266,7 +267,7 @@ impl ClientDaemon {
     ///
     /// # Arguments
     /// * `connection` - The IPC connection to handle
-    fn handle_client_connection(&self, mut connection: quincy::ipc::IpcConnection) {
+    fn handle_client_connection(&self, mut connection: IpcConnection) {
         let daemon = self.clone();
         tokio::spawn(async move {
             daemon.process_client_messages(&mut connection).await;
@@ -277,7 +278,7 @@ impl ClientDaemon {
     ///
     /// # Arguments
     /// * `connection` - The IPC connection to read messages from
-    async fn process_client_messages(&self, connection: &mut quincy::ipc::IpcConnection) {
+    async fn process_client_messages(&self, connection: &mut IpcConnection) {
         loop {
             match connection.recv().await {
                 Ok(message) => {

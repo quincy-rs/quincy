@@ -4,11 +4,8 @@ use anyhow::{anyhow, Result};
 use ipnet::IpNet;
 use quinn::Connection;
 
-use crate::config::{AuthType, ClientAuthenticationConfig};
-
 use super::{
     stream::{AuthMessage, AuthStreamBuilder, AuthStreamMode},
-    users_file::UsersFileClientAuthenticator,
     ClientAuthenticator,
 };
 
@@ -19,18 +16,12 @@ pub struct AuthClient {
 }
 
 impl AuthClient {
-    pub fn new(
-        authentication_config: &ClientAuthenticationConfig,
-        auth_timeout: Duration,
-    ) -> Result<Self> {
-        let authenticator = match authentication_config.auth_type {
-            AuthType::UsersFile => UsersFileClientAuthenticator::new(authentication_config),
-        };
-
-        Ok(Self {
-            authenticator: Box::new(authenticator),
+    /// Creates a new `AuthClient` with a provided authenticator.
+    pub fn new(authenticator: Box<dyn ClientAuthenticator>, auth_timeout: Duration) -> Self {
+        Self {
+            authenticator,
             auth_timeout,
-        })
+        }
     }
 
     /// Establishes a session with the server.

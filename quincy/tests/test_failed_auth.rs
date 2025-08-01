@@ -2,9 +2,9 @@ use crate::common::{
     client_config, make_queue_pair, server_config, TestInterface, TestReceiver, TestSender,
 };
 use anyhow::Result;
-use quincy::client::QuincyClient;
 use quincy::config::{ClientConfig, ServerConfig};
-use quincy::server::QuincyServer;
+use quincy_client::client::QuincyClient;
+use quincy_server::server::QuincyServer;
 use rstest::rstest;
 use std::sync::LazyLock;
 use tracing_test::traced_test;

@@ -86,3 +86,4 @@ strip = true
 lto = "fat"
 codegen-units = 1
 panic = "abort"
+

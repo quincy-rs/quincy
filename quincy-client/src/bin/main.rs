@@ -3,10 +3,10 @@ use std::process::exit;
 
 use anyhow::Result;
 use clap::Parser;
-use quincy::client::QuincyClient;
 use quincy::config::{ClientConfig, FromPath};
 use quincy::network::interface::tun_rs::TunRsInterface;
 use quincy::utils::tracing::log_subscriber;
+use quincy_client::client::QuincyClient;
 use tracing::error;
 
 #[derive(Parser)]

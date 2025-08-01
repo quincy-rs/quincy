@@ -5,8 +5,8 @@ use anyhow::Result;
 use clap::Parser;
 use quincy::config::{FromPath, ServerConfig};
 use quincy::network::interface::tun_rs::TunRsInterface;
-use quincy::server::QuincyServer;
 use quincy::utils::tracing::log_subscriber;
+use quincy_server::server::QuincyServer;
 use tracing::error;
 
 #[derive(Parser)]

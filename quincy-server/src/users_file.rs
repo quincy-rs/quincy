@@ -12,15 +12,16 @@ use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{
+use crate::server::address_pool::AddressPool;
+use quincy::{
+    auth::{ClientAuthenticator, ServerAuthenticator},
     config::{ClientAuthenticationConfig, ServerAuthenticationConfig},
-    server::address_pool::AddressPool,
 };
-
-use super::{ClientAuthenticator, ServerAuthenticator};
+use std::sync::Arc;
 
 pub struct UsersFileServerAuthenticator {
     user_database: UserDatabase,
+    address_pool: Arc<AddressPool>,
 }
 
 pub struct UsersFileClientAuthenticator {
@@ -46,14 +47,20 @@ pub struct User {
 }
 
 impl UsersFileServerAuthenticator {
-    pub fn new(config: &ServerAuthenticationConfig) -> Result<Self> {
+    pub fn new(
+        config: &ServerAuthenticationConfig,
+        address_pool: Arc<AddressPool>,
+    ) -> Result<Self> {
         let users_file = load_users_file(&config.users_file).context(format!(
             "failed to load users file '{}'",
             config.users_file.display()
         ))?;
         let user_database = UserDatabase::new(users_file);
 
-        Ok(Self { user_database })
+        Ok(Self {
+            user_database,
+            address_pool,
+        })
     }
 }
 
@@ -68,11 +75,7 @@ impl UsersFileClientAuthenticator {
 
 #[async_trait]
 impl ServerAuthenticator for UsersFileServerAuthenticator {
-    async fn authenticate_user(
-        &self,
-        address_pool: &AddressPool,
-        authentication_payload: Value,
-    ) -> Result<(String, IpNet)> {
+    async fn authenticate_user(&self, authentication_payload: Value) -> Result<(String, IpNet)> {
         let payload: UsersFilePayload = serde_json::from_value(authentication_payload)
             .context("failed to parse UsersFilePayload")?;
 
@@ -82,7 +85,7 @@ impl ServerAuthenticator for UsersFileServerAuthenticator {
 
         Ok((
             payload.username,
-            address_pool
+            self.address_pool
                 .next_available_address()
                 .ok_or(anyhow!("no available address"))?,
         ))
@@ -213,7 +216,7 @@ pub fn save_users_file(users_file: &Path, users: DashMap<String, User>) -> Resul
 
 #[cfg(test)]
 mod tests {
-    use crate::auth::users_file::{User, UserDatabase};
+    use crate::users_file::{User, UserDatabase};
     use argon2::password_hash::SaltString;
     use argon2::{Argon2, PasswordHasher};
     use dashmap::DashMap;
