@@ -6,8 +6,12 @@ connection_string = "quincy:55555"
 username = "test"
 # The password used for authentication
 password = "test"
-# A list of trusted certificates the server can use or have its certificate signed by
-trusted_certificates = ["examples/cert/server_cert.pem"]
+# A list of trusted certificate file paths the server can use or have its certificate signed by
+trusted_certificate_paths = ["examples/cert/server_cert.pem"]
+# A list of trusted certificates as PEM strings
+# trusted_certificates = [
+#   "-----BEGIN CERTIFICATE-----\nMIIBkjCB...\n-----END CERTIFICATE-----"
+# ]
 
 [connection]
 # The MTU used by the QUIC tunnel and the spawned TUN interface

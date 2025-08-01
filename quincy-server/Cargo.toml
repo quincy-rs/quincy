@@ -1,0 +1,59 @@
+[package]
+name = "quincy-server"
+description = "QUIC-based VPN - Server binaries"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "quincy-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "quincy-users"
+path = "src/bin/users.rs"
+
+[features]
+default = ["offload"]
+offload = ["quincy/offload"]
+jemalloc = ["quincy/jemalloc"]
+
+[dependencies]
+quincy = { path = "../quincy" }
+
+# Configuration
+clap = { workspace = true }
+
+# Authentication (for quincy-users)
+rpassword = { workspace = true }
+argon2 = { workspace = true }
+rand_core = { workspace = true }
+
+# Utils
+anyhow = { workspace = true }
+dashmap = { workspace = true }
+
+# Tokio
+tokio = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+
+# Tracing/Logging
+tracing = { workspace = true }
+
+# Networking
+ipnet = { workspace = true }
+bytes = { workspace = true }
+
+# Quinn
+quinn = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
