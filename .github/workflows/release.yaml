@@ -18,7 +18,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         name: Cache toolchain and dependencies
       - uses: katyo/publish-crates@v2
-        name: Publish crate
+        name: Publish crates
         with:
           registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -40,11 +40,13 @@ jobs:
         name: Cache toolchain and dependencies
       - name: Build x86_64 Linux binaries
         run: |
-          cargo build --release -F jemalloc
+          cargo build --release --workspace --features jemalloc
           mkdir ./quincy-linux-x86_64
           cp target/release/quincy-client quincy-linux-x86_64/
           cp target/release/quincy-server quincy-linux-x86_64/
           cp target/release/quincy-users quincy-linux-x86_64/
+          cp target/release/quincy-client-gui quincy-linux-x86_64/
+          cp target/release/quincy-client-daemon quincy-linux-x86_64/
           tar zcf quincy-linux-x86_64.tar.gz -C quincy-linux-x86_64 .
       - uses: softprops/action-gh-release@v1
         name: Add binary to release
@@ -69,11 +71,13 @@ jobs:
         name: Cache toolchain and dependencies
       - name: Build arm64 macOS binaries
         run: |
-          cargo build --release -F jemalloc
+          cargo build --release --workspace --features jemalloc
           mkdir ./quincy-macos-arm64
           cp target/release/quincy-client quincy-macos-arm64/
           cp target/release/quincy-server quincy-macos-arm64/
           cp target/release/quincy-users quincy-macos-arm64/
+          cp target/release/quincy-client-gui quincy-macos-arm64/
+          cp target/release/quincy-client-daemon quincy-macos-arm64/
           tar zcf quincy-macos-arm64.tar.gz -C quincy-macos-arm64 .
       - uses: softprops/action-gh-release@v1
         name: Add binary to release
@@ -100,7 +104,7 @@ jobs:
         name: Install NASM
       - name: Build x86_64 Windows binaries
         run: |
-          cargo build --release
+          cargo build --release --workspace
           Invoke-WebRequest https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile wintun.zip
           7z x wintun.zip
           mkdir ./quincy-windows-x86_64
@@ -108,6 +112,8 @@ jobs:
           cp target/release/quincy-client.exe quincy-windows-x86_64/
           cp target/release/quincy-server.exe quincy-windows-x86_64/
           cp target/release/quincy-users.exe quincy-windows-x86_64/
+          cp target/release/quincy-client-gui.exe quincy-windows-x86_64/
+          cp target/release/quincy-client-daemon.exe quincy-windows-x86_64/
           7z a quincy-windows-x86_64.zip quincy-windows-x86_64
       - uses: softprops/action-gh-release@v1
         name: Add binary to release

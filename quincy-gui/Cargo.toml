@@ -1,0 +1,54 @@
+[package]
+name = "quincy-gui"
+description = "QUIC-based VPN - GUI client and daemon"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[package.metadata.bundle]
+name = "Quincy VPN"
+identifier = "rs.quincy.quincy"
+icon = ["resources/common/icon.png", "resources/common/icon@2x.png"]
+
+[[bin]]
+name = "quincy-client-gui"
+path = "src/main.rs"
+
+[[bin]]
+name = "quincy-client-daemon"
+path = "src/bin/client_daemon.rs"
+
+[features]
+default = ["offload"]
+offload = ["quincy/offload"]
+jemalloc = ["quincy/jemalloc"]
+
+[dependencies]
+quincy = { path = "../quincy" }
+quincy-client = { path = "../quincy-client" }
+
+# Configuration
+clap = { workspace = true }
+
+# GUI
+iced = { workspace = true }
+
+# Utils
+anyhow = { workspace = true }
+dashmap = { workspace = true }
+
+# Tokio
+tokio = { workspace = true }
+
+# Tracing/Logging
+tracing = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
