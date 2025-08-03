@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::{
@@ -43,8 +43,6 @@ pub enum IpcMessage {
     StatusUpdate(ClientStatus),
     Error(String),
     Shutdown,
-    Heartbeat,
-    HeartbeatAck,
 }
 
 pub struct IpcServer {
@@ -75,22 +73,7 @@ impl IpcServer {
                 e
             })?;
 
-            // Set socket file permissions to be accessible by the original user
-            // This is critical on macOS when daemon runs as root but GUI as user
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-
-                // Make socket accessible by all users (owner, group, others can read/write)
-                // This allows the user GUI to connect to the root daemon's socket
-                if let Err(e) =
-                    std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o666))
-                {
-                    warn!("Failed to set socket permissions: {}", e);
-                } else {
-                    debug!("Set socket permissions to 0o666 for cross-user access");
-                }
-            }
+            // Socket created by GUI user, no special permissions needed
 
             info!("IPC server listening on: {:?}", socket_path);
             Ok(Self { listener })

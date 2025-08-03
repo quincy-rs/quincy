@@ -1,20 +1,20 @@
 use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Mutex;
-use tokio::time::timeout;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use super::types::QuincyInstance;
-use crate::ipc::{get_ipc_socket_path, ClientStatus, ConnectionStatus, IpcClient, IpcMessage};
+use crate::ipc::{
+    get_ipc_socket_path, ClientStatus, ConnectionStatus, IpcConnection, IpcMessage, IpcServer,
+};
 use crate::privilege::run_elevated;
 
 impl QuincyInstance {
     /// Starts a new Quincy VPN client instance.
     ///
-    /// This method spawns a privileged daemon process, establishes IPC communication,
-    /// and starts heartbeat monitoring.
+    /// This method creates an IPC server, spawns a privileged daemon process,
+    /// and waits for the daemon to connect.
     ///
     /// # Arguments
     /// * `name` - Unique identifier for this instance
@@ -28,18 +28,20 @@ impl QuincyInstance {
     /// Returns an error if:
     /// - The daemon binary cannot be found
     /// - Elevated privileges cannot be obtained
-    /// - IPC connection cannot be established
+    /// - IPC server cannot be created
     pub async fn start(name: String, config_path: PathBuf) -> Result<Self> {
         info!("Starting client daemon process for: {}", name);
 
+        let socket_path = get_ipc_socket_path(&name);
+        let ipc_server = IpcServer::new(&socket_path)?;
+
         let daemon_binary = Self::get_daemon_binary_path()?;
-
         Self::spawn_daemon_process(&daemon_binary, &config_path, &name).await?;
-        let ipc_client = Self::establish_ipc_connection(&name).await;
 
-        let mut instance = Self::create_instance(name, ipc_client);
+        let connection = ipc_server.accept().await?;
+        let mut instance = Self::create_instance(name, Some(Arc::new(Mutex::new(connection))));
+
         instance.send_start_command(&config_path).await;
-        instance.start_heartbeat_monitoring();
         instance.update_status().await?;
 
         Ok(instance)
@@ -98,47 +100,22 @@ impl QuincyInstance {
         Ok(())
     }
 
-    /// Establishes IPC connection to the daemon with retry logic.
-    ///
-    /// # Arguments
-    /// * `name` - Instance name for socket path generation
-    ///
-    /// # Returns
-    /// IPC client wrapped in Arc<Mutex> for thread safety
-    async fn establish_ipc_connection(name: &str) -> Option<Arc<Mutex<IpcClient>>> {
-        let socket_path = get_ipc_socket_path(name);
-        info!("Attempting to connect to daemon at: {:?}", socket_path);
-
-        loop {
-            tokio::time::sleep(Duration::from_millis(1000)).await;
-
-            let Ok(client) = IpcClient::connect(&socket_path).await else {
-                continue;
-            };
-
-            info!("Successfully connected to daemon");
-            return Some(Arc::new(Mutex::new(client)));
-        }
-    }
-
     /// Creates a new instance with the given parameters.
     ///
     /// # Arguments
     /// * `name` - Instance name
-    /// * `child` - Daemon process handle
-    /// * `ipc_client` - IPC client connection
+    /// * `ipc_connection` - IPC connection to daemon
     ///
     /// # Returns
     /// New QuincyInstance with default status
-    fn create_instance(name: String, ipc_client: Option<Arc<Mutex<IpcClient>>>) -> Self {
+    fn create_instance(name: String, ipc_connection: Option<Arc<Mutex<IpcConnection>>>) -> Self {
         Self {
             name,
-            ipc_client,
+            ipc_client: ipc_connection,
             status: ClientStatus {
                 status: ConnectionStatus::Disconnected,
                 metrics: None,
             },
-            heartbeat_handle: None,
         }
     }
 
@@ -147,9 +124,9 @@ impl QuincyInstance {
     /// # Arguments
     /// * `config_path` - Path to the configuration file
     async fn send_start_command(&self, config_path: &Path) {
-        if let Some(ref ipc_client) = self.ipc_client {
-            let mut client = ipc_client.lock().await;
-            if let Err(e) = client
+        if let Some(ref ipc_connection) = self.ipc_client {
+            let mut connection = ipc_connection.lock().await;
+            if let Err(e) = connection
                 .send(&IpcMessage::StartClient {
                     config_path: config_path.to_path_buf(),
                 })
@@ -160,115 +137,11 @@ impl QuincyInstance {
         }
     }
 
-    /// Starts the heartbeat monitoring task.
-    fn start_heartbeat_monitoring(&mut self) {
-        if let Some(ref ipc_client) = self.ipc_client {
-            let heartbeat_client = ipc_client.clone();
-            let instance_name = self.name.clone();
-            let handle = tokio::spawn(async move {
-                Self::heartbeat_task(heartbeat_client, instance_name).await;
-            });
-            self.heartbeat_handle = Some(handle);
-        }
-    }
-
-    /// Background task that sends periodic heartbeat messages to the daemon.
-    ///
-    /// This ensures the daemon knows the GUI is still running and can shut down
-    /// gracefully if the GUI process terminates unexpectedly.
-    ///
-    /// # Arguments
-    /// * `ipc_client` - Shared IPC client connection
-    /// * `instance_name` - Name of the instance for logging
-    async fn heartbeat_task(ipc_client: Arc<Mutex<IpcClient>>, instance_name: String) {
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
-        const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
-
-        loop {
-            interval.tick().await;
-
-            let mut client = match ipc_client.try_lock() {
-                Ok(client) => client,
-                Err(_) => continue, // Client is busy, skip this heartbeat
-            };
-
-            if Self::send_heartbeat_and_wait_response(
-                &mut client,
-                &instance_name,
-                HEARTBEAT_TIMEOUT,
-            )
-            .await
-            .is_err()
-            {
-                break;
-            }
-        }
-
-        info!("Heartbeat task stopped for {}", instance_name);
-    }
-
-    /// Sends a heartbeat message and waits for acknowledgment.
-    ///
-    /// # Arguments
-    /// * `client` - IPC client to use for communication
-    /// * `instance_name` - Instance name for logging
-    /// * `timeout_duration` - Maximum time to wait for response
-    ///
-    /// # Returns
-    /// * `Ok(())` if heartbeat was acknowledged
-    /// * `Err(())` if heartbeat failed or timed out
-    async fn send_heartbeat_and_wait_response(
-        client: &mut IpcClient,
-        instance_name: &str,
-        timeout_duration: Duration,
-    ) -> Result<(), ()> {
-        let Err(e) = client.send(&IpcMessage::Heartbeat).await else {
-            return Self::handle_heartbeat_response(client, instance_name, timeout_duration).await;
-        };
-
-        warn!("Failed to send heartbeat for {}: {}", instance_name, e);
-        Err(())
-    }
-
-    /// Handles the response to a heartbeat message.
-    ///
-    /// # Arguments
-    /// * `client` - IPC client to receive response from
-    /// * `instance_name` - Instance name for logging
-    /// * `timeout_duration` - Maximum time to wait for response
-    ///
-    /// # Returns
-    /// * `Ok(())` if valid acknowledgment received
-    /// * `Err(())` if invalid response or timeout
-    async fn handle_heartbeat_response(
-        client: &mut IpcClient,
-        instance_name: &str,
-        timeout_duration: Duration,
-    ) -> Result<(), ()> {
-        match timeout(timeout_duration, client.recv()).await {
-            Ok(Ok(IpcMessage::HeartbeatAck)) => {
-                debug!("Heartbeat acknowledged for {}", instance_name);
-                Ok(())
-            }
-            Ok(Ok(_)) => {
-                warn!("Unexpected response to heartbeat for {}", instance_name);
-                Err(())
-            }
-            Ok(Err(e)) => {
-                warn!("Heartbeat communication error for {}: {}", instance_name, e);
-                Err(())
-            }
-            Err(_) => {
-                warn!("Heartbeat timeout for {}", instance_name);
-                Err(())
-            }
-        }
-    }
-
     /// Stops the VPN client instance and cleans up resources.
     ///
-    /// This method gracefully shuts down the daemon process, stops heartbeat monitoring,
-    /// and updates the instance status.
+    /// This method gracefully shuts down the daemon process and updates the instance status.
+    /// With the reversed architecture, the daemon will automatically detect disconnection
+    /// when the GUI closes the IPC connection.
     ///
     /// # Returns
     /// * `Ok(())` if the instance was stopped successfully
@@ -279,30 +152,28 @@ impl QuincyInstance {
     pub async fn stop(&mut self) -> Result<()> {
         info!("Stopping client daemon process for: {}", self.name);
 
-        self.stop_heartbeat_task();
         self.send_shutdown_message().await;
+        self.close_connection();
         self.reset_status();
 
         Ok(())
     }
 
-    /// Stops the heartbeat monitoring task.
-    fn stop_heartbeat_task(&mut self) {
-        if let Some(handle) = self.heartbeat_handle.take() {
-            handle.abort();
-            info!("Heartbeat task stopped");
-        }
-    }
-
     /// Sends a shutdown message to the daemon.
     async fn send_shutdown_message(&self) {
-        if let Some(ref ipc_client) = self.ipc_client {
-            let mut client = ipc_client.lock().await;
-            match client.send(&IpcMessage::Shutdown).await {
+        if let Some(ref ipc_connection) = self.ipc_client {
+            let mut connection = ipc_connection.lock().await;
+            match connection.send(&IpcMessage::Shutdown).await {
                 Ok(()) => info!("Sent graceful shutdown message to daemon"),
                 Err(e) => warn!("Failed to send shutdown message to daemon: {}", e),
             }
         }
+    }
+
+    /// Closes the IPC connection to the daemon.
+    fn close_connection(&mut self) {
+        self.ipc_client = None;
+        info!("IPC connection closed - daemon will detect disconnection");
     }
 
     /// Resets the instance status to disconnected.
@@ -322,30 +193,30 @@ impl QuincyInstance {
     /// # Errors
     /// Returns an error if the daemon cannot be contacted or responds with invalid data
     pub async fn update_status(&mut self) -> Result<()> {
-        if let Some(ref ipc_client) = self.ipc_client {
-            let mut client = ipc_client.lock().await;
-            match client.send(&IpcMessage::GetStatus).await {
-                Ok(()) => match client.recv().await {
+        if let Some(ref ipc_connection) = self.ipc_client {
+            let mut connection = ipc_connection.lock().await;
+            match connection.send(&IpcMessage::GetStatus).await {
+                Ok(()) => match connection.recv().await {
                     Ok(IpcMessage::StatusUpdate(status)) => {
-                        drop(client);
+                        drop(connection);
                         self.status = status;
                     }
                     Ok(IpcMessage::Error(err)) => {
-                        drop(client);
+                        drop(connection);
                         self.set_error_status(&err);
                     }
                     Ok(_) => {
-                        drop(client);
+                        drop(connection);
                         warn!("Unexpected response to status request");
                     }
                     Err(e) => {
-                        drop(client);
+                        drop(connection);
                         warn!("Failed to receive status response: {}", e);
                         self.set_error_status("Status response failed");
                     }
                 },
                 Err(e) => {
-                    drop(client);
+                    drop(connection);
                     warn!("Failed to get status from daemon: {}", e);
                     self.set_error_status("IPC communication failed");
                 }

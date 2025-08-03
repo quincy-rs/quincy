@@ -31,7 +31,7 @@ pub fn run_elevated(program: &str, args: &[&str], title: &str, message: &str) ->
 
 #[cfg(target_os = "macos")]
 fn run_elevated_macos(program: &str, args: &[&str], _title: &str, message: &str) -> Result<Child> {
-    let command_str = format!("{} {}", program, args.join(" "));
+    let command_str = format!("{} {} > /dev/null 2> /dev/null &", program, args.join(" "));
 
     // Create an AppleScript that will prompt for admin privileges
     let apple_script = format!(
