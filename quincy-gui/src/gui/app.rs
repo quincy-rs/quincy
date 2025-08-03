@@ -64,7 +64,7 @@ impl QuincyGui {
             }
         };
 
-        let window_size = iced::Size::new(600.0, 550.0);
+        let window_size = iced::Size::new(800.0, 610.0);
 
         // Create the main window
         let window_settings = window::Settings {
