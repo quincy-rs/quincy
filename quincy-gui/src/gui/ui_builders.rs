@@ -12,7 +12,7 @@ use super::styles::{
 };
 use super::types::{Message, SelectedConfig};
 use super::utils::{format_bytes, format_duration};
-use crate::ipc::{ClientStatus, ConnectionMetrics, ConnectionStatus};
+use crate::ipc::{ConnectionMetrics, ConnectionStatus};
 
 impl QuincyGui {
     /// Builds the editor window view.
@@ -211,10 +211,15 @@ impl QuincyGui {
         let monitoring_section = self.build_monitoring_section(selected_config, has_client);
         let action_buttons = self.build_action_buttons(has_client);
 
-        column![name_input, config_view, monitoring_section, action_buttons]
-            .spacing(8)
-            .height(Length::Fill)
-            .into()
+        column![
+            container_widget(name_input).height(Length::Shrink),
+            container_widget(config_view).height(Length::Shrink),
+            container_widget(monitoring_section).height(Length::Shrink),
+            container_widget(action_buttons).height(Length::Shrink)
+        ]
+        .spacing(8)
+        .height(Length::Fill)
+        .into()
     }
 
     /// Builds the configuration name input field.
@@ -240,7 +245,7 @@ impl QuincyGui {
         input.style(CustomTextInputStyle::default_fn()).into()
     }
 
-    /// Builds the configuration view section with read-only fields and Edit button.
+    /// Builds the configuration view section with read-only fields.
     ///
     /// # Arguments
     /// * `selected_config` - The currently selected configuration
@@ -249,6 +254,36 @@ impl QuincyGui {
     /// Container element with configuration view
     pub fn build_config_view_section(&self, selected_config: &SelectedConfig) -> Element<Message> {
         let config_info = if let Some(ref config) = selected_config.parsed_config {
+            let routes_display = if config.network.routes.is_empty() {
+                "None".to_string()
+            } else {
+                format!(
+                    "Routes: {}",
+                    config
+                        .network
+                        .routes
+                        .iter()
+                        .map(|route| route.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+
+            let dns_servers_display = if config.network.dns_servers.is_empty() {
+                "None".to_string()
+            } else {
+                format!(
+                    "DNS servers: {}",
+                    config
+                        .network
+                        .dns_servers
+                        .iter()
+                        .map(|dns| dns.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+
             column![
                 self.build_owned_config_field(
                     "Connection String".to_string(),
@@ -262,6 +297,8 @@ impl QuincyGui {
                     "Encryption Type".to_string(),
                     format!("{:?}", config.crypto.key_exchange)
                 ),
+                self.build_owned_config_field("Routes".to_string(), routes_display),
+                self.build_owned_config_field("DNS Servers".to_string(), dns_servers_display),
             ]
             .spacing(8)
         } else {
@@ -272,38 +309,19 @@ impl QuincyGui {
             ]
         };
 
-        let mut edit_button =
-            button_widget(text("Edit").color(ColorPalette::TEXT_PRIMARY).size(14)).padding([6, 12]);
-
-        // Disable edit button when editor modal is open
-        if !self.editor_modal_open {
-            edit_button = edit_button.on_press(Message::OpenEditor);
-        }
-
-        let edit_button = if self.editor_modal_open {
-            edit_button.style(|_theme, _status| CustomButtonStyles::disabled())
-        } else {
-            edit_button.style(CustomButtonStyles::secondary_fn())
-        };
-
         container_widget(
             column![
-                row![
-                    text("Configuration")
-                        .size(16)
-                        .color(ColorPalette::TEXT_PRIMARY),
-                    edit_button
-                ]
-                .spacing(8)
-                .align_y(iced::Alignment::Center),
+                text("Configuration")
+                    .size(16)
+                    .color(ColorPalette::TEXT_PRIMARY),
                 config_info
             ]
             .spacing(12)
-            .height(Length::Fill),
+            .height(Length::Shrink),
         )
         .padding(8)
         .width(Length::Fill)
-        .height(Length::Fill)
+        .height(Length::Shrink)
         .style(|_theme| iced::widget::container::Style {
             background: Some(Background::Color(ColorPalette::BACKGROUND_TERTIARY)),
             border: iced::Border {
@@ -348,14 +366,15 @@ impl QuincyGui {
     ) -> Element<Message> {
         if has_client {
             if let Some(instance) = self.instances.get(&selected_config.quincy_config.name) {
-                self.build_instance_status_display(instance.get_status())
+                let status = instance.get_status();
+                self.build_instance_status_display(&status.status, status.metrics.as_ref())
             } else {
                 // Show loading status when client is starting
-                column![self.build_connection_status_section(&ConnectionStatus::Connecting)].into()
+                self.build_instance_status_display(&ConnectionStatus::Connecting, None)
             }
         } else {
             // Always show disconnected status when no client is running
-            column![self.build_connection_status_section(&ConnectionStatus::Disconnected)].into()
+            self.build_instance_status_display(&ConnectionStatus::Disconnected, None)
         }
     }
 
@@ -366,139 +385,135 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Column element with status information
-    pub fn build_instance_status_display(&self, status: &ClientStatus) -> Element<Message> {
-        let connection_status_section = self.build_connection_status_section(&status.status);
-
-        let mut sections = vec![connection_status_section];
-
-        if let Some(ref metrics) = status.metrics {
-            sections.push(self.build_metrics_section(metrics));
-        }
-
-        column(sections).spacing(8).into()
-    }
-
-    /// Builds the connection status section.
-    ///
-    /// # Arguments
-    /// * `status` - Current connection status
-    ///
-    /// # Returns
-    /// Container element with connection status information
-    pub fn build_connection_status_section(&self, status: &ConnectionStatus) -> Element<Message> {
-        let status_text = match status {
+    pub fn build_instance_status_display(
+        &self,
+        connection_status: &ConnectionStatus,
+        metrics: Option<&ConnectionMetrics>,
+    ) -> Element<Message> {
+        let status_text = match connection_status {
             ConnectionStatus::Connected => "Connected".to_string(),
             ConnectionStatus::Connecting => "Connecting...".to_string(),
             ConnectionStatus::Disconnected => "Disconnected".to_string(),
             ConnectionStatus::Error(err) => err.clone(),
         };
 
-        let status_color = match status {
+        let status_color = match connection_status {
             ConnectionStatus::Connected => ColorPalette::SUCCESS,
             ConnectionStatus::Connecting => ColorPalette::WARNING,
             ConnectionStatus::Disconnected => ColorPalette::TEXT_SECONDARY,
             ConnectionStatus::Error(_) => ColorPalette::ERROR,
         };
 
-        let container_style = match status {
+        let container_style = match connection_status {
             ConnectionStatus::Connected => CustomContainerStyles::status_connected(),
             ConnectionStatus::Error(_) => CustomContainerStyles::status_error(),
             _ => CustomContainerStyles::status_section(),
         };
 
-        container_widget(
-            column![
-                text("Connection Status")
-                    .size(16)
-                    .color(ColorPalette::TEXT_PRIMARY),
-                text(status_text).size(14).color(status_color)
-            ]
-            .spacing(4),
-        )
-        .style(move |_theme| container_style)
-        .padding(8)
-        .width(Length::Fill)
-        .into()
+        let mut content = vec![
+            text("Connection Status")
+                .size(16)
+                .color(ColorPalette::TEXT_PRIMARY)
+                .into(),
+            text(status_text).size(14).color(status_color).into(),
+        ];
+
+        // Add metrics if available
+        if let Some(metrics) = metrics {
+            content.extend([
+                container_widget(text("").size(4))
+                    .height(Length::Fixed(8.0))
+                    .into(), // Spacer
+                text("Connection Details")
+                    .size(14)
+                    .color(ColorPalette::TEXT_SECONDARY)
+                    .into(),
+                self.build_connection_info(metrics),
+            ]);
+        }
+
+        container_widget(column(content).spacing(4).height(Length::Shrink))
+            .style(move |_theme| container_style)
+            .padding(8)
+            .width(Length::Fill)
+            .height(Length::Shrink)
+            .into()
     }
 
-    /// Builds the metrics section.
+    /// Builds the connection information display with IP addresses at top and stats on the right.
     ///
     /// # Arguments
     /// * `metrics` - Connection metrics to display
     ///
     /// # Returns
-    /// Container element with transfer statistics
-    pub fn build_metrics_section(&self, metrics: &ConnectionMetrics) -> Element<Message> {
-        container_widget(
-            column![
-                text("Connection Statistics")
-                    .size(16)
-                    .color(ColorPalette::TEXT_PRIMARY),
-                self.build_transfer_stats(metrics),
-                self.build_connection_info(metrics)
-            ]
-            .spacing(6),
-        )
-        .style(|_theme| CustomContainerStyles::status_section())
-        .padding(8)
-        .width(Length::Fill)
-        .into()
-    }
+    /// Row element with IP addresses/connection time on left and transfer stats on right
+    pub fn build_connection_info(&self, metrics: &ConnectionMetrics) -> Element<Message> {
+        // Build IP addresses section
+        let mut ip_info = Vec::new();
 
-    /// Builds the transfer statistics display.
-    ///
-    /// # Arguments
-    /// * `metrics` - Connection metrics to display
-    ///
-    /// # Returns
-    /// Row element with upload/download statistics
-    pub fn build_transfer_stats(&self, metrics: &ConnectionMetrics) -> Element<Message> {
-        row![
+        // Add client IP address if available
+        if let Some(client_addr) = metrics.client_address {
+            ip_info.push(
+                text(format!("Client IP: {client_addr}"))
+                    .size(12)
+                    .color(ColorPalette::TEXT_SECONDARY)
+                    .into(),
+            );
+        }
+
+        // Add server IP address if available
+        if let Some(server_addr) = metrics.server_address {
+            ip_info.push(
+                text(format!("Server IP: {server_addr}"))
+                    .size(12)
+                    .color(ColorPalette::TEXT_SECONDARY)
+                    .into(),
+            );
+        }
+
+        // Add connection duration below IP addresses
+        ip_info.push(
+            text(format!(
+                "Connected for: {}",
+                format_duration(metrics.connection_duration)
+            ))
+            .size(12)
+            .color(ColorPalette::TEXT_SECONDARY)
+            .into(),
+        );
+
+        let left_column = column(ip_info).spacing(2);
+
+        // Build transfer statistics for the right side with fixed width to prevent jitter
+        let right_column = row![
             column![
                 text("Upload").size(12).color(ColorPalette::TEXT_SECONDARY),
                 text(format_bytes(metrics.bytes_sent))
-                    .size(16)
+                    .size(14)
                     .color(ColorPalette::ACCENT_PRIMARY),
-                text(format!("{} packets", metrics.packets_sent))
-                    .size(11)
-                    .color(ColorPalette::TEXT_MUTED)
             ]
-            .spacing(4),
+            .spacing(2)
+            .width(Length::Fixed(70.0)), // Fixed width to prevent jitter
             column![
                 text("Download")
                     .size(12)
                     .color(ColorPalette::TEXT_SECONDARY),
                 text(format_bytes(metrics.bytes_received))
-                    .size(16)
+                    .size(14)
                     .color(ColorPalette::ACCENT_PRIMARY),
-                text(format!("{} packets", metrics.packets_received))
-                    .size(11)
-                    .color(ColorPalette::TEXT_MUTED)
             ]
-            .spacing(4)
+            .spacing(2)
+            .width(Length::Fixed(80.0)) // Fixed width to prevent jitter
         ]
-        .spacing(24)
-        .into()
+        .spacing(16);
+
+        row![left_column, right_column]
+            .spacing(24)
+            .width(Length::Fill)
+            .into()
     }
 
-    /// Builds the connection information display.
-    ///
-    /// # Arguments
-    /// * `metrics` - Connection metrics to display
-    ///
-    /// # Returns
-    /// Text element with connection duration
-    pub fn build_connection_info(&self, metrics: &ConnectionMetrics) -> Element<Message> {
-        text(format!(
-            "Connected for: {}",
-            format_duration(metrics.connection_duration)
-        ))
-        .size(12)
-        .color(ColorPalette::TEXT_SECONDARY)
-        .into()
-    }
-
-    /// Builds the action buttons row (Connect/Disconnect, Delete).
+    /// Builds the action buttons row (Connect/Disconnect, Edit, Delete).
     ///
     /// # Arguments
     /// * `has_client` - Whether a client instance is running
@@ -538,6 +553,20 @@ impl QuincyGui {
             }
         };
 
+        let mut edit_button =
+            button_widget(text("Edit").color(ColorPalette::TEXT_PRIMARY).size(14)).padding([6, 12]);
+
+        // Disable edit button when editor modal is open
+        if !self.editor_modal_open {
+            edit_button = edit_button.on_press(Message::OpenEditor);
+        }
+
+        let edit_button = if self.editor_modal_open {
+            edit_button.style(|_theme, _status| CustomButtonStyles::disabled())
+        } else {
+            edit_button.style(CustomButtonStyles::secondary_fn())
+        };
+
         let delete_button = if has_client || self.editor_modal_open {
             // Disable delete button when client is running or editor modal is open
             button_widget(text("Delete").color(ColorPalette::TEXT_MUTED).size(14))
@@ -550,7 +579,7 @@ impl QuincyGui {
                 .style(CustomButtonStyles::danger_fn())
         };
 
-        row![connection_button, delete_button]
+        row![connection_button, edit_button, delete_button]
             .spacing(8)
             .width(Length::Fill)
             .into()
