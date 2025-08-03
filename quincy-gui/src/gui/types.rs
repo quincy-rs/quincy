@@ -6,17 +6,16 @@ use crate::ipc::ClientStatus;
 
 /// Represents a running Quincy VPN client instance.
 ///
-/// Each instance manages a daemon process, IPC communication, and heartbeat monitoring.
+/// Each instance manages a daemon process and IPC communication.
 /// The instance tracks connection status and metrics for display in the GUI.
+/// With the reversed architecture, connection loss naturally handles daemon lifecycle.
 pub struct QuincyInstance {
     /// Unique identifier for this instance
     pub name: String,
-    /// IPC client for communication with the daemon
-    pub(crate) ipc_client: Option<std::sync::Arc<tokio::sync::Mutex<crate::ipc::IpcClient>>>,
+    /// IPC connection for communication with the daemon
+    pub(crate) ipc_client: Option<std::sync::Arc<tokio::sync::Mutex<crate::ipc::IpcConnection>>>,
     /// Current connection status and metrics
     pub(crate) status: ClientStatus,
-    /// Handle to the heartbeat monitoring task
-    pub(crate) heartbeat_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl std::fmt::Debug for QuincyInstance {

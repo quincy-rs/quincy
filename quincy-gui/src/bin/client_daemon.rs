@@ -5,8 +5,7 @@ use quincy::network::interface::tun_rs::TunRsInterface;
 use quincy::utils::tracing::log_subscriber;
 use quincy_client::client::QuincyClient;
 use quincy_gui::ipc::{
-    get_ipc_socket_path, ClientStatus, ConnectionMetrics, ConnectionStatus, IpcConnection,
-    IpcMessage, IpcServer,
+    get_ipc_socket_path, ClientStatus, ConnectionMetrics, ConnectionStatus, IpcClient, IpcMessage,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,8 +42,6 @@ struct ClientDaemon {
     instance_name: String,
     /// Broadcast sender for shutdown notifications
     shutdown_tx: broadcast::Sender<()>,
-    /// Timestamp of the last received heartbeat from the GUI
-    last_heartbeat: Arc<Mutex<Option<Instant>>>,
 }
 
 impl ClientDaemon {
@@ -62,7 +59,6 @@ impl ClientDaemon {
             connection_start_time: Arc::new(Mutex::new(None)),
             instance_name,
             shutdown_tx,
-            last_heartbeat: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -199,185 +195,94 @@ impl ClientDaemon {
         }
     }
 
-    /// Runs the IPC server to handle communication with GUI clients.
+    /// Connects to the GUI's IPC server and handles communication.
     ///
-    /// This method starts the IPC server and spawns a heartbeat monitoring task.
-    /// It handles incoming connections and processes IPC messages until a shutdown signal is received.
+    /// This method connects to the GUI's IPC server and processes messages.
+    /// Connection loss automatically triggers daemon shutdown.
     ///
     /// # Arguments
     /// * `socket_path` - Path to the Unix domain socket for IPC communication
     ///
     /// # Returns
-    /// * `Ok(())` when the server shuts down gracefully
-    /// * `Err` if the server fails to start
+    /// * `Ok(())` when the connection ends gracefully
+    /// * `Err` if the connection fails to establish
     ///
     /// # Errors
-    /// Returns an error if the IPC server cannot be created or bound to the socket path
-    async fn run_ipc_server(&self, socket_path: &std::path::Path) -> Result<()> {
-        let server = IpcServer::new(socket_path)?;
-        info!("IPC server started");
+    /// Returns an error if the IPC client cannot connect to the GUI's socket
+    async fn run_ipc_client(&self, socket_path: &std::path::Path) -> Result<()> {
+        let client = self.connect_to_gui_server(socket_path).await?;
+        info!("Connected to GUI IPC server");
 
         let mut shutdown_rx = self.shutdown_tx.subscribe();
-        self.start_heartbeat_monitor();
+        let mut ipc_client = client;
 
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
-                    info!("IPC server received shutdown signal, stopping server");
+                    info!("IPC client received shutdown signal, stopping client");
                     break;
                 }
-                result = server.accept() => {
-                    self.handle_connection_result(result);
+                result = ipc_client.recv() => {
+                    match result {
+                        Ok(message) => {
+                            let response = self.handle_message(message).await;
+                            if let Err(e) = ipc_client.send(&response).await {
+                                error!("Failed to send IPC response: {}", e);
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            info!("IPC connection closed by GUI: {}", e);
+                            break;
+                        }
+                    }
                 }
             }
         }
 
-        info!("IPC server shutdown complete");
+        info!("IPC client shutdown complete");
         Ok(())
     }
 
-    /// Handles the result of accepting a new IPC connection.
+    /// Connects to the GUI's IPC server with retry logic.
     ///
     /// # Arguments
-    /// * `result` - Result of the connection accept operation
-    fn handle_connection_result(&self, result: Result<IpcConnection>) {
-        match result {
-            Ok(connection) => {
-                info!("IPC client connected");
-                self.handle_client_connection(connection);
-            }
-            Err(e) => {
-                error!("Failed to accept IPC connection: {}", e);
-            }
-        }
-    }
-
-    /// Starts the heartbeat monitoring task.
-    ///
-    /// This spawns a background task that monitors heartbeat messages from the GUI
-    /// and initiates shutdown if heartbeats are not received within the timeout period.
-    fn start_heartbeat_monitor(&self) {
-        let heartbeat_daemon = self.clone();
-        tokio::spawn(async move {
-            heartbeat_daemon.monitor_heartbeat().await;
-        });
-    }
-
-    /// Handles a new client connection by spawning a task to process messages.
-    ///
-    /// # Arguments
-    /// * `connection` - The IPC connection to handle
-    fn handle_client_connection(&self, mut connection: IpcConnection) {
-        let daemon = self.clone();
-        tokio::spawn(async move {
-            daemon.process_client_messages(&mut connection).await;
-        });
-    }
-
-    /// Processes messages from a client connection.
-    ///
-    /// # Arguments
-    /// * `connection` - The IPC connection to read messages from
-    async fn process_client_messages(&self, connection: &mut IpcConnection) {
-        loop {
-            match connection.recv().await {
-                Ok(message) => {
-                    let response = self.handle_message(message).await;
-                    if let Err(e) = connection.send(&response).await {
-                        error!("Failed to send IPC response: {}", e);
-                        break;
-                    }
-                }
-                Err(e) => {
-                    warn!("IPC connection error: {}", e);
-                    break;
-                }
-            }
-        }
-    }
-
-    /// Monitors heartbeat messages from the GUI client.
-    ///
-    /// This task runs continuously and checks for heartbeat messages. If no heartbeat
-    /// is received within 15 seconds, it initiates a daemon shutdown.
-    ///
-    /// The heartbeat mechanism ensures that the daemon doesn't remain running if
-    /// the GUI client has crashed or been forcefully terminated.
-    async fn monitor_heartbeat(&self) {
-        let mut shutdown_rx = self.shutdown_tx.subscribe();
-        const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
-        const CHECK_INTERVAL: Duration = Duration::from_secs(1);
-
-        loop {
-            tokio::select! {
-                _ = shutdown_rx.recv() => {
-                    debug!("Heartbeat monitor shutting down");
-                    break;
-                }
-                _ = tokio::time::sleep(CHECK_INTERVAL) => {
-                    if self.should_shutdown_due_to_heartbeat_timeout(HEARTBEAT_TIMEOUT).await {
-                        self.initiate_heartbeat_timeout_shutdown().await;
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Checks if the daemon should shutdown due to heartbeat timeout.
-    ///
-    /// # Arguments
-    /// * `timeout` - Maximum allowed time since last heartbeat
+    /// * `socket_path` - Path to the socket to connect to
     ///
     /// # Returns
-    /// `true` if shutdown should be initiated, `false` otherwise
-    async fn should_shutdown_due_to_heartbeat_timeout(&self, timeout: Duration) -> bool {
-        let last_heartbeat_opt = *self.last_heartbeat.lock().await;
+    /// * `Ok(IpcClient)` if connection succeeded
+    /// * `Err` if connection failed after retries
+    async fn connect_to_gui_server(&self, socket_path: &std::path::Path) -> Result<IpcClient> {
+        const MAX_RETRIES: u32 = 30;
+        const RETRY_DELAY: Duration = Duration::from_millis(500);
 
-        let Some(last_heartbeat) = last_heartbeat_opt else {
-            debug!("No heartbeat received yet, monitoring will start after first heartbeat");
-            return false;
-        };
-
-        let time_since_heartbeat = last_heartbeat.elapsed();
-
-        if time_since_heartbeat > timeout {
-            warn!(
-                "No heartbeat received for {:?}, shutting down daemon",
-                time_since_heartbeat
-            );
-            return true;
-        }
-
-        debug!(
-            "Heartbeat check: last heartbeat {:?} ago",
-            time_since_heartbeat
-        );
-        false
-    }
-
-    /// Initiates shutdown procedure due to heartbeat timeout.
-    ///
-    /// This method stops the client, sends shutdown signals, and exits the process
-    /// if graceful shutdown fails.
-    async fn initiate_heartbeat_timeout_shutdown(&self) {
-        if let Err(e) = self.stop_client().await {
-            error!("Failed to stop client during heartbeat timeout: {}", e);
-        }
-
-        info!("Attempting graceful shutdown via broadcast signal");
-        match self.shutdown_tx.send(()) {
-            Ok(receiver_count) => {
-                info!("Shutdown signal sent to {} receivers", receiver_count);
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-            Err(e) => {
-                warn!("Failed to send shutdown signal (no receivers?): {}", e);
+        for attempt in 1..=MAX_RETRIES {
+            match IpcClient::connect(socket_path).await {
+                Ok(client) => {
+                    info!(
+                        "Successfully connected to GUI server on attempt {}",
+                        attempt
+                    );
+                    return Ok(client);
+                }
+                Err(e) => {
+                    if attempt == MAX_RETRIES {
+                        error!(
+                            "Failed to connect to GUI server after {} attempts: {}",
+                            MAX_RETRIES, e
+                        );
+                        return Err(e);
+                    }
+                    debug!(
+                        "Connection attempt {} failed, retrying in {:?}: {}",
+                        attempt, RETRY_DELAY, e
+                    );
+                    tokio::time::sleep(RETRY_DELAY).await;
+                }
             }
         }
 
-        error!("Forcing daemon exit due to heartbeat timeout");
-        std::process::exit(1);
+        unreachable!()
     }
 
     /// Handles an incoming IPC message and returns the appropriate response.
@@ -398,7 +303,6 @@ impl ClientDaemon {
                 IpcMessage::StatusUpdate(status)
             }
             IpcMessage::Shutdown => self.handle_shutdown_message().await,
-            IpcMessage::Heartbeat => self.handle_heartbeat_message().await,
             _ => IpcMessage::Error("Invalid message".to_string()),
         }
     }
@@ -450,16 +354,6 @@ impl ClientDaemon {
 
         IpcMessage::Shutdown
     }
-
-    /// Handles a Heartbeat IPC message.
-    ///
-    /// # Returns
-    /// Heartbeat acknowledgment message
-    async fn handle_heartbeat_message(&self) -> IpcMessage {
-        debug!("Received heartbeat from GUI");
-        *self.last_heartbeat.lock().await = Some(Instant::now());
-        IpcMessage::HeartbeatAck
-    }
 }
 
 impl Clone for ClientDaemon {
@@ -473,7 +367,6 @@ impl Clone for ClientDaemon {
             connection_start_time: self.connection_start_time.clone(),
             instance_name: self.instance_name.clone(),
             shutdown_tx: self.shutdown_tx.clone(),
-            last_heartbeat: self.last_heartbeat.clone(),
         }
     }
 }
@@ -502,8 +395,8 @@ async fn main() -> Result<()> {
     let daemon = ClientDaemon::new(args.instance_name.clone());
     let socket_path = get_ipc_socket_path(&args.instance_name);
 
-    run_daemon_server(&daemon, &socket_path).await?;
-    cleanup_socket(&socket_path);
+    run_daemon_client(&daemon, &socket_path).await?;
+    // Socket cleanup is handled by GUI since it owns the socket
 
     info!("Daemon shutdown complete");
     Ok(())
@@ -514,33 +407,20 @@ fn initialize_logging() {
     let _logger = tracing::subscriber::set_global_default(log_subscriber("info"));
 }
 
-/// Runs the daemon IPC server until shutdown.
+/// Runs the daemon IPC client until shutdown.
 ///
 /// # Arguments
 /// * `daemon` - The daemon instance to run
 /// * `socket_path` - Path to the IPC socket
 ///
 /// # Returns
-/// Result of the server operation
+/// Result of the client operation
 ///
 /// # Errors
-/// Returns an error if the IPC server fails to start or run
-async fn run_daemon_server(daemon: &ClientDaemon, socket_path: &std::path::Path) -> Result<()> {
-    info!("Starting IPC server...");
-    daemon.run_ipc_server(socket_path).await?;
-    info!("IPC server has stopped, proceeding with cleanup...");
+/// Returns an error if the IPC client fails to connect or run
+async fn run_daemon_client(daemon: &ClientDaemon, socket_path: &std::path::Path) -> Result<()> {
+    info!("Starting IPC client...");
+    daemon.run_ipc_client(socket_path).await?;
+    info!("IPC client has stopped, proceeding with cleanup...");
     Ok(())
-}
-
-/// Cleans up the IPC socket file on shutdown.
-///
-/// # Arguments
-/// * `socket_path` - Path to the socket file to remove
-fn cleanup_socket(socket_path: &std::path::Path) {
-    if socket_path.exists() {
-        match std::fs::remove_file(socket_path) {
-            Ok(()) => info!("Socket file removed: {:?}", socket_path),
-            Err(e) => warn!("Failed to remove socket file on shutdown: {}", e),
-        }
-    }
 }
