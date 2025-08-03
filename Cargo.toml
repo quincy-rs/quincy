@@ -2,7 +2,7 @@
 name = "quincy"
 version = "0.15.2"
 authors = ["Jakub Kubík <jakub.kubik.it@protonmail.com>"]
-license = "MIT"
+license = "AGPL-3.0-or-later"
 description = "QUIC-based VPN"
 readme = "README.md"
 homepage = "https://github.com/M0dEx/quincy"
