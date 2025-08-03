@@ -69,7 +69,7 @@ anyhow = "^1.0"
 clap = { version = "^4.1", features = ["derive"] }
 
 # GUI
-iced = { version = "^0.13.0", features = ["tokio", "advanced", "highlighter"] }
+iced = { version = "^0.13.0", features = ["tokio", "advanced", "highlighter", "multi-window"] }
 
 # Alloc
 jemallocator = { version = "0.5" }
