@@ -51,14 +51,12 @@ pub fn bind_socket(
     socket
         .set_send_buffer_size(send_buffer_size)
         .context(format!(
-            "failed to set UDP socket send buffer size: {}",
-            send_buffer_size
+            "failed to set UDP socket send buffer size: {send_buffer_size}"
         ))?;
     socket
         .set_recv_buffer_size(recv_buffer_size)
         .context(format!(
-            "failed to set UDP socket recv buffer size: {}",
-            recv_buffer_size
+            "failed to set UDP socket recv buffer size: {recv_buffer_size}",
         ))?;
 
     let buf_size = socket.send_buffer_size().context("send buffer size")?;
@@ -72,8 +70,7 @@ pub fn bind_socket(
     let buf_size = socket.recv_buffer_size().context("recv buffer size")?;
     if buf_size < recv_buffer_size {
         warn!(
-            "Unable to set desired recv buffer size. Desired: {}, Actual: {}",
-            recv_buffer_size, buf_size
+            "Unable to set desired recv buffer size. Desired: {recv_buffer_size}, Actual: {buf_size}",
         );
     }
 
