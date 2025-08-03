@@ -270,7 +270,7 @@ impl QuincyGui {
 
         while self.configs.contains_key(&new_config_name) {
             config_idx += 1;
-            new_config_name = format!("client_config_{}", config_idx);
+            new_config_name = format!("client_config_{config_idx}");
         }
 
         new_config_name

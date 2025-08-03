@@ -156,7 +156,7 @@ impl ClientDaemon {
                 match relayer.connection().close_reason() {
                     None => ConnectionStatus::Connected,
                     Some(reason) => {
-                        ConnectionStatus::Error(format!("Connection closed: {:?}", reason))
+                        ConnectionStatus::Error(format!("Connection closed: {reason:?}"))
                     }
                 }
             } else {
