@@ -8,7 +8,7 @@ use tracing::{debug, error, info, warn};
 
 use super::types::QuincyInstance;
 use crate::ipc::{get_ipc_socket_path, ClientStatus, ConnectionStatus, IpcClient, IpcMessage};
-use quincy::utils::privilege::run_elevated;
+use crate::privilege::run_elevated;
 
 impl QuincyInstance {
     /// Starts a new Quincy VPN client instance.
@@ -33,7 +33,6 @@ impl QuincyInstance {
         info!("Starting client daemon process for: {}", name);
 
         let daemon_binary = Self::get_daemon_binary_path()?;
-        Self::log_daemon_info();
 
         Self::spawn_daemon_process(&daemon_binary, &config_path, &name).await?;
         let ipc_client = Self::establish_ipc_connection(&name).await;
@@ -58,15 +57,6 @@ impl QuincyInstance {
             .parent()
             .ok_or_else(|| anyhow::anyhow!("Could not determine parent directory"))?
             .join("quincy-client-daemon"))
-    }
-
-    /// Logs information about daemon log file locations.
-    fn log_daemon_info() {
-        let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let log_dir = std::path::Path::new(&home_dir).join(".quincy");
-        info!("Daemon logs will be available at:");
-        info!("  stdout: {}/daemon-stdout.log", log_dir.display());
-        info!("  stderr: {}/daemon-stderr.log", log_dir.display());
     }
 
     /// Spawns the daemon process with elevated privileges.

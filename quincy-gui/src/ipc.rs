@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -268,41 +269,5 @@ impl IpcConnection {
 }
 
 pub fn get_ipc_socket_path(instance_name: &str) -> PathBuf {
-    #[cfg(unix)]
-    {
-        // On macOS, prefer user-specific temp directory to avoid permission issues
-        #[cfg(target_os = "macos")]
-        {
-            if let Ok(tmpdir) = std::env::var("TMPDIR") {
-                let path = PathBuf::from(tmpdir).join(format!("quincy-{}.sock", instance_name));
-                debug!("Using macOS TMPDIR for socket: {:?}", path);
-                return path;
-            }
-        }
-
-        // Try XDG_RUNTIME_DIR first (Linux/BSD standard)
-        if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-            let path = PathBuf::from(runtime_dir).join(format!("quincy-{}.sock", instance_name));
-            debug!("Using XDG_RUNTIME_DIR for socket: {:?}", path);
-            return path;
-        }
-
-        // Fallback: use home directory on all Unix systems to avoid /tmp permission issues
-        if let Ok(home) = std::env::var("HOME") {
-            let socket_dir = PathBuf::from(home).join(".quincy");
-            let path = socket_dir.join(format!("quincy-{}.sock", instance_name));
-            debug!("Using HOME/.quincy for socket: {:?}", path);
-            return path;
-        }
-
-        // Last resort fallback to /tmp
-        let path = PathBuf::from("/tmp").join(format!("quincy-{}.sock", instance_name));
-        debug!("Using /tmp fallback for socket: {:?}", path);
-        path
-    }
-
-    #[cfg(windows)]
-    {
-        PathBuf::from(format!("quincy-{}", instance_name))
-    }
+    env::temp_dir().join(format!("quincy-{instance_name}.sock"))
 }

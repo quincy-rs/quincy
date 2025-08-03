@@ -31,29 +31,7 @@ pub fn run_elevated(program: &str, args: &[&str], title: &str, message: &str) ->
 
 #[cfg(target_os = "macos")]
 fn run_elevated_macos(program: &str, args: &[&str], _title: &str, message: &str) -> Result<Child> {
-    // Create the full command with arguments
-    let args_str = args.join(" ");
-
-    // Create log files in user's home directory for accessibility
-    let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let log_dir = std::path::Path::new(&home_dir).join(".quincy");
-
-    // Ensure log directory exists
-    if !log_dir.exists() {
-        std::fs::create_dir_all(&log_dir)?;
-    }
-
-    let stdout_log = log_dir.join("daemon-stdout.log");
-    let stderr_log = log_dir.join("daemon-stderr.log");
-
-    // Create command with output redirection (removed background execution)
-    let command_str = format!(
-        "{} {} > {} 2> {} &",
-        program,
-        args_str,
-        stdout_log.display(),
-        stderr_log.display()
-    );
+    let command_str = format!("{} {}", program, args.join(" "));
 
     // Create an AppleScript that will prompt for admin privileges
     let apple_script = format!(
@@ -63,9 +41,6 @@ fn run_elevated_macos(program: &str, args: &[&str], _title: &str, message: &str)
     );
 
     info!("Running with elevated privileges on macOS: {}", command_str);
-    info!("Daemon logs will be written to:");
-    info!("  stdout: {}", stdout_log.display());
-    info!("  stderr: {}", stderr_log.display());
 
     let child = Command::new("osascript")
         .arg("-e")
