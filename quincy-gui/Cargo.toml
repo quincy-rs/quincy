@@ -39,6 +39,9 @@ clap = { workspace = true }
 # GUI
 iced = { workspace = true }
 
+# Networking
+ipnet = { workspace = true }
+
 # Utils
 anyhow = { workspace = true }
 dashmap = { workspace = true }

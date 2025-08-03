@@ -10,6 +10,7 @@ use quincy::constants::QUINN_RUNTIME;
 use quincy::socket::bind_socket;
 use quinn::{Connection, Endpoint};
 
+use ipnet::IpNet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
 use crate::client::relayer::ClientRelayer;
@@ -20,6 +21,8 @@ use tracing::{debug, info};
 pub struct QuincyClient<I: InterfaceIO> {
     config: ClientConfig,
     relayer: Option<ClientRelayer<I>>,
+    client_address: Option<IpNet>,
+    server_address: Option<IpNet>,
 }
 
 impl<I: InterfaceIO> QuincyClient<I> {
@@ -31,6 +34,8 @@ impl<I: InterfaceIO> QuincyClient<I> {
         Self {
             config,
             relayer: None,
+            client_address: None,
+            server_address: None,
         }
     }
 
@@ -51,6 +56,10 @@ impl<I: InterfaceIO> QuincyClient<I> {
         info!("Successfully authenticated");
         info!("Received client address: {client_address}");
         info!("Received server address: {server_address}");
+
+        // Store the addresses for later access
+        self.client_address = Some(client_address);
+        self.server_address = Some(server_address);
 
         let interface = Interface::create(
             client_address,
@@ -78,6 +87,10 @@ impl<I: InterfaceIO> QuincyClient<I> {
             relayer.stop().await?;
         }
 
+        // Clear stored addresses when stopping
+        self.client_address = None;
+        self.server_address = None;
+
         Ok(())
     }
 
@@ -92,6 +105,16 @@ impl<I: InterfaceIO> QuincyClient<I> {
 
     pub fn relayer(&self) -> Option<&ClientRelayer<I>> {
         self.relayer.as_ref()
+    }
+
+    /// Returns the client IP address assigned during authentication.
+    pub fn client_address(&self) -> Option<IpNet> {
+        self.client_address
+    }
+
+    /// Returns the server IP address assigned during authentication.
+    pub fn server_address(&self) -> Option<IpNet> {
+        self.server_address
     }
 
     /// Connects to the Quincy server.

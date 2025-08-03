@@ -189,6 +189,8 @@ impl ClientDaemon {
                 packets_sent: stats.udp_tx.datagrams,
                 packets_received: stats.udp_rx.datagrams,
                 connection_duration,
+                client_address: client.client_address(),
+                server_address: client.server_address(),
             })
         } else {
             None

@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::{Path, PathBuf};
@@ -19,6 +20,8 @@ pub struct ConnectionMetrics {
     pub packets_sent: u64,
     pub packets_received: u64,
     pub connection_duration: Duration,
+    pub client_address: Option<IpNet>,
+    pub server_address: Option<IpNet>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
