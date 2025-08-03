@@ -1,7 +1,5 @@
 use anyhow::Result;
 use clap::Parser;
-use iced::window::Settings;
-use iced::Size;
 use quincy::utils::tracing::log_subscriber;
 use quincy_gui::gui::{expand_path, QuincyGui};
 use std::path::PathBuf;
@@ -47,15 +45,9 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let config_dir = expand_path(&args.config_dir);
 
-    let window_settings = Settings {
-        min_size: Some(Size::new(600., 400.)),
-        size: Size::new(800., 600.),
-        ..Settings::default()
-    };
-
-    iced::application(QuincyGui::title, QuincyGui::update, QuincyGui::view)
-        .window(window_settings)
+    iced::daemon(QuincyGui::title, QuincyGui::update, QuincyGui::view)
         .theme(QuincyGui::theme)
+        .subscription(QuincyGui::subscription)
         .run_with(|| QuincyGui::new(config_dir))?;
 
     Ok(())
