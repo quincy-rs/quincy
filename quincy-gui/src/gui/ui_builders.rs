@@ -454,46 +454,60 @@ impl QuincyGui {
         // Add client IP address if available
         if let Some(client_addr) = metrics.client_address {
             ip_info.push(
-                text(format!("Client IP: {client_addr}"))
-                    .size(12)
-                    .color(ColorPalette::TEXT_SECONDARY)
-                    .into(),
+                column![
+                    text("Client IP")
+                        .size(12)
+                        .color(ColorPalette::TEXT_SECONDARY),
+                    text(client_addr.to_string())
+                        .size(14)
+                        .color(ColorPalette::TEXT_PRIMARY),
+                ]
+                .spacing(2)
+                .into(),
             );
         }
 
         // Add server IP address if available
         if let Some(server_addr) = metrics.server_address {
             ip_info.push(
-                text(format!("Server IP: {server_addr}"))
-                    .size(12)
-                    .color(ColorPalette::TEXT_SECONDARY)
-                    .into(),
+                column![
+                    text("Server IP")
+                        .size(12)
+                        .color(ColorPalette::TEXT_SECONDARY),
+                    text(server_addr.to_string())
+                        .size(14)
+                        .color(ColorPalette::TEXT_PRIMARY),
+                ]
+                .spacing(2)
+                .into(),
             );
         }
 
         // Add connection duration below IP addresses
         ip_info.push(
-            text(format!(
-                "Connected for: {}",
-                format_duration(metrics.connection_duration)
-            ))
-            .size(12)
-            .color(ColorPalette::TEXT_SECONDARY)
+            column![
+                text("Connected for")
+                    .size(12)
+                    .color(ColorPalette::TEXT_SECONDARY),
+                text(format_duration(metrics.connection_duration))
+                    .size(14)
+                    .color(ColorPalette::TEXT_PRIMARY),
+            ]
+            .spacing(2)
             .into(),
         );
 
         let left_column = column(ip_info).spacing(2);
 
-        // Build transfer statistics for the right side with fixed width to prevent jitter
-        let right_column = row![
+        // Build transfer statistics vertically on the right side
+        let right_column = column![
             column![
                 text("Upload").size(12).color(ColorPalette::TEXT_SECONDARY),
                 text(format_bytes(metrics.bytes_sent))
                     .size(14)
                     .color(ColorPalette::ACCENT_PRIMARY),
             ]
-            .spacing(2)
-            .width(Length::Fixed(70.0)), // Fixed width to prevent jitter
+            .spacing(2),
             column![
                 text("Download")
                     .size(12)
@@ -503,9 +517,8 @@ impl QuincyGui {
                     .color(ColorPalette::ACCENT_PRIMARY),
             ]
             .spacing(2)
-            .width(Length::Fixed(80.0)) // Fixed width to prevent jitter
         ]
-        .spacing(16);
+        .spacing(2);
 
         row![left_column, right_column]
             .spacing(24)
