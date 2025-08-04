@@ -18,7 +18,7 @@ icon = ["resources/common/icon.png", "resources/common/icon@2x.png"]
 
 [[bin]]
 name = "quincy-client-gui"
-path = "src/main.rs"
+path = "src/bin/client_gui.rs"
 
 [[bin]]
 name = "quincy-client-daemon"
