@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Result};
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHasher};
 use clap::Parser;
 use dashmap::DashMap;
+use quincy::{QuincyError, Result};
 use quincy_server::users_file::{load_users_file, save_users_file, User};
 use rand_core::OsRng;
 use rpassword::prompt_password;
@@ -89,7 +89,7 @@ fn hash_password(password: String) -> Result<String> {
 
     let password_hash = argon
         .hash_password(password.as_bytes(), salt.as_salt())
-        .map_err(|e| anyhow!("Failed to hash password: {e}"))?;
+        .map_err(|e| QuincyError::system(format!("Failed to hash password: {e}")))?;
 
     Ok(password_hash.to_string())
 }

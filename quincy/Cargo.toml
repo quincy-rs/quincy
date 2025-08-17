@@ -56,7 +56,8 @@ tracing-subscriber = { workspace = true }
 nu-ansi-term = { workspace = true }
 
 # Utils
-anyhow = { workspace = true }
+# anyhow removed - using thiserror-based error system instead
+thiserror = { workspace = true }
 
 # Alloc
 [target.'cfg(unix)'.dependencies]

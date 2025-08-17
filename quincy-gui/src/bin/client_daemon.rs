@@ -1,8 +1,8 @@
-use anyhow::Result;
 use clap::Parser;
 use quincy::config::{ClientConfig, FromPath};
 use quincy::network::interface::tun_rs::TunRsInterface;
 use quincy::utils::tracing::log_subscriber;
+use quincy::{QuincyError, Result};
 use quincy_client::client::QuincyClient;
 use quincy_gui::ipc::{
     get_ipc_socket_path, ClientStatus, ConnectionMetrics, ConnectionStatus, IpcClient, IpcMessage,
@@ -81,7 +81,7 @@ impl ClientDaemon {
         let mut client_guard = self.client.lock().await;
 
         if client_guard.is_some() {
-            return Err(anyhow::anyhow!("Client is already running"));
+            return Err(QuincyError::system("Client is already running"));
         }
 
         let config = ClientConfig::from_path(&config_path, env_prefix)?;

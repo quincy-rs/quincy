@@ -1,6 +1,6 @@
-use anyhow::Result;
 use clap::Parser;
 use quincy::utils::tracing::log_subscriber;
+use quincy::{QuincyError, Result};
 use quincy_gui::gui::{expand_path, QuincyGui};
 use std::path::PathBuf;
 use tracing::info;
@@ -48,7 +48,8 @@ async fn main() -> Result<()> {
     iced::daemon(QuincyGui::title, QuincyGui::update, QuincyGui::view)
         .theme(QuincyGui::theme)
         .subscription(QuincyGui::subscription)
-        .run_with(|| QuincyGui::new(config_dir))?;
+        .run_with(|| QuincyGui::new(config_dir))
+        .map_err(|e| QuincyError::system(format!("GUI framework error: {e}")))?;
 
     Ok(())
 }

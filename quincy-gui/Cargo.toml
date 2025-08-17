@@ -43,7 +43,7 @@ iced = { workspace = true }
 ipnet = { workspace = true }
 
 # Utils
-anyhow = { workspace = true }
+# anyhow removed - using quincy::error::Result instead
 dashmap = { workspace = true }
 
 # Tokio

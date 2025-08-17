@@ -65,7 +65,8 @@ tracing-subscriber = { version = "^0.3.17", features = ["env-filter", "ansi"] }
 nu-ansi-term = "^0.50.0"
 
 # Utils
-anyhow = "^1.0"
+# anyhow = "^1.0" # Removed - migrated to thiserror-based error system
+thiserror = "^2.0"
 clap = { version = "^4.1", features = ["derive"] }
 
 # GUI

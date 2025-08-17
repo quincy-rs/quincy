@@ -1,9 +1,10 @@
 use crate::constants::PACKET_CHANNEL_SIZE;
+use crate::error::InterfaceError;
 use crate::network::dns::{add_dns_servers, delete_dns_servers};
 use crate::network::interface::InterfaceIO;
 use crate::network::packet::Packet;
 use crate::network::route::add_routes;
-use anyhow::{anyhow, Result};
+use crate::Result;
 use bytes::BytesMut;
 use ipnet::IpNet;
 use std::net::IpAddr;
@@ -71,7 +72,9 @@ impl InterfaceIO for TunRsInterface {
         #[cfg(all(target_os = "linux", feature = "offload"))]
         let builder = builder.offload(true);
 
-        let interface = builder.build_async()?;
+        let interface = builder
+            .build_async()
+            .map_err(|e| InterfaceError::CreationFailed)?;
         let interface = Arc::new(interface);
 
         info!(
@@ -103,10 +106,14 @@ impl InterfaceIO for TunRsInterface {
             routes,
             &self
                 .gateway
-                .ok_or_else(|| anyhow!("Missing gateway address on client"))?,
+                .ok_or_else(|| InterfaceError::ConfigurationFailed {
+                    reason: "Missing gateway address on client".to_string(),
+                })?,
             &self
                 .name()
-                .ok_or_else(|| anyhow!("Missing interface name on client"))?,
+                .ok_or_else(|| InterfaceError::ConfigurationFailed {
+                    reason: "Missing interface name on client".to_string(),
+                })?,
         )?;
         info!("Added routes: {routes:?}");
 
@@ -118,7 +125,9 @@ impl InterfaceIO for TunRsInterface {
             dns_servers,
             &self
                 .name()
-                .ok_or_else(|| anyhow!("attempted to configure DNS for interface without name"))?,
+                .ok_or_else(|| InterfaceError::ConfigurationFailed {
+                    reason: "attempted to configure DNS for interface without name".to_string(),
+                })?,
         )?;
 
         info!("Added DNS servers: {dns_servers:?}");
@@ -159,7 +168,9 @@ impl InterfaceIO for TunRsInterface {
             .await
             .recv()
             .await
-            .ok_or_else(|| anyhow!("failed to receive packet from reader channel"))?;
+            .ok_or_else(|| InterfaceError::IoError {
+                operation: "failed to receive packet from reader channel".to_string(),
+            })?;
 
         debug!("TUN read bytes: {}", read_packet.len());
 
@@ -181,7 +192,10 @@ impl InterfaceIO for TunRsInterface {
             .await;
 
         if read_packets == 0 {
-            return Err(anyhow!("failed to receive packets from reader channel"));
+            return Err(InterfaceError::IoError {
+                operation: "failed to receive packets from reader channel".to_string(),
+            }
+            .into());
         }
 
         let packets = packets_buf
@@ -201,7 +215,9 @@ impl InterfaceIO for TunRsInterface {
         self.writer_channel
             .send(packet)
             .await
-            .map_err(|_| anyhow!("failed to send packet to writer channel"))?;
+            .map_err(|_| InterfaceError::IoError {
+                operation: "failed to send packet to writer channel".to_string(),
+            })?;
 
         debug!("TUN sent bytes: {packet_len}");
 
@@ -216,7 +232,9 @@ impl InterfaceIO for TunRsInterface {
             self.writer_channel
                 .send(packet)
                 .await
-                .map_err(|_| anyhow!("failed to send packet to writer channel"))?;
+                .map_err(|_| InterfaceError::IoError {
+                    operation: "failed to send packet to writer channel".to_string(),
+                })?;
         }
 
         debug!("TUN sent packets: {packets_len}");
@@ -227,7 +245,9 @@ impl InterfaceIO for TunRsInterface {
     fn down(&self) -> Result<()> {
         self.inner
             .enabled(false)
-            .map_err(|e| anyhow!("failed to bring down TUN interface: {e}"))?;
+            .map_err(|e| InterfaceError::ConfigurationFailed {
+                reason: format!("failed to bring down TUN interface: {e}"),
+            })?;
 
         info!(
             "TUN interface {} is down",
@@ -261,7 +281,9 @@ fn reader_task(
             reader_channel_tx
                 .send(packet)
                 .await
-                .map_err(|e| anyhow!("failed to send packet to reader channel: {e}"))
+                .map_err(|e| InterfaceError::IoError {
+                    operation: format!("failed to send packet to reader channel: {e}"),
+                })
                 .inspect_err(|e| error!("{e}"))?;
         }
     })
@@ -278,7 +300,9 @@ fn writer_task(
             let packet = writer_channel_rx
                 .recv()
                 .await
-                .ok_or_else(|| anyhow!("failed to receive packet from writer channel"))
+                .ok_or_else(|| InterfaceError::IoError {
+                    operation: "failed to receive packet from writer channel".to_string(),
+                })
                 .inspect_err(|e| error!("{e}"))?;
 
             interface
@@ -361,8 +385,11 @@ fn writer_task(
                 .await;
 
             if num_packets == 0 {
-                return Err(anyhow!("failed to receive packet from writer channel"))
-                    .inspect_err(|e| error!("{e}"))?;
+                return Err(InterfaceError::IoError {
+                    operation: "failed to receive packet from writer channel".to_string(),
+                }
+                .into())
+                .inspect_err(|e| error!("{e}"))?;
             }
 
             let mut send_bufs = packet_buf

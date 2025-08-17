@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::Result;
 use std::net::IpAddr;
 use wintun_bindings::Adapter;
 
@@ -10,11 +10,19 @@ use wintun_bindings::Adapter;
 pub fn add_dns_servers(dns_servers: &[IpAddr], interface_name: &str) -> Result<()> {
     let wintun = unsafe {
         // SAFETY: signature verification is enabled in the WinTun library
-        wintun_bindings::load()?
+        wintun_bindings::load().map_err(|e| crate::error::DnsError::PlatformError {
+            message: format!("failed to load WinTun library: {e}"),
+        })?
     };
 
-    let adapter = Adapter::open(&wintun, interface_name)?;
-    adapter.set_dns_servers(dns_servers)?;
+    let adapter = Adapter::open(&wintun, interface_name).map_err(|e| {
+        crate::error::DnsError::PlatformError {
+            message: format!("failed to open adapter: {e}"),
+        }
+    })?;
+    adapter
+        .set_dns_servers(dns_servers)
+        .map_err(|e| crate::error::DnsError::ConfigurationFailed)?;
 
     Ok(())
 }
@@ -22,7 +30,7 @@ pub fn add_dns_servers(dns_servers: &[IpAddr], interface_name: &str) -> Result<(
 /// Deletes all DNS servers from the given interface.
 ///
 /// No-op on Windows.
-pub fn delete_dns_servers() -> anyhow::Result<()> {
+pub fn delete_dns_servers() -> Result<()> {
     // This is a no-op on Windows as the interface is deleted when the process exits
     // along with its routes and DNS servers
     Ok(())

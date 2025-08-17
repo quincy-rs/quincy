@@ -1,5 +1,6 @@
+use crate::error::DnsError;
 use crate::utils::command::run_command;
-use anyhow::{anyhow, Context, Result};
+use crate::Result;
 use std::io::Write;
 use std::net::IpAddr;
 
@@ -18,23 +19,33 @@ pub fn add_dns_servers(dns_servers: &[IpAddr], interface_name: &str) -> Result<(
         .collect::<Vec<_>>()
         .join("\n");
 
-    let mut process = run_command(RESOLVCONF_COMMAND, set_args)?;
+    let mut process =
+        run_command(RESOLVCONF_COMMAND, set_args).map_err(|e| DnsError::PlatformError {
+            message: format!("failed to execute command: {e}"),
+        })?;
 
     if let Some(mut stdin) = process.stdin.take() {
         stdin
             .write_all(input.as_bytes())
-            .context("failed to write to stdin")?;
+            .map_err(|e| DnsError::PlatformError {
+                message: format!("failed to write to stdin: {e}"),
+            })?;
     } else {
-        return Err(anyhow!("failed to open stdin"));
+        return Err(DnsError::PlatformError {
+            message: "failed to open stdin".to_string(),
+        }
+        .into());
     }
 
     let output = process
         .wait_with_output()
-        .context("failed to wait for process to exit")?;
+        .map_err(|e| DnsError::PlatformError {
+            message: format!("failed to wait for process to exit: {e}"),
+        })?;
 
     if !output.status.success() {
         let error_message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(anyhow!(error_message));
+        return Err(DnsError::ConfigurationFailed.into());
     }
 
     Ok(())

@@ -1,3 +1,5 @@
+use crate::error::NetworkError;
+use crate::Result;
 use bytes::{Bytes, BytesMut};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::{Deref, DerefMut};
@@ -15,9 +17,12 @@ impl Packet {
 
     /// Returns the destination IP address of the packet.
     #[inline]
-    pub fn destination(&self) -> anyhow::Result<IpAddr> {
+    pub fn destination(&self) -> Result<IpAddr> {
         if self.is_empty() {
-            return Err(anyhow::anyhow!("Packet is empty"));
+            return Err(NetworkError::PacketError {
+                reason: "Packet is empty".to_string(),
+            }
+            .into());
         }
 
         let version = self.data[0] >> 4;
@@ -31,14 +36,20 @@ impl Packet {
                 let dest_addr = self.parse_ipv6_destination()?;
                 Ok(IpAddr::V6(dest_addr))
             }
-            _ => Err(anyhow::anyhow!("Unsupported IP version: {}", version)),
+            _ => Err(NetworkError::PacketError {
+                reason: format!("Unsupported IP version: {version}"),
+            }
+            .into()),
         }
     }
 
     #[inline]
-    fn parse_ipv4_destination(&self) -> anyhow::Result<Ipv4Addr> {
+    fn parse_ipv4_destination(&self) -> Result<Ipv4Addr> {
         if self.data.len() < 20 {
-            return Err(anyhow::anyhow!("Packet is too short for IPv4 header"));
+            return Err(NetworkError::PacketError {
+                reason: "Packet is too short for IPv4 header".to_string(),
+            }
+            .into());
         }
 
         let destination_slice: [u8; 4] = self.data[16..20]
@@ -51,9 +62,12 @@ impl Packet {
     }
 
     #[inline]
-    fn parse_ipv6_destination(&self) -> anyhow::Result<Ipv6Addr> {
+    fn parse_ipv6_destination(&self) -> Result<Ipv6Addr> {
         if self.data.len() < 40 {
-            return Err(anyhow::anyhow!("Packet is too short for IPv6 header"));
+            return Err(NetworkError::PacketError {
+                reason: "Packet is too short for IPv6 header".to_string(),
+            }
+            .into());
         }
 
         let destination_slice: [u8; 16] = self.data[24..40]

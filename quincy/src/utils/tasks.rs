@@ -1,7 +1,8 @@
-use anyhow::Result;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use tokio::task::JoinHandle;
+
+use crate::error::Result;
 
 /// Joins all tasks in a FuturesUnordered or aborts them after a specified duration.
 pub async fn abort_all<R>(mut tasks: FuturesUnordered<JoinHandle<R>>) -> Result<()> {

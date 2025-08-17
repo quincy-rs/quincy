@@ -9,6 +9,10 @@ pub mod auth;
 pub mod certificates;
 pub mod config;
 pub mod constants;
+pub mod error;
 pub mod network;
 pub mod socket;
 pub mod utils;
+
+// Re-export common types for convenience
+pub use error::{QuincyError, Result};

@@ -1,5 +1,6 @@
+use crate::error::RouteError;
 use crate::utils::command::run_command;
-use anyhow::{anyhow, Context, Result};
+use crate::Result;
 use ipnet::IpNet;
 use std::net::IpAddr;
 
@@ -40,15 +41,20 @@ fn add_route(network: &IpNet, gateway: &IpAddr) -> Result<()> {
     let route_program = route_command_split[0];
     let route_args = &route_command_split[1..];
 
-    let output = run_command(route_program, route_args)?
+    let output = run_command(route_program, route_args)
+        .map_err(|e| RouteError::PlatformError {
+            message: format!("failed to execute command: {e}"),
+        })?
         .wait_with_output()
-        .context("failed to create child process")?;
+        .map_err(|e| RouteError::PlatformError {
+            message: format!("failed to create child process: {e}"),
+        })?;
 
     if !output.status.success() {
-        return Err(anyhow!(
-            "failed to add route: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+        return Err(RouteError::AddFailed {
+            destination: network.to_string(),
+        }
+        .into());
     }
 
     Ok(())

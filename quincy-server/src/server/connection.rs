@@ -1,10 +1,10 @@
 use crate::auth::AuthServer;
-use anyhow::{anyhow, Error, Result};
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use ipnet::IpNet;
 use quincy::utils::tasks::abort_all;
+use quincy::{QuincyError, Result};
 
 use quincy::network::packet::Packet;
 use quinn::Connection;
@@ -54,12 +54,15 @@ impl QuincyConnection {
     }
 
     /// Starts the tasks for this instance of Quincy connection.
-    pub async fn run(self, egress_queue: Receiver<Bytes>) -> (Self, Error) {
+    pub async fn run(self, egress_queue: Receiver<Bytes>) -> (Self, QuincyError) {
         if self.username.is_none() {
             let client_address = self.connection.remote_address();
             return (
                 self,
-                anyhow!("Client '{}' is not authenticated", client_address.ip()),
+                QuincyError::system(format!(
+                    "Client '{}' is not authenticated",
+                    client_address.ip()
+                )),
             );
         }
 
@@ -99,7 +102,7 @@ impl QuincyConnection {
             let data = egress_queue
                 .recv()
                 .await
-                .ok_or(anyhow!("Egress queue has been closed"))?;
+                .ok_or(QuincyError::system("Egress queue has been closed"))?;
 
             connection.send_datagram(data)?;
         }
@@ -122,13 +125,13 @@ impl QuincyConnection {
     pub fn username(&self) -> Result<&str> {
         self.username
             .as_deref()
-            .ok_or(anyhow!("Connection is unauthenticated"))
+            .ok_or(QuincyError::system("Connection is unauthenticated"))
     }
 
     /// Returns the client address associated with this connection.
     pub fn client_address(&self) -> Result<&IpNet> {
         self.client_address
             .as_ref()
-            .ok_or(anyhow!("Connection is unauthenticated"))
+            .ok_or(QuincyError::system("Connection is unauthenticated"))
     }
 }

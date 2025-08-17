@@ -1,5 +1,6 @@
+use crate::error::DnsError;
 use crate::utils::command::run_command;
-use anyhow::{anyhow, Result};
+use crate::Result;
 use dashmap::DashMap;
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -18,13 +19,23 @@ static SERVICE_DNS_SERVERS: LazyLock<DashMap<String, Vec<IpAddr>>> = LazyLock::n
 /// A vector of network service names.
 fn get_service_names() -> Result<Vec<String>> {
     // networksetup -listallnetworkservices
-    let output = run_command(NETWORK_SETUP_COMMAND, [SERVICES_GET_ARG])?.wait_with_output()?;
+    let output = run_command(NETWORK_SETUP_COMMAND, [SERVICES_GET_ARG])
+        .map_err(|e| DnsError::PlatformError {
+            message: format!("failed to execute command: {e}"),
+        })?
+        .wait_with_output()
+        .map_err(|e| DnsError::PlatformError {
+            message: format!("failed to wait for command: {e}"),
+        })?;
 
     if !output.status.success() {
-        return Err(anyhow!(
-            "failed to get network services: {}",
-            String::from_utf8_lossy(&output.stdout)
-        ));
+        return Err(DnsError::PlatformError {
+            message: format!(
+                "failed to get network services: {}",
+                String::from_utf8_lossy(&output.stdout)
+            ),
+        }
+        .into());
     }
 
     let output_str = String::from_utf8_lossy(&output.stdout);
@@ -52,16 +63,23 @@ pub fn add_dns_servers(dns_servers: &[IpAddr], _interface_name: &str) -> Result<
     for service_name in service_names {
         // networksetup -getdnsservers <service_name>
         let get_args = [DNS_GET_ARG, &service_name];
-        let get_output = run_command(NETWORK_SETUP_COMMAND, get_args)?.wait_with_output()?;
+        let get_output = run_command(NETWORK_SETUP_COMMAND, get_args)
+            .map_err(|e| DnsError::PlatformError {
+                message: format!("failed to execute command: {e}"),
+            })?
+            .wait_with_output()
+            .map_err(|e| DnsError::PlatformError {
+                message: format!("failed to wait for command: {e}"),
+            })?;
 
         if !get_output.status.success() {
-            return Err(anyhow!(
-                "Failed to set DNS configuration: {}",
-                String::from_utf8_lossy(&get_output.stdout)
-            ));
+            return Err(DnsError::ConfigurationFailed.into());
         }
 
-        let original_dns_servers = String::from_utf8(get_output.stdout)?
+        let original_dns_servers = String::from_utf8(get_output.stdout)
+            .map_err(|e| DnsError::PlatformError {
+                message: format!("Failed to parse DNS servers output: {e}"),
+            })?
             .lines()
             .filter_map(|dns_str| IpAddr::from_str(dns_str).ok())
             .collect();
@@ -75,13 +93,17 @@ pub fn add_dns_servers(dns_servers: &[IpAddr], _interface_name: &str) -> Result<
                 .map(|addr_string| addr_string.as_str()),
         );
 
-        let set_output = run_command(NETWORK_SETUP_COMMAND, set_args)?.wait_with_output()?;
+        let set_output = run_command(NETWORK_SETUP_COMMAND, set_args)
+            .map_err(|e| DnsError::PlatformError {
+                message: format!("failed to execute command: {e}"),
+            })?
+            .wait_with_output()
+            .map_err(|e| DnsError::PlatformError {
+                message: format!("failed to wait for command: {e}"),
+            })?;
 
         if !set_output.status.success() {
-            return Err(anyhow!(
-                "Failed to set DNS configuration: {}",
-                String::from_utf8_lossy(&set_output.stdout)
-            ));
+            return Err(DnsError::ConfigurationFailed.into());
         }
     }
 
@@ -111,13 +133,17 @@ pub fn delete_dns_servers() -> Result<()> {
                 .map(|addr_string| addr_string.as_str()),
         );
 
-        let set_output = run_command(NETWORK_SETUP_COMMAND, set_args)?.wait_with_output()?;
+        let set_output = run_command(NETWORK_SETUP_COMMAND, set_args)
+            .map_err(|e| DnsError::PlatformError {
+                message: format!("failed to execute command: {e}"),
+            })?
+            .wait_with_output()
+            .map_err(|e| DnsError::PlatformError {
+                message: format!("failed to wait for command: {e}"),
+            })?;
 
         if !set_output.status.success() {
-            return Err(anyhow!(
-                "Failed to clean up DNS configuration: {}",
-                String::from_utf8_lossy(&set_output.stdout)
-            ));
+            return Err(DnsError::RestoreFailed.into());
         }
     }
 
