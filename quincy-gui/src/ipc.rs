@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
 use ipnet::IpNet;
+use quincy::{QuincyError, Result};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::{Path, PathBuf};
@@ -215,7 +215,7 @@ impl IpcConnection {
                 reader.read_line(&mut line).await?;
 
                 if line.is_empty() {
-                    return Err(anyhow!("Connection closed"));
+                    return Err(QuincyError::system("Connection closed"));
                 }
 
                 debug!("Received IPC message: {}", line.trim());
@@ -229,7 +229,7 @@ impl IpcConnection {
                 reader.read_line(&mut line).await?;
 
                 if line.is_empty() {
-                    return Err(anyhow!("Connection closed"));
+                    return Err(QuincyError::system("Connection closed"));
                 }
 
                 debug!("Received IPC message: {}", line.trim());
@@ -243,7 +243,7 @@ impl IpcConnection {
                 reader.read_line(&mut line).await?;
 
                 if line.is_empty() {
-                    return Err(anyhow!("Connection closed"));
+                    return Err(QuincyError::system("Connection closed"));
                 }
 
                 debug!("Received IPC message: {}", line.trim());

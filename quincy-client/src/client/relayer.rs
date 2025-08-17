@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Result};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use quincy::network::interface::{Interface, InterfaceIO};
 use quincy::utils::tasks::abort_all;
+use quincy::{QuincyError, Result};
 use quinn::{Connection, VarInt};
 use std::sync::Arc;
 use tokio::signal;
@@ -44,7 +44,7 @@ impl<I: InterfaceIO> ClientRelayer<I> {
         // Send shutdown signal to the relayer task
         self.shutdown_tx
             .send(())
-            .map_err(|_| anyhow!("Failed to send shutdown signal"))?;
+            .map_err(|_| QuincyError::system("Failed to send shutdown signal"))?;
 
         Ok(())
     }
@@ -54,7 +54,7 @@ impl<I: InterfaceIO> ClientRelayer<I> {
         // Wait for the relayer task to finish
         self.relayer_task
             .await
-            .map_err(|_| anyhow!("Relayer task failed"))?
+            .map_err(|_| QuincyError::system("Relayer task failed"))?
     }
 
     pub fn connection(&self) -> &Connection {
@@ -124,7 +124,7 @@ impl<I: InterfaceIO> ClientRelayer<I> {
             for packet in packets {
                 connection
                     .send_datagram(packet.into())
-                    .map_err(|e| anyhow!("Failed to send packet: {e}"))?;
+                    .map_err(|e| QuincyError::system(format!("Failed to send packet: {e}")))?;
             }
         }
     }

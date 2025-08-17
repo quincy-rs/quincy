@@ -1,12 +1,15 @@
-use anyhow::{anyhow, Result};
 use ipnet::IpNet;
 use quinn::Connection;
 use std::time::Duration;
 use tokio::time::timeout;
 
-use quincy::auth::{
-    stream::{AuthMessage, AuthStreamBuilder, AuthStreamMode},
-    ServerAuthenticator,
+use quincy::{
+    auth::{
+        stream::{AuthMessage, AuthStreamBuilder, AuthStreamMode},
+        ServerAuthenticator,
+    },
+    error::AuthError,
+    Result,
 };
 
 /// Represents an authentication server handling initial authentication and session management.
@@ -32,15 +35,27 @@ impl AuthServer {
 
     /// Handles authentication for a client.
     ///
-    /// ### Arguments
-    /// - `connection` - The connection to the client
+    /// # Arguments
+    /// * `connection` - The connection to the client
+    ///
+    /// # Returns
+    /// A tuple containing the authenticated username and assigned client IP address
+    ///
+    /// # Errors
+    /// Returns `AuthError` variants for authentication failures:
+    /// - `InvalidCredentials` - When provided credentials are invalid
+    /// - `Timeout` - When authentication times out
+    /// - `StreamError` - When communication fails
+    /// - `InvalidPayload` - When authentication data is malformed
     pub async fn handle_authentication(&self, connection: &Connection) -> Result<(String, IpNet)> {
         let auth_stream_builder = AuthStreamBuilder::new(AuthStreamMode::Server);
         let mut auth_stream = auth_stream_builder
             .connect(connection, self.auth_timeout)
             .await?;
 
-        let message = timeout(self.auth_timeout, auth_stream.recv_message()).await??;
+        let message = timeout(self.auth_timeout, auth_stream.recv_message())
+            .await
+            .map_err(|_| AuthError::Timeout)??;
 
         let auth_result = match message {
             AuthMessage::Authenticate { payload } => {
@@ -54,10 +69,14 @@ impl AuthServer {
                     })
                     .await?;
 
-                Ok((username, client_address))
+                (username, client_address)
             }
-            _ => Err(anyhow!("authentication failed")),
-        }?;
+            _ => {
+                // Send failure message to client if authentication format is invalid
+                let _ = auth_stream.send_message(AuthMessage::Failed).await;
+                return Err(AuthError::InvalidPayload.into());
+            }
+        };
 
         auth_stream.close()?;
 

@@ -2,8 +2,8 @@ use crate::common::{
     client_config, dummy_packet, make_queue_pair, server_config, TestInterface, TestReceiver,
     TestSender,
 };
-use anyhow::Result;
 use quincy::config::{ClientConfig, ServerConfig};
+use quincy::Result;
 use quincy_client::client::QuincyClient;
 use quincy_server::server::QuincyServer;
 use rstest::rstest;

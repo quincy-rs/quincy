@@ -1,9 +1,9 @@
 use crate::common::dummy_packet;
-use anyhow::Result;
 use common::{
     client_config, make_queue_pair, server_config, TestInterface, TestReceiver, TestSender,
 };
 use quincy::config::{ClientConfig, ServerConfig};
+use quincy::Result;
 use quincy_client::client::QuincyClient;
 use quincy_server::server::QuincyServer;
 use rstest::rstest;
