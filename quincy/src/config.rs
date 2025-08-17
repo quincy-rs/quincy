@@ -4,7 +4,7 @@ use crate::certificates::{
 use crate::constants::{
     QUIC_MTU_OVERHEAD, TLS_ALPN_PROTOCOLS, TLS_INITIAL_CIPHER_SUITE, TLS_PROTOCOL_VERSIONS,
 };
-use anyhow::Result;
+use crate::error::{ConfigError, Result};
 use figment::{
     providers::{Env, Format, Toml},
     Figment,
@@ -201,10 +201,10 @@ pub trait FromPath<T: DeserializeOwned + ConfigInit<T>> {
     /// - `env_prefix` - the ENV prefix to use for overrides
     fn from_path(path: &Path, env_prefix: &str) -> Result<T> {
         if !path.exists() {
-            return Err(anyhow::anyhow!(
-                "failed to load configuration file '{}'",
-                path.display()
-            ));
+            return Err(ConfigError::FileNotFound {
+                path: path.to_path_buf(),
+            }
+            .into());
         }
 
         let figment = Figment::new()
@@ -315,24 +315,16 @@ impl ClientConfig {
         let mut cert_store = RootCertStore::empty();
 
         // Load certificates from file paths
-        self.authentication
-            .trusted_certificate_paths
-            .iter()
-            .map(|cert_path| {
-                load_certificates_from_file(cert_path)
-                    .map(|certs| cert_store.add_parsable_certificates(certs))
-            })
-            .collect::<Result<Vec<_>>>()?;
+        for cert_path in &self.authentication.trusted_certificate_paths {
+            let certs = load_certificates_from_file(cert_path)?;
+            cert_store.add_parsable_certificates(certs);
+        }
 
         // Load certificates from PEM strings
-        self.authentication
-            .trusted_certificates
-            .iter()
-            .map(|pem_data| {
-                load_certificates_from_pem(pem_data)
-                    .map(|certs| cert_store.add_parsable_certificates(certs))
-            })
-            .collect::<Result<Vec<_>>>()?;
+        for pem_data in &self.authentication.trusted_certificates {
+            let certs = load_certificates_from_pem(pem_data)?;
+            cert_store.add_parsable_certificates(certs);
+        }
 
         let crypto_provider = Arc::from(self.crypto.crypto_provider());
 
@@ -350,12 +342,23 @@ impl ClientConfig {
                 .expect("QUIC initial suite is a valid TLS 1.3 suite")
                 .quic_suite()
                 .expect("QUIC initial suite is a valid QUIC suite"),
-        )?;
+        )
+        .map_err(|e| ConfigError::InvalidValue {
+            field: "quic_client_config".to_string(),
+            reason: format!("QUIC configuration creation failed: {e}"),
+        })?;
 
         let mut quinn_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         let mut transport_config = TransportConfig::default();
 
-        transport_config.max_idle_timeout(Some(self.connection.connection_timeout.try_into()?));
+        transport_config.max_idle_timeout(Some(
+            self.connection.connection_timeout.try_into().map_err(|e| {
+                ConfigError::InvalidValue {
+                    field: "connection_timeout".to_string(),
+                    reason: format!("timeout value out of bounds: {e}"),
+                }
+            })?,
+        ));
         transport_config.keep_alive_interval(Some(self.connection.keep_alive_interval));
         transport_config.initial_mtu(self.connection.mtu_with_overhead());
         transport_config.min_mtu(self.connection.mtu_with_overhead());
@@ -397,12 +400,23 @@ impl ServerConfig {
                 .expect("QUIC initial suite is a valid TLS 1.3 suite")
                 .quic_suite()
                 .expect("QUIC initial suite is a valid QUIC suite"),
-        )?;
+        )
+        .map_err(|e| ConfigError::InvalidValue {
+            field: "quic_server_config".to_string(),
+            reason: format!("QUIC configuration creation failed: {e}"),
+        })?;
 
         let mut quinn_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
         let mut transport_config = TransportConfig::default();
 
-        transport_config.max_idle_timeout(Some(self.connection.connection_timeout.try_into()?));
+        transport_config.max_idle_timeout(Some(
+            self.connection.connection_timeout.try_into().map_err(|e| {
+                ConfigError::InvalidValue {
+                    field: "connection_timeout".to_string(),
+                    reason: format!("timeout value out of bounds: {e}"),
+                }
+            })?,
+        ));
         transport_config.initial_mtu(self.connection.mtu_with_overhead());
         transport_config.min_mtu(self.connection.mtu_with_overhead());
 
@@ -415,7 +429,12 @@ impl ServerConfig {
 impl ConnectionConfig {
     pub fn as_endpoint_config(&self) -> Result<EndpointConfig> {
         let mut endpoint_config = EndpointConfig::default();
-        endpoint_config.max_udp_payload_size(self.mtu_with_overhead())?;
+        endpoint_config
+            .max_udp_payload_size(self.mtu_with_overhead())
+            .map_err(|e| ConfigError::InvalidValue {
+                field: "mtu".to_string(),
+                reason: format!("MTU configuration failed: {e}"),
+            })?;
 
         Ok(endpoint_config)
     }

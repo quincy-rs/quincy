@@ -1,5 +1,4 @@
-use anyhow::Result;
-use anyhow::{anyhow, Context};
+use crate::error::{CertificateError, Result};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use std::fs::File;
 use std::io::{BufReader, Cursor};
@@ -13,15 +12,20 @@ use std::path::Path;
 /// ### Returns
 /// - `Vec<CertificateDer>` - A list of loaded certificates.
 pub fn load_certificates_from_file(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
-    let file = File::open(path).context(format!(
-        "failed to load certificate file '{}'",
-        path.display()
-    ))?;
+    let file = File::open(path).map_err(|_| CertificateError::LoadFailed {
+        path: path.to_path_buf(),
+    })?;
     let mut reader = BufReader::new(file);
 
-    let certs: Result<Vec<CertificateDer>, _> = rustls_pemfile::certs(&mut reader).collect();
+    let certs: std::result::Result<Vec<CertificateDer>, _> =
+        rustls_pemfile::certs(&mut reader).collect();
 
-    Ok(certs?)
+    certs.map_err(|_| {
+        CertificateError::LoadFailed {
+            path: path.to_path_buf(),
+        }
+        .into()
+    })
 }
 
 /// Loads certificates from a PEM string.
@@ -33,8 +37,10 @@ pub fn load_certificates_from_file(path: &Path) -> Result<Vec<CertificateDer<'st
 /// - `Vec<CertificateDer>` - A list of loaded certificates.
 pub fn load_certificates_from_pem(pem_data: &str) -> Result<Vec<CertificateDer<'static>>> {
     let mut reader = Cursor::new(pem_data.as_bytes());
-    let certs: Result<Vec<CertificateDer>, _> = rustls_pemfile::certs(&mut reader).collect();
-    Ok(certs?)
+    let certs: std::result::Result<Vec<CertificateDer>, _> =
+        rustls_pemfile::certs(&mut reader).collect();
+
+    certs.map_err(|_| CertificateError::UnsupportedFormat.into())
 }
 
 /// Loads a private key from a file.
@@ -45,14 +51,20 @@ pub fn load_certificates_from_pem(pem_data: &str) -> Result<Vec<CertificateDer<'
 /// ### Returns
 /// - `PrivatePkcs8KeyDer` - The loaded private key.
 pub fn load_private_key_from_file(path: &Path) -> Result<PrivatePkcs8KeyDer<'static>> {
-    let file = File::open(path).context(format!(
-        "failed to load private key file '{}'",
-        path.display()
-    ))?;
+    let file = File::open(path).map_err(|_| CertificateError::PrivateKeyLoadFailed {
+        path: path.to_path_buf(),
+    })?;
     let mut reader = BufReader::new(file);
 
-    Ok(rustls_pemfile::pkcs8_private_keys(&mut reader)
+    let key = rustls_pemfile::pkcs8_private_keys(&mut reader)
         .last()
-        .ok_or(anyhow!("No private key found in file"))??
-        .clone_key())
+        .ok_or_else(|| CertificateError::PrivateKeyLoadFailed {
+            path: path.to_path_buf(),
+        })?
+        .map_err(|_| CertificateError::PrivateKeyLoadFailed {
+            path: path.to_path_buf(),
+        })?
+        .clone_key();
+
+    Ok(key)
 }

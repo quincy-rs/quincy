@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use quincy::{QuincyError, Result};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -57,7 +57,7 @@ impl QuincyInstance {
     fn get_daemon_binary_path() -> Result<PathBuf> {
         Ok(std::env::current_exe()?
             .parent()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine parent directory"))?
+            .ok_or_else(|| QuincyError::system("Could not determine parent directory"))?
             .join("quincy-client-daemon"))
     }
 
@@ -94,7 +94,7 @@ impl QuincyInstance {
             tokio::task::spawn_blocking(move || child.wait_with_output()).await??;
 
         if !elevation_result.status.success() || !elevation_result.stderr.is_empty() {
-            return Err(anyhow!("Failed to spawn daemon process"));
+            return Err(QuincyError::system("Failed to spawn daemon process"));
         }
 
         Ok(())

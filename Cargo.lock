@@ -159,12 +159,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anyhow"
-version = "1.0.98"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
-
-[[package]]
 name = "approx"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3115,7 +3109,6 @@ dependencies = [
 name = "quincy"
 version = "0.16.0"
 dependencies = [
- "anyhow",
  "argon2",
  "async-trait",
  "bytes",
@@ -3136,6 +3129,7 @@ dependencies = [
  "serde",
  "serde_json",
  "socket2 0.6.0",
+ "thiserror 2.0.12",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3148,7 +3142,6 @@ dependencies = [
 name = "quincy-client"
 version = "0.16.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "clap",
  "futures",
@@ -3165,7 +3158,6 @@ dependencies = [
 name = "quincy-gui"
 version = "0.16.0"
 dependencies = [
- "anyhow",
  "clap",
  "dashmap",
  "iced",
@@ -3182,7 +3174,6 @@ dependencies = [
 name = "quincy-server"
 version = "0.16.0"
 dependencies = [
- "anyhow",
  "argon2",
  "async-trait",
  "bytes",

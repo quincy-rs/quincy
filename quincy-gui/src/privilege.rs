@@ -1,4 +1,4 @@
-use anyhow::Result;
+use quincy::Result;
 use std::process::{Child, Command, Stdio};
 use tracing::info;
 
@@ -25,7 +25,9 @@ pub fn run_elevated(program: &str, args: &[&str], title: &str, message: &str) ->
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
-        anyhow::bail!("Elevated privileges are not supported on this platform");
+        return Err(QuincyError::system(
+            "Elevated privileges are not supported on this platform",
+        ));
     }
 }
 
@@ -104,7 +106,9 @@ fn run_elevated_linux(program: &str, args: &[&str], _title: &str, message: &str)
             .spawn()?);
     }
 
-    anyhow::bail!("No graphical privilege escalation tool is supported on this platform")
+    Err(QuincyError::system(
+        "No graphical privilege escalation tool is supported on this platform",
+    ))
 }
 
 #[cfg(target_os = "windows")]

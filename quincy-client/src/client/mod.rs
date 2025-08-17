@@ -4,10 +4,10 @@ use crate::auth::AuthClient;
 use crate::users_file_auth::UsersFileClientAuthenticator;
 use std::fmt::Debug;
 
-use anyhow::{anyhow, Result};
 use quincy::config::ClientConfig;
 use quincy::constants::QUINN_RUNTIME;
 use quincy::socket::bind_socket;
+use quincy::{QuincyError, Result};
 use quinn::{Connection, Endpoint};
 
 use ipnet::IpNet;
@@ -42,7 +42,7 @@ impl<I: InterfaceIO> QuincyClient<I> {
     /// Connects to the Quincy server and starts the workers for this instance of the Quincy client.
     pub async fn start(&mut self) -> Result<()> {
         if self.relayer.is_some() {
-            return Err(anyhow!("Client is already started"));
+            return Err(QuincyError::system("Client is already started"));
         }
 
         let connection = self.connect_to_server().await?;
@@ -130,10 +130,10 @@ impl<I: InterfaceIO> QuincyClient<I> {
             .split(':')
             .next()
             .ok_or_else(|| {
-                anyhow!(
+                QuincyError::config_file_not_found(format!(
                     "Could not parse hostname from connection string '{}'",
                     self.config.connection_string
-                )
+                ))
             })?;
 
         let server_addr = self
@@ -142,10 +142,10 @@ impl<I: InterfaceIO> QuincyClient<I> {
             .to_socket_addrs()?
             .next()
             .ok_or_else(|| {
-                anyhow!(
+                QuincyError::connection_failed(format!(
                     "Connection string '{}' is invalid",
                     self.config.connection_string
-                )
+                ))
             })?;
 
         info!("Connecting: {}", self.config.connection_string);

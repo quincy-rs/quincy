@@ -3,7 +3,7 @@
 pub mod tun_rs;
 
 use crate::network::packet::Packet;
-use anyhow::Result;
+use crate::Result;
 use ipnet::IpNet;
 use std::future::Future;
 use std::net::IpAddr;

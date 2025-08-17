@@ -1,8 +1,8 @@
-use anyhow::Result;
 use dashmap::DashMap;
 use iced::widget::container as container_widget;
 use iced::widget::{column, row, text};
 use iced::{window, Background, Color, Element, Length, Task, Theme};
+use quincy::{QuincyError, Result};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fs;
@@ -231,19 +231,19 @@ impl QuincyGui {
     /// - The directory cannot be created due to permissions or other I/O errors
     fn validate_and_create_config_dir(config_dir: &Path) -> Result<()> {
         if config_dir.is_file() {
-            return Err(anyhow::anyhow!(
+            return Err(QuincyError::system(format!(
                 "Config directory path points to a file: {}",
                 config_dir.display()
-            ));
+            )));
         }
 
         if !config_dir.exists() {
             fs::create_dir_all(config_dir).map_err(|e| {
-                anyhow::anyhow!(
+                QuincyError::system(format!(
                     "Failed to create config directory {}: {}",
                     config_dir.display(),
                     e
-                )
+                ))
             })?
         }
 
@@ -265,11 +265,11 @@ impl QuincyGui {
     fn load_configurations(config_dir: &Path) -> Result<HashMap<String, QuincyConfig>> {
         let entries = fs::read_dir(config_dir)
             .map_err(|e| {
-                anyhow::anyhow!(
+                QuincyError::system(format!(
                     "Failed to read config directory {}: {}",
                     config_dir.display(),
                     e
-                )
+                ))
             })?
             .filter_map(Self::process_config_entry)
             .collect();
@@ -285,7 +285,7 @@ impl QuincyGui {
     /// # Returns
     /// Optional tuple of (config_name, QuincyConfig)
     fn process_config_entry(
-        entry: Result<fs::DirEntry, std::io::Error>,
+        entry: std::result::Result<fs::DirEntry, std::io::Error>,
     ) -> Option<(String, QuincyConfig)> {
         let config_path = entry.ok()?.path();
 

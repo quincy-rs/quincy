@@ -1,7 +1,7 @@
-use anyhow::Result;
 use iced::widget::text_editor;
 use iced::{window, Task};
 use quincy::config::FromPath;
+use quincy::Result;
 use std::fs;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};

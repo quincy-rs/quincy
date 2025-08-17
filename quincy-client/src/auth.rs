@@ -1,12 +1,15 @@
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
 use ipnet::IpNet;
 use quinn::Connection;
 
-use quincy::auth::{
-    stream::{AuthMessage, AuthStreamBuilder, AuthStreamMode},
-    ClientAuthenticator,
+use quincy::{
+    auth::{
+        stream::{AuthMessage, AuthStreamBuilder, AuthStreamMode},
+        ClientAuthenticator,
+    },
+    error::AuthError,
+    Result,
 };
 
 /// Represents an authentication client handling initial authentication and session management.
@@ -26,11 +29,17 @@ impl AuthClient {
 
     /// Establishes a session with the server.
     ///
-    /// ### Arguments
-    /// - `connection` - The connection to the server
+    /// # Arguments
+    /// * `connection` - The connection to the server
     ///
-    /// ### Returns
-    /// - (IpNet, IpNet) - The client and server addresses
+    /// # Returns
+    /// A tuple containing the client and server IP addresses
+    ///
+    /// # Errors
+    /// Returns `AuthError` variants for authentication failures:
+    /// - `InvalidCredentials` - When credentials are rejected by the server
+    /// - `Timeout` - When authentication times out
+    /// - `StreamError` - When communication with the server fails
     pub async fn authenticate(&self, connection: &Connection) -> Result<(IpNet, IpNet)> {
         let auth_stream_builder = AuthStreamBuilder::new(AuthStreamMode::Client);
         let mut auth_stream = auth_stream_builder
@@ -51,7 +60,8 @@ impl AuthClient {
                 client_address,
                 server_address,
             } => Ok((client_address, server_address)),
-            _ => Err(anyhow!("authentication failed")),
+            AuthMessage::Failed => Err(AuthError::InvalidCredentials)?,
+            _ => Err(AuthError::InvalidPayload)?,
         }
     }
 }
