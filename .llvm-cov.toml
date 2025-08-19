@@ -1,0 +1,35 @@
+# llvm-cov configuration file for Quincy
+# This file configures coverage collection to exclude certain files/directories
+# that are not suitable for unit/integration testing in CI
+
+[coverage]
+# Exclude patterns (glob style)
+exclude = [
+    # Ignore all app entrypoints because they are not unit/integration tested
+    "*/src/bin/*",
+    "*/bin/*",
+    
+    # Ignore all network related code because it cannot be unit/integration tested in CI
+    "*/src/network/*",
+    
+    # Command utilities
+    "*/src/utils/command/*",
+    
+    # GUI-specific code that's hard to test in CI
+    "quincy-gui/src/*",
+    
+    # Main entry points
+    "*/main.rs",
+]
+
+# Additional exclusions for better coverage accuracy
+[filters]
+# Only include src directories for core library coverage
+include_paths = [
+    "quincy/src/",
+    "quincy-client/src/",
+    "quincy-server/src/",
+]
+
+# Exclude test files from coverage calculation
+exclude_test_files = true

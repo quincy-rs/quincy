@@ -1,0 +1,232 @@
+stages:
+  - test
+  - build
+  - publish
+
+variables:
+  CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
+  CARGO_TARGET_DIR: "${CI_PROJECT_DIR}/target"
+
+default:
+  cache:
+    key: "${CI_JOB_NAME}"
+    paths:
+      - .cargo/registry
+      - .cargo/git
+      - target/
+
+.rust_setup:
+  before_script:
+    - rustup update stable
+    - rustup default stable
+    - rustup component add rustfmt clippy llvm-tools-preview
+    - cargo install cargo-llvm-cov
+    - rustc -V
+    - cargo -V
+
+.linux_setup:
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq git
+    - if ! command -v rustup >/dev/null; then curl -sSf https://sh.rustup.rs | sh -s -- -y && . "/builds/quincy-rs/quincy/.cargo/env"; fi
+    - !reference [ .rust_setup, before_script ]
+
+.macos_setup:
+  before_script:
+    # Build tools
+    - brew install cmake pkg-config git
+    - if ! command -v rustup >/dev/null; then curl -sSf https://sh.rustup.rs | sh -s -- -y && . "/builds/quincy-rs/quincy/.cargo/env"; fi
+    - !reference [ .rust_setup, before_script ]
+
+.windows_setup:
+  before_script:
+    - choco install -y visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --norestart"
+    - choco install -y cmake git nasm llvm
+    - Invoke-WebRequest https://win.rustup.rs -OutFile rustup-init.exe
+    - .\rustup-init.exe -y
+    - Remove-Item rustup-init.exe
+    - $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+    - rustup update stable
+    - rustup default stable
+    - rustc -V
+    - cargo -V
+    - !reference [ .rust_setup, before_script ]
+
+test:linux:
+  stage: test
+  tags:
+    - saas-linux-medium-amd64
+  parallel:
+    matrix:
+      - QUINCY_CRYPTO__KEY_EXCHANGE: [ Standard, Hybrid, PostQuantum ]
+  before_script:
+    - !reference [ .linux_setup, before_script ]
+  script:
+    - cargo llvm-cov --no-default-features --features jemalloc --workspace --no-report
+  artifacts:
+    # Keep the raw coverage artifacts for the merge job
+    paths:
+      - target/llvm-cov-target/
+    expire_in: 1 week
+
+test:windows:
+  stage: test
+  tags:
+    - saas-windows-medium-amd64
+  parallel:
+    matrix:
+      - QUINCY_CRYPTO__KEY_EXCHANGE: [ Standard, Hybrid, PostQuantum ]
+  before_script:
+    - !reference [ .windows_setup, before_script ]
+  script:
+    - cargo llvm-cov --no-default-features --features jemalloc --workspace --no-report
+  artifacts:
+    # Keep the raw coverage artifacts for the merge job
+    paths:
+      - target/llvm-cov-target/
+    expire_in: 1 week
+
+test:macos:
+  stage: test
+  tags:
+    - saas-macos-medium-m1
+  parallel:
+    matrix:
+      - QUINCY_CRYPTO__KEY_EXCHANGE: [ Standard, Hybrid, PostQuantum ]
+  before_script:
+    - !reference [ .macos_setup, before_script ]
+  script:
+    - cargo llvm-cov --no-default-features --features jemalloc --workspace --no-report
+  artifacts:
+    # Keep the raw coverage artifacts for the merge job
+    paths:
+      - target/llvm-cov-target/
+    expire_in: 1 week
+
+coverage:merge:
+  stage: test
+  needs:
+    - job: test:linux
+      artifacts: true
+    - job: test:windows
+      artifacts: true
+    - job: test:macos
+      artifacts: true
+  before_script:
+    - !reference [ .linux_setup, before_script ]
+  script:
+    # Generate ONE report from all collected profiles
+    - cargo llvm-cov report --workspace --cobertura --output-path cobertura.xml --summary-only
+  coverage: '/^lines:\s+(\d+(?:\.\d+)?%)/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: cobertura.xml
+    when: always
+
+lint:
+  stage: test
+  tags:
+    - saas-linux-medium-amd64
+  before_script:
+    - !reference [ .linux_setup, before_script ]
+  script:
+    - cargo fmt --all -- --check
+    - cargo clippy --all-targets --all-features -- -D warnings
+
+build:linux:
+  stage: build
+  image: quay.io/pypa/manylinux_2_28_x86_64
+  tags:
+    - saas-linux-medium-amd64
+  rules:
+    - if: $CI_COMMIT_TAG
+  before_script:
+    - !reference [ .linux_setup, before_script ]
+  script:
+    - cargo build --release --features=jemalloc
+    - mkdir -p release
+    - cp target/release/quincy-client release/
+    - cp target/release/quincy-server release/
+    - cp target/release/quincy-users release/
+    - cp target/release/quincy-client-gui release/
+    - cp target/release/quincy-client-daemon release/
+    - cd release && tar -czf ../quincy-linux-x86_64.tar.gz .
+  artifacts:
+    paths:
+      - quincy-${CI_COMMIT_TAG}-linux-x86_64.tar.gz
+
+build:macos:
+  stage: build
+  tags:
+    - saas-macos-medium-m1
+  rules:
+    - if: $CI_COMMIT_TAG
+  before_script:
+    - !reference [ .macos_setup, before_script ]
+  script:
+    - cargo build --release --features=jemalloc
+    - mkdir -p release
+    - cp target/release/quincy-client release/
+    - cp target/release/quincy-server release/
+    - cp target/release/quincy-users release/
+    - cp target/release/quincy-client-gui release/
+    - cp target/release/quincy-client-daemon release/
+    - cd release && tar -czf ../quincy-macos-arm64.tar.gz .
+  artifacts:
+    paths:
+      - quincy-${CI_COMMIT_TAG}-macos-arm64.tar.gz
+
+build:windows:
+  stage: build
+  tags:
+    - saas-windows-medium-amd64
+  rules:
+    - if: $CI_COMMIT_TAG
+  before_script:
+    - !reference [ .windows_setup, before_script ]
+    - curl -L -o wintun.zip https://www.wintun.net/builds/wintun-0.14.1.zip
+    - unzip wintun.zip
+  script:
+    - cargo build --release
+    - mkdir -p release
+    - cp target/release/quincy-client.exe release/
+    - cp target/release/quincy-server.exe release/
+    - cp target/release/quincy-users.exe release/
+    - cp target/release/quincy-client-gui.exe release/
+    - cp target/release/quincy-client-daemon.exe release/
+    - cp -r wintun release/
+    - cd release && zip -r ../quincy-windows-x86_64.zip .
+  artifacts:
+    paths:
+      - quincy-${CI_COMMIT_TAG}-windows-x86_64.zip
+
+build:docker:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  tags:
+    - saas-linux-large-amd64
+  rules:
+    - if: $CI_COMMIT_TAG
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker buildx create --use --driver docker-container
+  script:
+    - docker buildx build --platform linux/amd64,linux/arm64
+      --build-arg FEATURES=jemalloc
+      --tag $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG
+      --tag $CI_REGISTRY_IMAGE:latest
+      --push .
+
+publish-crate:
+  stage: publish
+  tags:
+    - saas-linux-medium-amd64
+  rules:
+    - if: $CI_COMMIT_TAG
+  before_script:
+    - !reference [ .linux_setup, before_script ]
+  script:
+    - cargo publish --token $CARGO_REGISTRY_TOKEN
