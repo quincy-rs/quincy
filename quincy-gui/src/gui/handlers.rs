@@ -613,7 +613,7 @@ impl QuincyGui {
 
         // Exit the application after cleanup
         let exit_task = Task::future(async {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
             std::process::exit(0);
         });
 

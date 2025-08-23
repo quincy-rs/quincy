@@ -143,7 +143,7 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Complete UI element tree for the application
-    pub fn view(&self, window_id: window::Id) -> Element<Message> {
+    pub fn view(&self, window_id: window::Id) -> Element<'_, Message> {
         if Some(window_id) == self.main_window_id {
             // Main window view
             let left_panel = self.build_config_selection_panel();

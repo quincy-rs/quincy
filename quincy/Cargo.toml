@@ -46,10 +46,6 @@ serde_json = { workspace = true }
 rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
 
-# Authentication
-argon2 = { workspace = true }
-rand_core = { workspace = true }
-
 # Tracing/Logging
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
