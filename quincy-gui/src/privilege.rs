@@ -57,6 +57,7 @@ fn run_elevated_macos(program: &str, args: &[&str], _title: &str, message: &str)
 
 #[cfg(target_os = "linux")]
 fn run_elevated_linux(program: &str, args: &[&str], _title: &str, message: &str) -> Result<Child> {
+    use quincy::QuincyError;
     use std::path::Path;
 
     // Try pkexec first (part of PolicyKit, available on most modern Linux distros)

@@ -149,6 +149,21 @@ impl InterfaceIO for TunRsInterface {
         Ok(())
     }
 
+    fn down(&self) -> Result<()> {
+        self.inner
+            .enabled(false)
+            .map_err(|e| InterfaceError::ConfigurationFailed {
+                reason: format!("failed to bring down TUN interface: {e}"),
+            })?;
+
+        info!(
+            "TUN interface {} is down",
+            self.name().unwrap_or("Unknown".to_string())
+        );
+
+        Ok(())
+    }
+
     fn mtu(&self) -> u16 {
         self.mtu
     }
@@ -238,21 +253,6 @@ impl InterfaceIO for TunRsInterface {
         }
 
         debug!("TUN sent packets: {packets_len}");
-
-        Ok(())
-    }
-
-    fn down(&self) -> Result<()> {
-        self.inner
-            .enabled(false)
-            .map_err(|e| InterfaceError::ConfigurationFailed {
-                reason: format!("failed to bring down TUN interface: {e}"),
-            })?;
-
-        info!(
-            "TUN interface {} is down",
-            self.name().unwrap_or("Unknown".to_string())
-        );
 
         Ok(())
     }
@@ -352,10 +352,12 @@ fn reader_task(
                 let size = sizes[idx];
                 let packet = bufs[idx].split_to(size).into();
 
-                reader_channel_tx
-                    .send(packet)
-                    .await
-                    .inspect_err(|e| error!("failed to send packet to reader channel: {e}"))?;
+                let send_res = reader_channel_tx.send(packet).await;
+
+                if send_res.is_err() {
+                    // Receiver has been dropped, exit the task
+                    return Ok(());
+                }
             }
         }
     })
@@ -384,12 +386,8 @@ fn writer_task(
                 .recv_many(&mut packet_buf, batch_size)
                 .await;
 
-            if num_packets == 0 {
-                return Err(InterfaceError::IoError {
-                    operation: "failed to receive packet from writer channel".to_string(),
-                }
-                .into())
-                .inspect_err(|e| error!("{e}"))?;
+            if num_packets == 0 || writer_channel_rx.is_closed() {
+                return Ok(());
             }
 
             let mut send_bufs = packet_buf

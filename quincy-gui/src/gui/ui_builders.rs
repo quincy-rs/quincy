@@ -22,7 +22,7 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Element for the editor window
-    pub fn build_editor_window_view(&self, window_id: window::Id) -> Element<Message> {
+    pub fn build_editor_window_view(&self, window_id: window::Id) -> Element<'_, Message> {
         let editor_window = match self.editor_windows.get(&window_id) {
             Some(window) => window,
             None => {
@@ -75,7 +75,7 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Container element with the configuration list
-    pub fn build_config_selection_panel(&self) -> Element<Message> {
+    pub fn build_config_selection_panel(&self) -> Element<'_, Message> {
         let config_buttons = self.build_config_button_list();
         let new_config_button = self.build_new_config_button();
 
@@ -96,7 +96,7 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Scrollable element containing configuration buttons
-    pub fn build_config_button_list(&self) -> Element<Message> {
+    pub fn build_config_button_list(&self) -> Element<'_, Message> {
         let mut configs = self.configs.keys().collect::<Vec<_>>();
         configs.sort();
 
@@ -148,7 +148,7 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Button element for creating new configurations
-    pub fn build_new_config_button(&self) -> Element<Message> {
+    pub fn build_new_config_button(&self) -> Element<'_, Message> {
         let mut btn = button_widget(
             text("+")
                 .color(ColorPalette::TEXT_PRIMARY)
@@ -176,7 +176,7 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Container element with configuration editing interface
-    pub fn build_config_details_panel(&self) -> Element<Message> {
+    pub fn build_config_details_panel(&self) -> Element<'_, Message> {
         let content = if let Some(selected_config) = self.selected_config.as_ref() {
             self.build_selected_config_content(selected_config)
         } else {
@@ -229,7 +229,10 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Text input element for the configuration name
-    pub fn build_config_name_input(&self, selected_config: &SelectedConfig) -> Element<Message> {
+    pub fn build_config_name_input(
+        &self,
+        selected_config: &SelectedConfig,
+    ) -> Element<'_, Message> {
         let mut input =
             text_input_widget("Configuration name", &selected_config.quincy_config.name)
                 .padding([6, 8])
@@ -252,7 +255,10 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Container element with configuration view
-    pub fn build_config_view_section(&self, selected_config: &SelectedConfig) -> Element<Message> {
+    pub fn build_config_view_section(
+        &self,
+        selected_config: &SelectedConfig,
+    ) -> Element<'_, Message> {
         let config_info = if let Some(ref config) = selected_config.parsed_config {
             let routes_display = if config.network.routes.is_empty() {
                 "None".to_string()
@@ -342,7 +348,7 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Column element with label and value
-    pub fn build_owned_config_field(&self, label: String, value: String) -> Element<Message> {
+    pub fn build_owned_config_field(&self, label: String, value: String) -> Element<'_, Message> {
         column![
             text(label).size(12).color(ColorPalette::TEXT_SECONDARY),
             text(value).size(14).color(ColorPalette::TEXT_PRIMARY)
@@ -363,7 +369,7 @@ impl QuincyGui {
         &self,
         selected_config: &SelectedConfig,
         has_client: bool,
-    ) -> Element<Message> {
+    ) -> Element<'_, Message> {
         if has_client {
             if let Some(instance) = self.instances.get(&selected_config.quincy_config.name) {
                 let status = instance.get_status();
@@ -389,7 +395,7 @@ impl QuincyGui {
         &self,
         connection_status: &ConnectionStatus,
         metrics: Option<&ConnectionMetrics>,
-    ) -> Element<Message> {
+    ) -> Element<'_, Message> {
         let status_text = match connection_status {
             ConnectionStatus::Connected => "Connected".to_string(),
             ConnectionStatus::Connecting => "Connecting...".to_string(),
@@ -447,7 +453,7 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Row element with IP addresses/connection time on left and transfer stats on right
-    pub fn build_connection_info(&self, metrics: &ConnectionMetrics) -> Element<Message> {
+    pub fn build_connection_info(&self, metrics: &ConnectionMetrics) -> Element<'_, Message> {
         // Build IP addresses section
         let mut ip_info = Vec::new();
 
@@ -533,7 +539,7 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Row element with action buttons
-    pub fn build_action_buttons(&self, has_client: bool) -> Element<Message> {
+    pub fn build_action_buttons(&self, has_client: bool) -> Element<'_, Message> {
         let connection_button = if has_client {
             let mut btn = button_widget(
                 text("Disconnect")
@@ -602,7 +608,7 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Column element with "no selection" message
-    pub fn build_no_selection_content(&self) -> Element<Message> {
+    pub fn build_no_selection_content(&self) -> Element<'_, Message> {
         container_widget(
             column![
                 text("No configuration selected")

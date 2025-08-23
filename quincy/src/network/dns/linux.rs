@@ -44,7 +44,6 @@ pub fn add_dns_servers(dns_servers: &[IpAddr], interface_name: &str) -> Result<(
         })?;
 
     if !output.status.success() {
-        let error_message = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(DnsError::ConfigurationFailed.into());
     }
 
