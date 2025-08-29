@@ -68,7 +68,7 @@ rand_core = { version = "^0.6.4", features = ["getrandom"] }
 
 # Tracing/Logging
 tracing = { version = "^0.1.37", features = ["release_max_level_info"] }
-tracing-subscriber = { version = "^0.3.17", features = ["env-filter", "ansi"] }
+tracing-subscriber = { version = "^0.3.20", features = ["env-filter", "ansi"] }
 nu-ansi-term = "^0.50.0"
 
 # Utils
