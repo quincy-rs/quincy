@@ -1,7 +1,10 @@
 ignore:
   # Ignore all app entrypoints because they are not unit/integration tested
-  - "src/bin"
+  - "**/src/bin/*"
+  - "**/src/main.rs"
   # Ignore all network related code because it cannot be unit/integration tested in CI
-  - "src/network"
+  - "quincy/src/network"
+  # Ignore GUI code because it cannot be unit/integration tested in CI
+  - "quincy-gui"
   # Command utilities
-  - "src/utils/command"
+  - "quincy/src/utils"

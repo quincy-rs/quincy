@@ -103,3 +103,8 @@ target/
 
 # End of https://www.toptal.com/developers/gitignore/api/rust,jetbrains+all
 .vscode/settings.json
+
+# Coverage reports
+lcov.info
+cobertura.xml
+coverage/

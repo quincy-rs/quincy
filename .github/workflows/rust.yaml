@@ -27,7 +27,7 @@ jobs:
         name: Install cargo llvm-cov
       - uses: Swatinem/rust-cache@v2
         name: Cache toolchain and dependencies
-      - run: cargo llvm-cov --no-default-features --features=jemalloc --workspace --lcov --output-path lcov.info
+      - run: cargo llvm-cov --no-default-features --features=jemalloc --workspace --no-cfg-coverage --lcov --output-path lcov.info
         name: Test with coverage
         env:
           QUINCY_CRYPTO__KEY_EXCHANGE: ${{ matrix.crypto }}
