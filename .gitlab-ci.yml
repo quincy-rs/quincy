@@ -39,12 +39,14 @@ default:
 
 .windows_setup:
   before_script:
+    - Import-Module $env:ChocolateyInstall\helpers\chocolateyProfile.psm1
     - choco install -y visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --norestart"
     - choco install -y cmake git nasm llvm
     - Invoke-WebRequest https://win.rustup.rs -OutFile rustup-init.exe
     - .\rustup-init.exe -y
     - Remove-Item rustup-init.exe
     - $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+    - refreshenv
     - rustup update stable
     - rustup default stable
     - rustc -V
@@ -55,51 +57,57 @@ test:linux:
   stage: test
   tags:
     - saas-linux-medium-amd64
-  parallel:
-    matrix:
-      - QUINCY_CRYPTO__KEY_EXCHANGE: [ Standard, Hybrid, PostQuantum ]
+  variables:
+    CRYPTO_ALGORITHMS: "Standard,Hybrid,PostQuantum"
   before_script:
     - !reference [ .linux_setup, before_script ]
   script:
-    - cargo llvm-cov --no-default-features --features jemalloc --workspace --no-cfg-coverage --no-report
+    - |
+      for algo in ${CRYPTO_ALGORITHMS//,/ }; do
+        export QUINCY_CRYPTO__KEY_EXCHANGE=$algo
+        cargo llvm-cov --no-default-features --features jemalloc --workspace --no-cfg-coverage --cobertura --output-path coverage-linux-$algo.xml
+      done
   artifacts:
-    # Keep the raw coverage artifacts for the merge job
     paths:
-      - target/llvm-cov-target/
+      - coverage-linux-*.xml
     expire_in: 1 week
 
 test:windows:
   stage: test
   tags:
     - saas-windows-medium-amd64
-  parallel:
-    matrix:
-      - QUINCY_CRYPTO__KEY_EXCHANGE: [ Standard, Hybrid, PostQuantum ]
+  variables:
+    CRYPTO_ALGORITHMS: "Standard,Hybrid,PostQuantum"
   before_script:
     - !reference [ .windows_setup, before_script ]
   script:
-    - cargo llvm-cov --no-default-features --features jemalloc --workspace --no-cfg-coverage --no-report
+    - |
+      foreach ($algo in $env:CRYPTO_ALGORITHMS.Split(',')) {
+        $env:QUINCY_CRYPTO__KEY_EXCHANGE = $algo
+        cargo llvm-cov --no-default-features --features jemalloc --workspace --no-cfg-coverage --cobertura --output-path coverage-windows-$algo.xml
+      }
   artifacts:
-    # Keep the raw coverage artifacts for the merge job
     paths:
-      - target/llvm-cov-target/
+      - coverage-windows-*.xml
     expire_in: 1 week
 
 test:macos:
   stage: test
   tags:
     - saas-macos-medium-m1
-  parallel:
-    matrix:
-      - QUINCY_CRYPTO__KEY_EXCHANGE: [ Standard, Hybrid, PostQuantum ]
+  variables:
+    CRYPTO_ALGORITHMS: "Standard,Hybrid,PostQuantum"
   before_script:
     - !reference [ .macos_setup, before_script ]
   script:
-    - cargo llvm-cov --no-default-features --features jemalloc --workspace --no-cfg-coverage --no-report
+    - |
+      for algo in ${CRYPTO_ALGORITHMS//,/ }; do
+        export QUINCY_CRYPTO__KEY_EXCHANGE=$algo
+        cargo llvm-cov --no-default-features --features jemalloc --workspace --no-cfg-coverage --cobertura --output-path coverage-macos-$algo.xml
+      done
   artifacts:
-    # Keep the raw coverage artifacts for the merge job
     paths:
-      - target/llvm-cov-target/
+      - coverage-macos-*.xml
     expire_in: 1 week
 
 coverage:merge:
@@ -113,10 +121,11 @@ coverage:merge:
       artifacts: true
   before_script:
     - !reference [ .linux_setup, before_script ]
+    - cargo install grcov
   script:
-    # Generate ONE report from all collected profiles
-    - cargo llvm-cov report --workspace --cobertura --output-path cobertura.xml --summary-only
-  coverage: '/^lines:\s+(\d+(?:\.\d+)?%)/'
+    # Merge all XML coverage reports into one
+    - grcov coverage-*.xml --output-type cobertura --output-path cobertura.xml
+  coverage: '/lines:\s+(\d+(?:\.\d+)?%)/'
   artifacts:
     reports:
       coverage_report:
