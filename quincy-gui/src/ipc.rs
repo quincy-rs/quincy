@@ -5,8 +5,10 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tracing::{debug, info};
+
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
-use tracing::{debug, error, info};
 
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::{
@@ -71,10 +73,7 @@ impl IpcServer {
                 std::fs::remove_file(socket_path)?;
             }
 
-            let listener = UnixListener::bind(socket_path).map_err(|e| {
-                error!("Failed to bind Unix socket at {:?}: {}", socket_path, e);
-                e
-            })?;
+            let listener = UnixListener::bind(socket_path)?;
 
             // Socket created by GUI user, no special permissions needed
 

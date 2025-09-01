@@ -113,7 +113,12 @@ fn run_elevated_linux(program: &str, args: &[&str], _title: &str, message: &str)
 }
 
 #[cfg(target_os = "windows")]
-fn run_elevated_windows(program: &str, args: &[&str], title: &str, message: &str) -> Result<Child> {
+fn run_elevated_windows(
+    program: &str,
+    args: &[&str],
+    _title: &str,
+    _message: &str,
+) -> Result<Child> {
     // On Windows, we'll use PowerShell's Start-Process with -Verb RunAs
     // This will trigger the UAC prompt
     let args_str = args.join(" ");

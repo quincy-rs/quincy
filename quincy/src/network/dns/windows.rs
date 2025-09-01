@@ -22,7 +22,7 @@ pub fn add_dns_servers(dns_servers: &[IpAddr], interface_name: &str) -> Result<(
     })?;
     adapter
         .set_dns_servers(dns_servers)
-        .map_err(|e| crate::error::DnsError::ConfigurationFailed)?;
+        .map_err(|_e| crate::error::DnsError::ConfigurationFailed)?;
 
     Ok(())
 }
