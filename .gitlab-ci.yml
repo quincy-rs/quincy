@@ -61,7 +61,7 @@ test:linux:
   before_script:
     - !reference [ .linux_setup, before_script ]
   script:
-    - cargo llvm-cov --no-default-features --features jemalloc --workspace --no-report
+    - cargo llvm-cov --no-default-features --features jemalloc --workspace --no-cfg-coverage --no-report
   artifacts:
     # Keep the raw coverage artifacts for the merge job
     paths:
@@ -78,7 +78,7 @@ test:windows:
   before_script:
     - !reference [ .windows_setup, before_script ]
   script:
-    - cargo llvm-cov --no-default-features --features jemalloc --workspace --no-report
+    - cargo llvm-cov --no-default-features --features jemalloc --workspace --no-cfg-coverage --no-report
   artifacts:
     # Keep the raw coverage artifacts for the merge job
     paths:
@@ -95,7 +95,7 @@ test:macos:
   before_script:
     - !reference [ .macos_setup, before_script ]
   script:
-    - cargo llvm-cov --no-default-features --features jemalloc --workspace --no-report
+    - cargo llvm-cov --no-default-features --features jemalloc --workspace --no-cfg-coverage --no-report
   artifacts:
     # Keep the raw coverage artifacts for the merge job
     paths:
