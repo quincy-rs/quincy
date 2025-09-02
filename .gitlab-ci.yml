@@ -71,11 +71,11 @@ test-linux:
     - |
       for algo in ${CRYPTO_ALGORITHMS//,/ }; do
         export QUINCY_CRYPTO__KEY_EXCHANGE=$algo
-        cargo llvm-cov --no-default-features --features jemalloc --workspace --no-cfg-coverage --cobertura --output-path coverage-linux-$algo.xml
+        cargo llvm-cov --no-default-features --features jemalloc --workspace --no-cfg-coverage --lcov --output-path coverage-linux-$algo.info
       done
   artifacts:
     paths:
-      - coverage-linux-*.xml
+      - coverage-linux-*.info
     expire_in: 1 week
 
 test-windows:
@@ -90,11 +90,11 @@ test-windows:
     - |
       foreach ($algo in $env:CRYPTO_ALGORITHMS.Split(',')) {
         $env:QUINCY_CRYPTO__KEY_EXCHANGE = $algo
-        cargo llvm-cov --no-default-features --features jemalloc --workspace --no-cfg-coverage --cobertura --output-path coverage-windows-$algo.xml
+        cargo llvm-cov --no-default-features --features jemalloc --workspace --no-cfg-coverage --lcov --output-path coverage-windows-$algo.info
       }
   artifacts:
     paths:
-      - coverage-windows-*.xml
+      - coverage-windows-*.info
     expire_in: 1 week
 
 test-macos:
@@ -109,11 +109,11 @@ test-macos:
     - |
       for algo in ${CRYPTO_ALGORITHMS//,/ }; do
         export QUINCY_CRYPTO__KEY_EXCHANGE=$algo
-        cargo llvm-cov --no-default-features --features jemalloc --workspace --no-cfg-coverage --cobertura --output-path coverage-macos-$algo.xml
+        cargo llvm-cov --no-default-features --features jemalloc --workspace --no-cfg-coverage --lcov --output-path coverage-macos-$algo.info
       done
   artifacts:
     paths:
-      - coverage-macos-*.xml
+      - coverage-macos-*.info
     expire_in: 1 week
 
 test-coverage:
@@ -129,9 +129,9 @@ test-coverage:
     - !reference [.linux_setup, before_script]
     - cargo install grcov
   script:
-    # Merge all XML coverage reports into one
-    - ls -lah coverage-*.xml
-    - grcov coverage-*.xml --output-type cobertura --output-path cobertura.xml
+    # Merge all LCOV coverage reports into one
+    - ls -lah coverage-*.info
+    - grcov coverage-*.info --source-dir . --output-type cobertura --output-path cobertura.xml
   coverage: '/lines:\s+(\d+(?:\.\d+)?%)/'
   artifacts:
     reports:
