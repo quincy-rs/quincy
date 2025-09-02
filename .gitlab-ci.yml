@@ -167,8 +167,7 @@ build-linux:
     - cp target/release/quincy-users release/
     - cp target/release/quincy-client-gui release/
     - cp target/release/quincy-client-daemon release/
-    - cd release
-    - tar -czf ../quincy-${CI_COMMIT_TAG}-linux-x86_64.tar.gz .
+    - tar -czf quincy-${CI_COMMIT_TAG}-linux-x86_64.tar.gz -C release .
   artifacts:
     paths:
       - quincy-${CI_COMMIT_TAG}-linux-x86_64.tar.gz
@@ -189,8 +188,7 @@ build-macos:
     - cp target/release/quincy-users release/
     - cp target/release/quincy-client-gui release/
     - cp target/release/quincy-client-daemon release/
-    - cd release
-    - tar -czf ../quincy-${CI_COMMIT_TAG}-macos-arm64.tar.gz .
+    - tar -czf quincy-${CI_COMMIT_TAG}-macos-arm64.tar.gz -C release .
   artifacts:
     paths:
       - quincy-${CI_COMMIT_TAG}-macos-arm64.tar.gz
@@ -203,8 +201,8 @@ build-windows:
     - if: $CI_COMMIT_TAG
   before_script:
     - !reference [.windows_setup, before_script]
-    - curl -L -o wintun.zip https://www.wintun.net/builds/wintun-0.14.1.zip
-    - unzip wintun.zip
+    - Invoke-WebRequest https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile wintun.zip
+    - Expand-Archive wintun.zip -DestinationPath .
   script:
     - cargo build --release
     - mkdir -p release
@@ -213,9 +211,8 @@ build-windows:
     - cp target/release/quincy-users.exe release/
     - cp target/release/quincy-client-gui.exe release/
     - cp target/release/quincy-client-daemon.exe release/
-    - cp -r wintun release/
-    - cd release
-    - zip -r ../quincy-${CI_COMMIT_TAG}-windows-x86_64.zip .
+    - cp wintun/bin/amd64/wintun.dll release/
+    - Compress-Archive -Path release/* -DestinationPath quincy-${CI_COMMIT_TAG}-windows-x86_64.zip
   artifacts:
     paths:
       - quincy-${CI_COMMIT_TAG}-windows-x86_64.zip
