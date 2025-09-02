@@ -34,14 +34,14 @@ default:
   before_script:
     - apt-get update -qq && apt-get install -y -qq git
     - if ! command -v rustup >/dev/null; then curl -sSf https://sh.rustup.rs | sh -s -- -y && . "/builds/quincy-rs/quincy/.cargo/env"; fi
-    - !reference [ .rust_setup, before_script ]
+    - !reference [.rust_setup, before_script]
 
 .macos_setup:
   before_script:
     # Build tools
     - brew install cmake pkg-config git
     - if ! command -v rustup >/dev/null; then curl -sSf https://sh.rustup.rs | sh -s -- -y && . "/builds/quincy-rs/quincy/.cargo/env"; fi
-    - !reference [ .rust_setup, before_script ]
+    - !reference [.rust_setup, before_script]
 
 .windows_setup:
   before_script:
@@ -57,16 +57,16 @@ default:
     - rustup default stable
     - rustc -V
     - cargo -V
-    - !reference [ .rust_setup, before_script ]
+    - !reference [.rust_setup, before_script]
 
-test:linux:
+test-linux:
   stage: test
   tags:
     - saas-linux-medium-amd64
   variables:
     CRYPTO_ALGORITHMS: "Standard,Hybrid,PostQuantum"
   before_script:
-    - !reference [ .linux_setup, before_script ]
+    - !reference [.linux_setup, before_script]
   script:
     - |
       for algo in ${CRYPTO_ALGORITHMS//,/ }; do
@@ -78,14 +78,14 @@ test:linux:
       - coverage-linux-*.xml
     expire_in: 1 week
 
-test:windows:
+test-windows:
   stage: test
   tags:
     - saas-windows-medium-amd64
   variables:
     CRYPTO_ALGORITHMS: "Standard,Hybrid,PostQuantum"
   before_script:
-    - !reference [ .windows_setup, before_script ]
+    - !reference [.windows_setup, before_script]
   script:
     - |
       foreach ($algo in $env:CRYPTO_ALGORITHMS.Split(',')) {
@@ -97,14 +97,14 @@ test:windows:
       - coverage-windows-*.xml
     expire_in: 1 week
 
-test:macos:
+test-macos:
   stage: test
   tags:
     - saas-macos-medium-m1
   variables:
     CRYPTO_ALGORITHMS: "Standard,Hybrid,PostQuantum"
   before_script:
-    - !reference [ .macos_setup, before_script ]
+    - !reference [.macos_setup, before_script]
   script:
     - |
       for algo in ${CRYPTO_ALGORITHMS//,/ }; do
@@ -116,20 +116,21 @@ test:macos:
       - coverage-macos-*.xml
     expire_in: 1 week
 
-coverage:merge:
+test-coverage:
   stage: test
   needs:
-    - job: test:linux
+    - job: test-linux
       artifacts: true
-    - job: test:windows
+    - job: test-windows
       artifacts: true
-    - job: test:macos
+    - job: test-macos
       artifacts: true
   before_script:
-    - !reference [ .linux_setup, before_script ]
+    - !reference [.linux_setup, before_script]
     - cargo install grcov
   script:
     # Merge all XML coverage reports into one
+    - ls -lah coverage-*.xml
     - grcov coverage-*.xml --output-type cobertura --output-path cobertura.xml
   coverage: '/lines:\s+(\d+(?:\.\d+)?%)/'
   artifacts:
@@ -144,12 +145,12 @@ lint:
   tags:
     - saas-linux-medium-amd64
   before_script:
-    - !reference [ .linux_setup, before_script ]
+    - !reference [.linux_setup, before_script]
   script:
     - cargo fmt --all -- --check
     - cargo clippy --all-targets --all-features -- -D warnings
 
-build:linux:
+build-linux:
   stage: build
   image: quay.io/pypa/manylinux_2_28_x86_64
   tags:
@@ -157,7 +158,7 @@ build:linux:
   rules:
     - if: $CI_COMMIT_TAG
   before_script:
-    - !reference [ .linux_setup, before_script ]
+    - !reference [.linux_setup, before_script]
   script:
     - cargo build --release --features=jemalloc
     - mkdir -p release
@@ -171,14 +172,14 @@ build:linux:
     paths:
       - quincy-${CI_COMMIT_TAG}-linux-x86_64.tar.gz
 
-build:macos:
+build-macos:
   stage: build
   tags:
     - saas-macos-medium-m1
   rules:
     - if: $CI_COMMIT_TAG
   before_script:
-    - !reference [ .macos_setup, before_script ]
+    - !reference [.macos_setup, before_script]
   script:
     - cargo build --release --features=jemalloc
     - mkdir -p release
@@ -192,14 +193,14 @@ build:macos:
     paths:
       - quincy-${CI_COMMIT_TAG}-macos-arm64.tar.gz
 
-build:windows:
+build-windows:
   stage: build
   tags:
     - saas-windows-medium-amd64
   rules:
     - if: $CI_COMMIT_TAG
   before_script:
-    - !reference [ .windows_setup, before_script ]
+    - !reference [.windows_setup, before_script]
     - curl -L -o wintun.zip https://www.wintun.net/builds/wintun-0.14.1.zip
     - unzip wintun.zip
   script:
@@ -216,7 +217,7 @@ build:windows:
     paths:
       - quincy-${CI_COMMIT_TAG}-windows-x86_64.zip
 
-build:docker:
+build-docker:
   stage: build
   image: docker:latest
   services:
@@ -235,13 +236,13 @@ build:docker:
       --tag $CI_REGISTRY_IMAGE:latest
       --push .
 
-publish-crate:
+publish-crates:
   stage: publish
   tags:
     - saas-linux-medium-amd64
   rules:
     - if: $CI_COMMIT_TAG
   before_script:
-    - !reference [ .linux_setup, before_script ]
+    - !reference [.linux_setup, before_script]
   script:
     - cargo publish --token $CARGO_REGISTRY_TOKEN
