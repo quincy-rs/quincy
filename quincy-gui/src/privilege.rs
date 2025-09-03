@@ -129,7 +129,7 @@ fn run_elevated_windows(
     );
 
     let powershell_command = format!(
-        "Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs -Wait",
+        "Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs",
         program,
         args_str.replace("'", "''")
     );

@@ -102,7 +102,7 @@ impl IpcServer {
         #[cfg(windows)]
         {
             let server = ServerOptions::new()
-                .first_pipe_instance(false)
+                .first_pipe_instance(true)
                 .create(&self.pipe_path)?;
             server.connect().await?;
             Ok(IpcConnection::new_windows_server(server))
