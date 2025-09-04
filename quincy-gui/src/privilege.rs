@@ -60,15 +60,15 @@ fn run_elevated_linux(program: &str, args: &[&str], _title: &str, message: &str)
     use quincy::QuincyError;
     use std::path::Path;
 
+    // Create a shell command that backgrounds the daemon
+    let command_str = format!("{} {} > /dev/null 2> /dev/null &", program, args.join(" "));
+
     // Try pkexec first (part of PolicyKit, available on most modern Linux distros)
     if Path::new("/usr/bin/pkexec").exists() {
         info!("Using pkexec for privilege elevation");
 
-        let mut command = Command::new("pkexec");
-        command.arg(program);
-        command.args(args);
-
-        return Ok(command
+        return Ok(Command::new("pkexec")
+            .args(["sh", "-c", &command_str])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -78,13 +78,8 @@ fn run_elevated_linux(program: &str, args: &[&str], _title: &str, message: &str)
     else if Path::new("/usr/bin/gksudo").exists() {
         info!("Using gksudo for privilege elevation");
 
-        let args_str = args.join(" ");
-        let command_str = format!("{} {}", program, args_str);
-
         return Ok(Command::new("gksudo")
-            .arg("--message")
-            .arg(message)
-            .arg(command_str)
+            .args(["--message", message, "sh", "-c", &command_str])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -94,13 +89,8 @@ fn run_elevated_linux(program: &str, args: &[&str], _title: &str, message: &str)
     else if Path::new("/usr/bin/kdesudo").exists() {
         info!("Using kdesudo for privilege elevation");
 
-        let args_str = args.join(" ");
-        let command_str = format!("{} {}", program, args_str);
-
         return Ok(Command::new("kdesudo")
-            .arg("--comment")
-            .arg(message)
-            .arg(command_str)
+            .args(["--comment", message, "sh", "-c", &command_str])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
