@@ -43,7 +43,8 @@ impl QuincyGui {
         let editor = text_editor(&editor_window.content)
             .height(Length::Fill)
             .on_action(move |action| Message::ConfigEdited(window_id, action))
-            .highlight("TOML", highlighter::Theme::SolarizedDark);
+            .highlight("toml", highlighter::Theme::SolarizedDark)
+            .font(iced::Font::MONOSPACE);
 
         let save_button = button_widget(text("Save").color(ColorPalette::TEXT_PRIMARY).size(14))
             .padding([8, 16])
