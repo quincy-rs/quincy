@@ -30,8 +30,8 @@ offload = ["quincy/offload"]
 jemalloc = ["quincy/jemalloc"]
 
 [dependencies]
-quincy = { path = "../quincy" }
-quincy-client = { path = "../quincy-client" }
+quincy = { workspace = true }
+quincy-client = { workspace = true }
 
 # Configuration
 clap = { workspace = true }
