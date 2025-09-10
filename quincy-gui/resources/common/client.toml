@@ -1,0 +1,31 @@
+# The address and port the Quincy server is available at
+connection_string = "<your_server>:55555"
+
+[authentication]
+# The username used for authentication
+username = "some_user"
+# The password used for authentication
+password = "some_password"
+# A list of trusted certificate file paths the server can use or have its certificate signed by
+trusted_certificate_paths = ["some/cert/path/server_cert.pem"]
+# A list of trusted certificates as PEM strings
+# trusted_certificates = [
+#   "-----BEGIN CERTIFICATE-----\nMIIBkjCB...\n-----END CERTIFICATE-----"
+# ]
+
+[connection]
+# The MTU used by the QUIC tunnel and the spawned TUN interface
+mtu = 1400
+
+[network]
+routes = [
+    "10.0.1.0/24",
+    "10.11.12.0/24"
+]
+dns_servers = [
+    "10.0.0.1"
+]
+
+[log]
+# The log level
+level = "info"
