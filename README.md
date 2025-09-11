@@ -18,7 +18,8 @@ Quincy is a VPN client and server implementation using the [QUIC](https://en.wik
   - [Requirements](#requirements)
   - [Build features](#build-features)
 - [Usage](#usage)
-  - [Client](#client)
+  - [Client (CLI)](#client-cli)
+  - [Client (GUI)](#client-gui)
   - [Server](#server)
   - [Users](#users)
 - [Architecture](#architecture)
@@ -38,7 +39,14 @@ Binaries are currently available for Windows, Linux (x86_64) and macOS (aarch64)
 ### Cargo
 Using cargo, installation of any published version can be done with a simple command:
 ```bash
-cargo install quincy
+# CLI client binary
+cargo install quincy-client
+
+# CLI server binaries
+cargo install quincy-server
+
+# Client GUI binaries
+cargo install quincy-gui
 ```
 
 ### Docker
@@ -88,16 +96,18 @@ A C compiler (Clang or GCC) is required for building due to depending on the `aw
 For more information, see [aws-lc-rs build instructions](https://github.com/aws/aws-lc-rs/blob/main/aws-lc-rs/README.md#Build).
 
 ### Build features
-- `jemalloc`: Uses the jemalloc memory allocator on UNIX systems for improved performance [default: **disabled**]
+- `jemalloc`: Uses the jemalloc memory allocator on UNIX systems for improved performance [default: **enabled**]
 - `offload`: Enables GSO/GRO offload optimization for TUN interfaces on Linux [default: **enabled**]
 
 ## Usage
-Quincy is split into 3 binaries:
-- `quincy-client`: The VPN client
-- `quincy-server`: The VPN server
-- `quincy-users`: A utility binary meant for managing the `users` file
+Quincy provides a couple of binaries based on their intended use:
+- `quincy-client`: The VPN client CLI
+- `quincy-server`: The VPN server CLI
+- `quincy-users`: A utility CLI binary meant for managing the `users` file
+- `quincy-client-gui`: The VPN client GUI
+- `quincy-client-daemon`: The VPN client daemon (background privileged service)
 
-### Client
+### Client (CLI)
 The Quincy client requires a separate configuration file, an example of which can be found in [`examples/client.toml`](examples/client.toml).
 The documentation for the client configuration file fields can be found [here](https://docs.rs/quincy/latest/quincy/config/struct.ClientConfig.html).
 
@@ -108,6 +118,14 @@ quincy-client --config-path examples/client.toml
 
 Routes are set by default to the address and netmask received from the server.
 Any additional routes now have to be set up manually.
+
+### Client (GUI)
+The Quincy client GUI is cross-platform and built using [iced](https://iced.rs/).
+It provides a simple interface for managing and (dis)connecting multiple client instances and viewing connection statistics.
+
+All configuration files are stored either in `~/.config/quincy` (Linux, macOS) or `%APPDATA%\quincy` (Windows).
+
+The GUI runs in unprivileged mode and uses a separate executable (`quincy-client-daemon`) to handle privileged operations such as creating the TUN interface and setting up routes. *The current way this is done is using rather primitive privilege escallation commands, which do not have the best user experience. This is subject to change and will be improved upon before a proper 1.0.0 is released.*
 
 ### Server
 The Quincy server requires a separate configuration file, an example of which can be found in [`examples/server.toml`](examples/server.toml).
@@ -241,6 +259,14 @@ certificate_key_file = "server_key.pem"
 **Client**
 ```toml
 [authentication]
-# A list of trusted certificates the server can use or have its certificate signed by
-trusted_certificates = ["server_cert.pem"]
+# A list of trusted certificate file paths the server can use or have its certificate signed by
+trusted_certificate_paths = ["examples/cert/server_cert.pem"]
+# A list of trusted certificates as PEM strings
+trusted_certificates = [
+    """
+    -----BEGIN CERTIFICATE-----
+    ...
+    -----END CERTIFICATE-----
+    """
+]
 ```
