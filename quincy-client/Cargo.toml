@@ -20,7 +20,7 @@ name = "quincy_client"
 path = "src/lib.rs"
 
 [features]
-default = ["offload"]
+default = ["offload", "jemalloc"]
 offload = ["quincy/offload"]
 jemalloc = ["quincy/jemalloc"]
 
