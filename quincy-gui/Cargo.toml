@@ -25,7 +25,7 @@ name = "quincy-client-daemon"
 path = "src/bin/client_daemon.rs"
 
 [features]
-default = ["offload"]
+default = ["offload", "jemalloc"]
 offload = ["quincy/offload"]
 jemalloc = ["quincy/jemalloc"]
 

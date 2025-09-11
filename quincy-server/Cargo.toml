@@ -20,7 +20,7 @@ name = "quincy-users"
 path = "src/bin/users.rs"
 
 [features]
-default = ["offload"]
+default = ["offload", "jemalloc"]
 offload = ["quincy/offload"]
 jemalloc = ["quincy/jemalloc"]
 
