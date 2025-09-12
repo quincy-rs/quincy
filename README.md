@@ -1,9 +1,9 @@
 # Quincy
 [![Crates.io](https://img.shields.io/crates/v/quincy.svg)](https://crates.io/crates/quincy)
-[![Container Registry](https://img.shields.io/badge/container-registry-blue?logo=gitlab)](https://gitlab.com/username/quincy/container_registry)
+[![Docker](https://img.shields.io/docker/v/m0dex/quincy?logo=docker&label=docker&color=blue)](https://hub.docker.com/r/m0dex/quincy)
 [![Documentation](https://docs.rs/quincy/badge.svg)](https://docs.rs/quincy/)
-[![Pipeline status](https://gitlab.com/username/quincy/badges/main/pipeline.svg)](https://gitlab.com/username/quincy/pipelines)
-[![Coverage](https://gitlab.com/username/quincy/badges/main/coverage.svg)](https://gitlab.com/username/quincy/-/jobs)
+[![Build status](https://github.com/M0dEx/quincy/workflows/CI/badge.svg)](https://github.com/M0dEx/quincy/actions?query=workflow%3ACI)
+[![codecov](https://codecov.io/gh/M0dEx/quincy/graph/badge.svg?token=YRKG8VIGWQ)](https://codecov.io/gh/M0dEx/quincy)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPLv3-blue.svg)](LICENCE)
 [![Matrix](https://img.shields.io/badge/chat-%23quincy:matrix.org-%2346BC99?logo=matrix)](https://matrix.to/#/#quincy:matrix.org)
 
