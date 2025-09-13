@@ -3,11 +3,11 @@ use iced::{window, Task};
 use quincy::config::FromPath;
 use quincy::Result;
 use std::fs;
-use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use super::app::QuincyGui;
 use super::types::QuincyInstance;
+use super::types::{EditorMsg, InstanceMsg};
 use super::types::{EditorWindow, Message, SelectedConfig};
 
 impl QuincyGui {
@@ -346,13 +346,10 @@ impl QuincyGui {
 
         let config_name = selected_config.quincy_config.name.clone();
         let config_path = selected_config.quincy_config.path.clone();
-        let instances = self.instances.clone();
 
         // Dismiss any previous error for this config on Connect
         self.last_errors.remove(&config_name);
-        if let Some(mut entry) = self.instances.get_mut(&config_name) {
-            entry.value_mut().last_error = None;
-        }
+        // Per-instance last_error was removed; rely on app-level last_errors and status
 
         Task::future(async move {
             info!("Connecting to instance: {}", config_name);
@@ -360,12 +357,11 @@ impl QuincyGui {
             match QuincyInstance::start(config_name.clone(), config_path).await {
                 Ok(instance) => {
                     info!("Instance {} connected", config_name);
-                    instances.insert(config_name.clone(), instance);
-                    Message::Connected(config_name)
+                    Message::Instance(InstanceMsg::ConnectedInstance(instance))
                 }
                 Err(e) => {
                     error!("Failed to start Quincy instance: {}", e);
-                    Message::ConnectFailed(config_name, e.to_string())
+                    Message::Instance(InstanceMsg::ConnectFailed(config_name, e.to_string()))
                 }
             }
         })
@@ -388,7 +384,7 @@ impl QuincyGui {
         self.last_errors.remove(&instance_config.name);
 
         let mut client_instance = match self.instances.remove(&instance_config.name) {
-            Some((_, client)) => client,
+            Some(client) => client,
             None => {
                 error!(
                     "No client instance found for configuration: {}",
@@ -398,8 +394,7 @@ impl QuincyGui {
             }
         };
 
-        // Clear stored error on the instance before stopping
-        client_instance.last_error = None;
+        // No per-instance last_error; rely on status and app-level errors
 
         info!("Instance {} disconnected", instance_config.name);
 
@@ -409,28 +404,71 @@ impl QuincyGui {
                 Err(e) => error!("Failed to stop client instance: {}", e),
             }
 
-            Message::Disconnected
+            Message::Instance(InstanceMsg::Disconnected)
         })
     }
 
     /// Handles periodic metrics updates for all running instances.
     ///
     /// # Returns
-    /// Async task to update metrics and schedule the next update
+    /// Async task to update metrics (timer cadence is driven by Subscription)
     pub fn handle_update_metrics(&self) -> Task<Message> {
-        let instances = self.instances.clone();
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
 
-        Task::future(async move {
-            for mut entry in instances.iter_mut() {
-                let instance = entry.value_mut();
-                if let Err(e) = instance.update_status().await {
-                    error!("Failed to update status for {}: {}", instance.name, e);
-                }
-            }
+        // For each instance, spawn a task that fetches status and maps it to a message.
+        let tasks: Vec<Task<Message>> = self
+            .instances
+            .iter()
+            .map(|(name, instance)| {
+                let name = name.clone();
+                let ipc_opt: Option<Arc<Mutex<crate::ipc::IpcConnection>>> =
+                    instance.ipc_client.clone();
 
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            Message::UpdateMetrics
-        })
+                Task::future(async move {
+                    if let Some(ipc) = ipc_opt {
+                        let mut conn = ipc.lock().await;
+                        if let Err(e) = conn.send(&crate::ipc::IpcMessage::GetStatus).await {
+                            return Message::Instance(InstanceMsg::DisconnectedWithError(
+                                name,
+                                e.to_string(),
+                            ));
+                        }
+                        match conn.recv().await {
+                            Ok(crate::ipc::IpcMessage::StatusUpdate(status)) => {
+                                return Message::Instance(InstanceMsg::StatusUpdated(name, status));
+                            }
+                            Ok(crate::ipc::IpcMessage::Error(err)) => {
+                                let status = crate::ipc::ClientStatus {
+                                    status: crate::ipc::ConnectionStatus::Error(err),
+                                    metrics: None,
+                                };
+                                return Message::Instance(InstanceMsg::StatusUpdated(name, status));
+                            }
+                            Ok(other) => {
+                                return Message::Instance(InstanceMsg::DisconnectedWithError(
+                                    name,
+                                    format!("Unexpected IPC message: {:?}", other),
+                                ));
+                            }
+                            Err(e) => {
+                                return Message::Instance(InstanceMsg::DisconnectedWithError(
+                                    name,
+                                    e.to_string(),
+                                ));
+                            }
+                        }
+                    }
+                    // No IPC connection available: treat as disconnected with reason
+                    Message::Instance(InstanceMsg::DisconnectedWithError(
+                        name,
+                        "IPC connection missing".to_string(),
+                    ))
+                })
+            })
+            .collect();
+
+        Task::batch(tasks)
     }
 
     /// Handles a successful connection event by clearing any stored last error for the config.
@@ -546,7 +584,7 @@ impl QuincyGui {
             level: window::Level::AlwaysOnTop,
             icon: None,
             platform_specific: window::settings::PlatformSpecific::default(),
-            exit_on_close_request: true,
+            exit_on_close_request: false,
         });
 
         // Store the editor window info immediately
@@ -557,7 +595,7 @@ impl QuincyGui {
         self.editor_windows.insert(window_id, editor_window);
         self.editor_modal_open = true;
 
-        Task::batch([open_task.map(move |_| Message::EditorWindowOpened(window_id))])
+        Task::batch([open_task.map(move |_| Message::Editor(EditorMsg::WindowOpened(window_id)))])
     }
 
     /// Handles editor window opened event.
@@ -568,15 +606,11 @@ impl QuincyGui {
     /// # Returns
     /// Task::none() - No async task needed
     pub fn handle_editor_window_opened(&mut self, window_id: window::Id) -> Task<Message> {
-        if let Some(selected_config) = self.selected_config.as_ref() {
-            let editor_window = EditorWindow {
-                config_name: selected_config.quincy_config.name.clone(),
-                content: text_editor::Content::with_text(&selected_config.editable_content.text()),
-            };
-            self.editor_windows.insert(window_id, editor_window);
+        // Already inserted on open; just confirm it still exists and log.
+        if let Some(editor_window) = self.editor_windows.get(&window_id) {
             info!(
                 "Editor window opened for config: {}",
-                selected_config.quincy_config.name
+                editor_window.config_name
             );
         }
         Task::none()
@@ -614,40 +648,27 @@ impl QuincyGui {
     pub fn handle_main_window_closed(&mut self) -> Task<Message> {
         info!("Main window closed, shutting down application");
 
-        // Disconnect all running instances
-        let disconnect_tasks: Vec<_> = self
-            .instances
-            .iter()
-            .map(|entry| {
-                let config_name = entry.key().clone();
-                info!("Shutting down instance: {}", config_name);
-                config_name
-            })
-            .collect();
-
-        // Create tasks to stop all instances
-        let shutdown_tasks: Vec<Task<Message>> = disconnect_tasks
+        // Snapshot keys to avoid borrow issues, then remove each instance
+        let instance_names: Vec<String> = self.instances.keys().cloned().collect();
+        let shutdown_tasks: Vec<Task<Message>> = instance_names
             .into_iter()
             .filter_map(|config_name| {
-                if let Some((_, mut instance)) = self.instances.remove(&config_name) {
-                    Some(Task::future(async move {
+                self.instances.remove(&config_name).map(|mut instance| {
+                    Task::future(async move {
                         if let Err(e) = instance.stop().await {
                             error!("Failed to stop instance {}: {}", config_name, e);
                         }
-                        Message::Disconnected
-                    }))
-                } else {
-                    None
-                }
+                        Message::Instance(InstanceMsg::Disconnected)
+                    })
+                })
             })
             .collect();
 
-        // Exit the application after cleanup
-        let exit_task = Task::future(async {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            std::process::exit(0);
-        });
+        // Close any remaining editor windows to allow the application to exit naturally
+        let editor_ids: Vec<window::Id> = self.editor_windows.keys().cloned().collect();
+        let close_editor_tasks: Vec<Task<Message>> =
+            editor_ids.into_iter().map(window::close).collect();
 
-        Task::batch([Task::batch(shutdown_tasks), exit_task])
+        Task::batch([Task::batch(shutdown_tasks), Task::batch(close_editor_tasks)])
     }
 }
