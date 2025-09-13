@@ -34,6 +34,8 @@ pub struct QuincyGui {
     pub(crate) main_window_id: Option<window::Id>,
     /// Whether an editor window is currently open (for modal behavior)
     pub(crate) editor_modal_open: bool,
+    /// Last connection errors per configuration (for cases where no instance exists yet)
+    pub(crate) last_errors: HashMap<String, String>,
 }
 
 impl QuincyGui {
@@ -84,6 +86,7 @@ impl QuincyGui {
                 editor_windows: BTreeMap::new(),
                 main_window_id: Some(main_window_id),
                 editor_modal_open: false,
+                last_errors: HashMap::new(),
             },
             Task::batch([
                 open_main_window.map(|_| Message::UpdateMetrics),
@@ -127,12 +130,12 @@ impl QuincyGui {
             Message::EditorWindowClosed(window_id) => self.handle_editor_window_closed(window_id),
             Message::Connect => self.handle_connect(),
             Message::Disconnect => self.handle_disconnect(),
-            Message::Connected(_config_name) => {
-                // Instance was already inserted during the async task
-                Task::none()
-            }
+            Message::Connected(config_name) => self.handle_connected(config_name),
             Message::Disconnected => Task::none(),
             Message::UpdateMetrics => self.handle_update_metrics(),
+            Message::ConnectFailed(config_name, error) => {
+                self.handle_connect_failed(config_name, error)
+            }
         }
     }
 

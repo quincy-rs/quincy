@@ -374,28 +374,53 @@ impl QuincyGui {
         if has_client {
             if let Some(instance) = self.instances.get(&selected_config.quincy_config.name) {
                 let status = instance.get_status();
-                self.build_instance_status_display(&status.status, status.metrics.as_ref())
+                let last_error = instance.last_error.as_deref();
+                self.build_instance_status_display(
+                    &status.status,
+                    status.metrics.as_ref(),
+                    &instance.name,
+                    last_error,
+                )
             } else {
                 // Show loading status when client is starting
-                self.build_instance_status_display(&ConnectionStatus::Connecting, None)
+                self.build_instance_status_display(
+                    &ConnectionStatus::Connecting,
+                    None,
+                    &selected_config.quincy_config.name,
+                    None,
+                )
             }
         } else {
             // Always show disconnected status when no client is running
-            self.build_instance_status_display(&ConnectionStatus::Disconnected, None)
+            let last_error = self
+                .last_errors
+                .get(&selected_config.quincy_config.name)
+                .map(|s| s.as_str());
+            self.build_instance_status_display(
+                &ConnectionStatus::Disconnected,
+                None,
+                &selected_config.quincy_config.name,
+                last_error,
+            )
         }
     }
 
     /// Builds the status display for a running instance.
     ///
     /// # Arguments
-    /// * `status` - Current client status and metrics
+    /// * `connection_status` - Current connection status
+    /// * `metrics` - Optional connection metrics
+    /// * `instance_name` - Instance/config name for routing actions
+    /// * `last_error` - Last connection error to display, if any
     ///
     /// # Returns
-    /// Column element with status information
+    /// Column element with status information and optional dismissable error window
     pub fn build_instance_status_display(
         &self,
         connection_status: &ConnectionStatus,
         metrics: Option<&ConnectionMetrics>,
+        _instance_name: &str,
+        last_error: Option<&str>,
     ) -> Element<'_, Message> {
         let status_text = match connection_status {
             ConnectionStatus::Connected => "Connected".to_string(),
@@ -424,6 +449,23 @@ impl QuincyGui {
                 .into(),
             text(status_text).size(14).color(status_color).into(),
         ];
+
+        // Show the last error inline within the existing status container (no separate dismiss button)
+        if let Some(err) = last_error {
+            // Only add if the status itself is not already an Error with the same text
+            let show_inline_error = match connection_status {
+                ConnectionStatus::Error(current) => current != err,
+                _ => true,
+            };
+            if show_inline_error {
+                content.push(
+                    text(err.to_string())
+                        .size(14)
+                        .color(ColorPalette::ERROR)
+                        .into(),
+                );
+            }
+        }
 
         // Add metrics if available
         if let Some(metrics) = metrics {

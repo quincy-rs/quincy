@@ -348,6 +348,12 @@ impl QuincyGui {
         let config_path = selected_config.quincy_config.path.clone();
         let instances = self.instances.clone();
 
+        // Dismiss any previous error for this config on Connect
+        self.last_errors.remove(&config_name);
+        if let Some(mut entry) = self.instances.get_mut(&config_name) {
+            entry.value_mut().last_error = None;
+        }
+
         Task::future(async move {
             info!("Connecting to instance: {}", config_name);
 
@@ -359,7 +365,7 @@ impl QuincyGui {
                 }
                 Err(e) => {
                     error!("Failed to start Quincy instance: {}", e);
-                    Message::Disconnected
+                    Message::ConnectFailed(config_name, e.to_string())
                 }
             }
         })
@@ -378,6 +384,9 @@ impl QuincyGui {
             }
         };
 
+        // Dismiss any previous error for this config on Disconnect
+        self.last_errors.remove(&instance_config.name);
+
         let mut client_instance = match self.instances.remove(&instance_config.name) {
             Some((_, client)) => client,
             None => {
@@ -388,6 +397,9 @@ impl QuincyGui {
                 return Task::none();
             }
         };
+
+        // Clear stored error on the instance before stopping
+        client_instance.last_error = None;
 
         info!("Instance {} disconnected", instance_config.name);
 
@@ -419,6 +431,25 @@ impl QuincyGui {
             tokio::time::sleep(Duration::from_secs(1)).await;
             Message::UpdateMetrics
         })
+    }
+
+    /// Handles a successful connection event by clearing any stored last error for the config.
+    ///
+    /// # Arguments
+    /// * `config_name` - The configuration name that connected
+    pub fn handle_connected(&mut self, config_name: String) -> Task<Message> {
+        self.last_errors.remove(&config_name);
+        Task::none()
+    }
+
+    /// Handles a failed connection attempt and stores its error message for display.
+    ///
+    /// # Arguments
+    /// * `config_name` - The configuration that failed to connect
+    /// * `error` - Error message
+    pub fn handle_connect_failed(&mut self, config_name: String, error: String) -> Task<Message> {
+        self.last_errors.insert(config_name, error);
+        Task::none()
     }
 
     /// Handles saving of the current configuration from editor window.
