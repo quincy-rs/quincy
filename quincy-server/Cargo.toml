@@ -1,6 +1,7 @@
 [package]
 name = "quincy-server"
 description = "QUIC-based VPN - Server binaries"
+readme = "../README.md"
 version.workspace = true
 authors.workspace = true
 license.workspace = true

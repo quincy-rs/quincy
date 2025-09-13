@@ -1,6 +1,7 @@
 [package]
 name = "quincy-client"
 description = "QUIC-based VPN - Client binary"
+readme = "../README.md"
 version.workspace = true
 authors.workspace = true
 license.workspace = true
