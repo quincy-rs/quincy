@@ -16,6 +16,8 @@ pub struct QuincyInstance {
     pub(crate) ipc_client: Option<std::sync::Arc<tokio::sync::Mutex<crate::ipc::IpcConnection>>>,
     /// Current connection status and metrics
     pub(crate) status: ClientStatus,
+    /// Last connection error message to display in UI until dismissed or reconnected
+    pub(crate) last_error: Option<String>,
 }
 
 impl std::fmt::Debug for QuincyInstance {
@@ -24,6 +26,7 @@ impl std::fmt::Debug for QuincyInstance {
         f.debug_struct("QuincyInstance")
             .field("name", &self.name)
             .field("status", &self.status)
+            .field("last_error", &self.last_error)
             .finish()
     }
 }
@@ -89,4 +92,6 @@ pub enum Message {
     Disconnected,
     /// Periodic update of connection metrics
     UpdateMetrics,
+    /// Async connection attempt failed with an error
+    ConnectFailed(String, String),
 }
