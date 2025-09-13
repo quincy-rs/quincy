@@ -3,7 +3,7 @@ members = ["quincy", "quincy-client", "quincy-server", "quincy-gui"]
 resolver = "2"
 
 [workspace.package]
-version = "1.0.0-beta.0"
+version = "1.0.0-beta.1"
 authors = ["Jakub Kubík <jakub.kubik.it@protonmail.com>"]
 license = "AGPL-3.0-or-later"
 readme = "README.md"
@@ -15,12 +15,6 @@ keywords = ["vpn", "quic", "tunnel", "networking", "tokio"]
 categories = ["command-line-utilities", "network-programming"]
 
 [workspace.dependencies]
-# TODO: this is a bit unwieldy, unify versions in the future
-quincy = { path = "quincy", version = "1.0.0-beta.0" }
-quincy-client = { path = "quincy-client", version = "1.0.0-beta.0" }
-quincy-server = { path = "quincy-server", version = "1.0.0-beta.0" }
-quincy-gui = { path = "quincy-gui", version = "1.0.0-beta.0" }
-
 # Quinn
 quinn = { version = "^0.11.8", default-features = false, features = [
     "log",
