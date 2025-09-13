@@ -10,6 +10,7 @@ use super::app::QuincyGui;
 use super::styles::{
     ColorPalette, CustomButtonStyles, CustomContainerStyles, CustomTextInputStyle,
 };
+use super::types::{ConfigMsg, EditorMsg, InstanceMsg};
 use super::types::{Message, SelectedConfig};
 use super::utils::{format_bytes, format_duration};
 use crate::ipc::{ConnectionMetrics, ConnectionStatus};
@@ -42,13 +43,13 @@ impl QuincyGui {
         // Use the actual text editor with TOML syntax highlighting
         let editor = text_editor(&editor_window.content)
             .height(Length::Fill)
-            .on_action(move |action| Message::ConfigEdited(window_id, action))
+            .on_action(move |action| Message::Editor(EditorMsg::Edited(window_id, action)))
             .highlight("toml", highlighter::Theme::SolarizedDark)
             .font(iced::Font::MONOSPACE);
 
         let save_button = button_widget(text("Save").color(ColorPalette::TEXT_PRIMARY).size(14))
             .padding([8, 16])
-            .on_press(Message::ConfigSave(window_id))
+            .on_press(Message::Config(ConfigMsg::Save(window_id)))
             .style(CustomButtonStyles::primary_fn());
 
         let header = row![
@@ -98,8 +99,7 @@ impl QuincyGui {
     /// # Returns
     /// Scrollable element containing configuration buttons
     pub fn build_config_button_list(&self) -> Element<'_, Message> {
-        let mut configs = self.configs.keys().collect::<Vec<_>>();
-        configs.sort();
+        let configs = self.configs.keys().collect::<Vec<_>>();
 
         scrollable(
             column(
@@ -127,7 +127,7 @@ impl QuincyGui {
 
         // Disable button interactions when editor modal is open
         if !self.editor_modal_open {
-            btn = btn.on_press(Message::ConfigSelected(name.to_string()));
+            btn = btn.on_press(Message::Config(ConfigMsg::Selected(name.to_string())));
         }
 
         let is_selected = self
@@ -162,7 +162,7 @@ impl QuincyGui {
 
         // Disable button when editor modal is open
         if !self.editor_modal_open {
-            btn = btn.on_press(Message::NewConfig);
+            btn = btn.on_press(Message::Config(ConfigMsg::New));
         }
 
         if self.editor_modal_open {
@@ -242,8 +242,8 @@ impl QuincyGui {
         // Disable input when editor modal is open
         if !self.editor_modal_open {
             input = input
-                .on_input(Message::ConfigNameChanged)
-                .on_submit(Message::ConfigNameSaved);
+                .on_input(|s| Message::Config(ConfigMsg::NameChanged(s)))
+                .on_submit(Message::Config(ConfigMsg::NameSaved));
         }
 
         input.style(CustomTextInputStyle::default_fn()).into()
@@ -374,12 +374,11 @@ impl QuincyGui {
         if has_client {
             if let Some(instance) = self.instances.get(&selected_config.quincy_config.name) {
                 let status = instance.get_status();
-                let last_error = instance.last_error.as_deref();
                 self.build_instance_status_display(
                     &status.status,
                     status.metrics.as_ref(),
                     &instance.name,
-                    last_error,
+                    None,
                 )
             } else {
                 // Show loading status when client is starting
@@ -422,24 +421,39 @@ impl QuincyGui {
         _instance_name: &str,
         last_error: Option<&str>,
     ) -> Element<'_, Message> {
-        let status_text = match connection_status {
-            ConnectionStatus::Connected => "Connected".to_string(),
-            ConnectionStatus::Connecting => "Connecting...".to_string(),
-            ConnectionStatus::Disconnected => "Disconnected".to_string(),
-            ConnectionStatus::Error(err) => err.clone(),
-        };
-
-        let status_color = match connection_status {
-            ConnectionStatus::Connected => ColorPalette::SUCCESS,
-            ConnectionStatus::Connecting => ColorPalette::WARNING,
-            ConnectionStatus::Disconnected => ColorPalette::TEXT_SECONDARY,
-            ConnectionStatus::Error(_) => ColorPalette::ERROR,
-        };
-
-        let container_style = match connection_status {
-            ConnectionStatus::Connected => CustomContainerStyles::status_connected(),
-            ConnectionStatus::Error(_) => CustomContainerStyles::status_error(),
-            _ => CustomContainerStyles::status_section(),
+        // Determine primary status label, color and container style.
+        // If Disconnected and there is a last_error, show that error instead of "Disconnected".
+        let (status_text, status_color, container_style) = match connection_status {
+            ConnectionStatus::Connected => (
+                "Connected".to_string(),
+                ColorPalette::SUCCESS,
+                CustomContainerStyles::status_connected(),
+            ),
+            ConnectionStatus::Connecting => (
+                "Connecting...".to_string(),
+                ColorPalette::WARNING,
+                CustomContainerStyles::status_section(),
+            ),
+            ConnectionStatus::Disconnected => {
+                if let Some(err) = last_error {
+                    (
+                        err.to_string(),
+                        ColorPalette::ERROR,
+                        CustomContainerStyles::status_error(),
+                    )
+                } else {
+                    (
+                        "Disconnected".to_string(),
+                        ColorPalette::TEXT_SECONDARY,
+                        CustomContainerStyles::status_section(),
+                    )
+                }
+            }
+            ConnectionStatus::Error(err) => (
+                err.clone(),
+                ColorPalette::ERROR,
+                CustomContainerStyles::status_error(),
+            ),
         };
 
         let mut content = vec![
@@ -450,22 +464,8 @@ impl QuincyGui {
             text(status_text).size(14).color(status_color).into(),
         ];
 
-        // Show the last error inline within the existing status container (no separate dismiss button)
-        if let Some(err) = last_error {
-            // Only add if the status itself is not already an Error with the same text
-            let show_inline_error = match connection_status {
-                ConnectionStatus::Error(current) => current != err,
-                _ => true,
-            };
-            if show_inline_error {
-                content.push(
-                    text(err.to_string())
-                        .size(14)
-                        .color(ColorPalette::ERROR)
-                        .into(),
-                );
-            }
-        }
+        // We no longer append a separate inline error if we already used it as the primary label.
+        // For explicit Error(_) states, the label already shows the error text.
 
         // Add metrics if available
         if let Some(metrics) = metrics {
@@ -592,7 +592,7 @@ impl QuincyGui {
             .padding([6, 12]);
 
             if !self.editor_modal_open {
-                btn = btn.on_press(Message::Disconnect);
+                btn = btn.on_press(Message::Instance(InstanceMsg::Disconnect));
             }
 
             if self.editor_modal_open {
@@ -605,7 +605,7 @@ impl QuincyGui {
                 .padding([6, 12]);
 
             if !self.editor_modal_open {
-                btn = btn.on_press(Message::Connect);
+                btn = btn.on_press(Message::Instance(InstanceMsg::Connect));
             }
 
             if self.editor_modal_open {
@@ -620,7 +620,7 @@ impl QuincyGui {
 
         // Disable edit button when editor modal is open
         if !self.editor_modal_open {
-            edit_button = edit_button.on_press(Message::OpenEditor);
+            edit_button = edit_button.on_press(Message::Editor(EditorMsg::Open));
         }
 
         let edit_button = if self.editor_modal_open {
@@ -637,7 +637,7 @@ impl QuincyGui {
         } else {
             button_widget(text("Delete").color(ColorPalette::TEXT_PRIMARY).size(14))
                 .padding([6, 12])
-                .on_press(Message::ConfigDelete)
+                .on_press(Message::Config(ConfigMsg::Delete))
                 .style(CustomButtonStyles::danger_fn())
         };
 

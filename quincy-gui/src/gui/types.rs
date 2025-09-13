@@ -9,6 +9,7 @@ use crate::ipc::ClientStatus;
 /// Each instance manages a daemon process and IPC communication.
 /// The instance tracks connection status and metrics for display in the GUI.
 /// With the reversed architecture, connection loss naturally handles daemon lifecycle.
+#[derive(Clone)]
 pub struct QuincyInstance {
     /// Unique identifier for this instance
     pub name: String,
@@ -16,8 +17,6 @@ pub struct QuincyInstance {
     pub(crate) ipc_client: Option<std::sync::Arc<tokio::sync::Mutex<crate::ipc::IpcConnection>>>,
     /// Current connection status and metrics
     pub(crate) status: ClientStatus,
-    /// Last connection error message to display in UI until dismissed or reconnected
-    pub(crate) last_error: Option<String>,
 }
 
 impl std::fmt::Debug for QuincyInstance {
@@ -26,7 +25,6 @@ impl std::fmt::Debug for QuincyInstance {
         f.debug_struct("QuincyInstance")
             .field("name", &self.name)
             .field("status", &self.status)
-            .field("last_error", &self.last_error)
             .finish()
     }
 }
@@ -59,39 +57,47 @@ pub struct EditorWindow {
     pub content: text_editor::Content,
 }
 
-/// Messages for GUI state updates and user interactions.
+/// Domain-specific message groups to improve clarity.
+#[derive(Debug, Clone)]
+pub enum ConfigMsg {
+    Selected(String),
+    NameChanged(String),
+    NameSaved,
+    Save(window::Id),
+    Delete,
+    New,
+}
+
+#[derive(Debug, Clone)]
+pub enum EditorMsg {
+    Edited(window::Id, text_editor::Action),
+    Open,
+    WindowOpened(window::Id),
+    WindowClosed(window::Id),
+}
+
+#[derive(Debug, Clone)]
+pub enum InstanceMsg {
+    Connect,
+    Connected(String),
+    ConnectedInstance(QuincyInstance),
+    Disconnect,
+    Disconnected,
+    StatusUpdated(String, ClientStatus),
+    DisconnectedWithError(String, String),
+    ConnectFailed(String, String),
+}
+
+#[derive(Debug, Clone)]
+pub enum SystemMsg {
+    UpdateMetrics,
+    Noop,
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
-    /// User selected a configuration from the list
-    ConfigSelected(String),
-    /// User edited the configuration text in editor window
-    ConfigEdited(window::Id, text_editor::Action),
-    /// User changed the configuration name
-    ConfigNameChanged(String),
-    /// User saved the configuration name change
-    ConfigNameSaved,
-    /// User requested to save the configuration from editor window
-    ConfigSave(window::Id),
-    /// User requested to delete the configuration
-    ConfigDelete,
-    /// User requested to create a new configuration
-    NewConfig,
-    /// User requested to open config editor in separate window
-    OpenEditor,
-    /// Editor window was opened
-    EditorWindowOpened(window::Id),
-    /// Editor window was closed
-    EditorWindowClosed(window::Id),
-    /// User requested to connect to a VPN
-    Connect,
-    /// VPN connection was established
-    Connected(String),
-    /// User requested to disconnect from VPN
-    Disconnect,
-    /// VPN was disconnected
-    Disconnected,
-    /// Periodic update of connection metrics
-    UpdateMetrics,
-    /// Async connection attempt failed with an error
-    ConnectFailed(String, String),
+    Config(ConfigMsg),
+    Editor(EditorMsg),
+    Instance(InstanceMsg),
+    System(SystemMsg),
 }

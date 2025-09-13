@@ -116,7 +116,6 @@ impl QuincyInstance {
                 status: ConnectionStatus::Disconnected,
                 metrics: None,
             },
-            last_error: None,
         }
     }
 
@@ -201,16 +200,6 @@ impl QuincyInstance {
                     Ok(IpcMessage::StatusUpdate(status)) => {
                         drop(connection);
                         self.status = status.clone();
-                        // Persist last error until dismissed or a successful reconnection
-                        match &self.status.status {
-                            ConnectionStatus::Connected => {
-                                self.last_error = None;
-                            }
-                            ConnectionStatus::Error(err) => {
-                                self.last_error = Some(err.clone());
-                            }
-                            _ => {}
-                        }
                     }
                     Ok(IpcMessage::Error(err)) => {
                         drop(connection);
@@ -245,8 +234,6 @@ impl QuincyInstance {
             status: ConnectionStatus::Error(error_message.to_string()),
             metrics: None,
         };
-        // Track last error for UI until dismissed or reconnected
-        self.last_error = Some(error_message.to_string());
     }
 
     /// Gets the current status of this VPN instance.

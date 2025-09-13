@@ -1,17 +1,15 @@
-use dashmap::DashMap;
 use iced::widget::container as container_widget;
 use iced::widget::{column, row, text};
-use iced::{window, Background, Color, Element, Length, Task, Theme};
+use iced::{window, Background, Color, Element, Length, Subscription, Task, Theme};
 use quincy::{QuincyError, Result};
-use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use tracing::error;
 
 use super::styles::ColorPalette;
 use super::types::QuincyInstance;
+use super::types::{ConfigMsg, EditorMsg, InstanceMsg, SystemMsg};
 use super::types::{EditorWindow, Message, QuincyConfig, SelectedConfig};
 
 /// Main GUI application state for the Quincy VPN client.
@@ -22,10 +20,10 @@ use super::types::{EditorWindow, Message, QuincyConfig, SelectedConfig};
 pub struct QuincyGui {
     /// Directory containing configuration files
     pub(crate) config_dir: PathBuf,
-    /// Available VPN configurations indexed by name
-    pub(crate) configs: HashMap<String, QuincyConfig>,
+    /// Available VPN configurations indexed by name (kept sorted by key)
+    pub(crate) configs: BTreeMap<String, QuincyConfig>,
     /// Currently running VPN instances
-    pub(crate) instances: Arc<DashMap<String, QuincyInstance>>,
+    pub(crate) instances: HashMap<String, QuincyInstance>,
     /// Currently selected configuration for editing
     pub(crate) selected_config: Option<SelectedConfig>,
     /// Editor windows for configuration editing
@@ -81,17 +79,15 @@ impl QuincyGui {
             Self {
                 config_dir,
                 configs,
-                instances: Arc::new(DashMap::new()),
+                instances: HashMap::new(),
                 selected_config: None,
                 editor_windows: BTreeMap::new(),
                 main_window_id: Some(main_window_id),
                 editor_modal_open: false,
                 last_errors: HashMap::new(),
             },
-            Task::batch([
-                open_main_window.map(|_| Message::UpdateMetrics),
-                Task::done(Message::UpdateMetrics),
-            ]),
+            // Only open the main window; periodic updates are driven by Subscription
+            open_main_window.map(|_| Message::System(SystemMsg::Noop)),
         )
     }
 
@@ -116,26 +112,61 @@ impl QuincyGui {
     /// Task to execute as a result of processing the message
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::ConfigSelected(name) => self.handle_config_selected(name),
-            Message::ConfigEdited(window_id, action) => {
-                self.handle_config_edited(window_id, action)
-            }
-            Message::ConfigNameChanged(new_name) => self.handle_config_name_changed(new_name),
-            Message::ConfigNameSaved => self.handle_config_name_saved(),
-            Message::ConfigSave(window_id) => self.handle_config_save_from_editor(window_id),
-            Message::ConfigDelete => self.handle_config_delete(),
-            Message::NewConfig => self.handle_new_config(),
-            Message::OpenEditor => self.handle_open_editor(),
-            Message::EditorWindowOpened(window_id) => self.handle_editor_window_opened(window_id),
-            Message::EditorWindowClosed(window_id) => self.handle_editor_window_closed(window_id),
-            Message::Connect => self.handle_connect(),
-            Message::Disconnect => self.handle_disconnect(),
-            Message::Connected(config_name) => self.handle_connected(config_name),
-            Message::Disconnected => Task::none(),
-            Message::UpdateMetrics => self.handle_update_metrics(),
-            Message::ConnectFailed(config_name, error) => {
-                self.handle_connect_failed(config_name, error)
-            }
+            Message::Config(msg) => match msg {
+                ConfigMsg::Selected(name) => self.handle_config_selected(name),
+                ConfigMsg::NameChanged(new_name) => self.handle_config_name_changed(new_name),
+                ConfigMsg::NameSaved => self.handle_config_name_saved(),
+                ConfigMsg::Save(window_id) => self.handle_config_save_from_editor(window_id),
+                ConfigMsg::Delete => self.handle_config_delete(),
+                ConfigMsg::New => self.handle_new_config(),
+            },
+            Message::Editor(msg) => match msg {
+                EditorMsg::Edited(window_id, action) => {
+                    self.handle_config_edited(window_id, action)
+                }
+                EditorMsg::Open => self.handle_open_editor(),
+                EditorMsg::WindowOpened(window_id) => self.handle_editor_window_opened(window_id),
+                EditorMsg::WindowClosed(window_id) => self.handle_editor_window_closed(window_id),
+            },
+            Message::Instance(msg) => match msg {
+                InstanceMsg::Connect => self.handle_connect(),
+                InstanceMsg::Disconnect => self.handle_disconnect(),
+                InstanceMsg::Connected(config_name) => self.handle_connected(config_name),
+                InstanceMsg::Disconnected => Task::none(),
+                InstanceMsg::StatusUpdated(name, status) => {
+                    if let Some(inst) = self.instances.get_mut(&name) {
+                        let is_disconnect =
+                            matches!(status.status, crate::ipc::ConnectionStatus::Disconnected);
+                        if is_disconnect {
+                            // Remove instance and record a brief error note
+                            self.instances.remove(&name);
+                            self.last_errors
+                                .entry(name)
+                                .or_insert_with(|| "Connection lost".to_string());
+                        } else {
+                            inst.status = status;
+                        }
+                    }
+                    Task::none()
+                }
+                InstanceMsg::DisconnectedWithError(name, error) => {
+                    self.instances.remove(&name);
+                    self.last_errors.insert(name, error);
+                    Task::none()
+                }
+                InstanceMsg::ConnectedInstance(instance) => {
+                    let name = instance.name.clone();
+                    self.instances.insert(name.clone(), instance);
+                    self.handle_connected(name)
+                }
+                InstanceMsg::ConnectFailed(config_name, error) => {
+                    self.handle_connect_failed(config_name, error)
+                }
+            },
+            Message::System(msg) => match msg {
+                SystemMsg::UpdateMetrics => self.handle_update_metrics(),
+                SystemMsg::Noop => Task::none(),
+            },
         }
     }
 
@@ -214,9 +245,12 @@ impl QuincyGui {
     /// # Returns
     /// Subscription for window close events
     pub fn subscription(&self) -> iced::Subscription<Message> {
-        // Use a simple subscription that maps all close events to editor window closed
-        // We'll handle main window detection in the update method
-        window::close_events().map(Message::EditorWindowClosed)
+        // Batch window close events with a 1s metrics tick
+        let close_events =
+            window::close_events().map(|id| Message::Editor(EditorMsg::WindowClosed(id)));
+        let tick = iced::time::every(std::time::Duration::from_secs(1))
+            .map(|_| Message::System(SystemMsg::UpdateMetrics));
+        Subscription::batch(vec![close_events, tick])
     }
 
     /// Validates the config directory path and creates it if necessary.
@@ -265,7 +299,7 @@ impl QuincyGui {
     /// # Errors
     /// Returns an error if the config directory cannot be read due to
     /// permissions or I/O issues
-    fn load_configurations(config_dir: &Path) -> Result<HashMap<String, QuincyConfig>> {
+    fn load_configurations(config_dir: &Path) -> Result<BTreeMap<String, QuincyConfig>> {
         let entries = fs::read_dir(config_dir)
             .map_err(|e| {
                 QuincyError::system(format!(
@@ -275,7 +309,7 @@ impl QuincyGui {
                 ))
             })?
             .filter_map(Self::process_config_entry)
-            .collect();
+            .collect::<BTreeMap<_, _>>();
 
         Ok(entries)
     }
