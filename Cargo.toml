@@ -1,5 +1,5 @@
 [workspace]
-members = ["quincy", "quincy-client", "quincy-server", "quincy-gui"]
+members = ["quincy", "quincy-client", "quincy-server", "quincy-gui", "quincy-tests"]
 resolver = "2"
 
 [workspace.package]
@@ -82,11 +82,6 @@ jemallocator = { version = "0.5" }
 
 # WinTun
 wintun-bindings = { version = "0.7.31", features = ["verify_binary_signature"] }
-
-# Dev dependencies
-rstest = "^0.25.0"
-etherparse = "^0.18.0"
-tracing-test = { version = "^0.2.4", features = ["no-env-filter"] }
 
 [profile.release]
 strip = true

@@ -3085,16 +3085,12 @@ dependencies = [
  "async-trait",
  "bytes",
  "dashmap",
- "etherparse",
  "figment",
  "futures",
  "ipnet",
  "jemallocator",
  "nu-ansi-term",
- "quincy-client",
- "quincy-server",
  "quinn",
- "rstest",
  "rustls",
  "rustls-pemfile",
  "serde",
@@ -3104,7 +3100,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "tracing-test",
  "tun-rs",
  "wintun-bindings",
 ]
@@ -3160,6 +3155,22 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "quincy-tests"
+version = "1.0.0-beta.1"
+dependencies = [
+ "bytes",
+ "etherparse",
+ "ipnet",
+ "quincy",
+ "quincy-client",
+ "quincy-server",
+ "rstest",
+ "tokio",
+ "tracing",
+ "tracing-test",
 ]
 
 [[package]]
