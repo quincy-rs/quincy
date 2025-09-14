@@ -652,22 +652,50 @@ impl QuincyGui {
     /// # Returns
     /// Column element with "no selection" message
     pub fn build_no_selection_content(&self) -> Element<'_, Message> {
-        container_widget(
-            column![
-                text("No configuration selected")
-                    .size(24)
-                    .color(ColorPalette::TEXT_SECONDARY)
-                    .align_x(Horizontal::Center)
-                    .width(Length::Fill),
-                text("Select a configuration from the left panel or create a new one")
-                    .size(14)
-                    .color(ColorPalette::TEXT_MUTED)
+        // Base message when nothing is selected
+        let mut contents: Vec<Element<'_, Message>> = vec![
+            text("No configuration selected")
+                .size(24)
+                .color(ColorPalette::TEXT_SECONDARY)
+                .align_x(Horizontal::Center)
+                .width(Length::Fill)
+                .into(),
+            text("Select a configuration from the left panel or create a new one")
+                .size(14)
+                .color(ColorPalette::TEXT_MUTED)
+                .align_x(Horizontal::Center)
+                .width(Length::Fill)
+                .into(),
+        ];
+
+        // If there were load errors, surface them prominently for better UX
+        if !self.load_errors.is_empty() {
+            contents.push(
+                text("Configuration load errors")
+                    .size(16)
+                    .color(ColorPalette::ERROR)
                     .align_x(Horizontal::Center)
                     .width(Length::Fill)
-            ]
-            .spacing(8)
-            .width(Length::Fill)
-            .align_x(Horizontal::Center),
+                    .into(),
+            );
+
+            for err in &self.load_errors {
+                contents.push(
+                    text(err)
+                        .size(13)
+                        .color(ColorPalette::ERROR)
+                        .align_x(Horizontal::Center)
+                        .width(Length::Fill)
+                        .into(),
+                );
+            }
+        }
+
+        container_widget(
+            column(contents)
+                .spacing(8)
+                .width(Length::Fill)
+                .align_x(Horizontal::Center),
         )
         .width(Length::Fill)
         .height(Length::Fill)

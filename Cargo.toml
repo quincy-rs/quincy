@@ -68,6 +68,7 @@ nu-ansi-term = "^0.50.0"
 # Utils
 thiserror = "^2.0"
 clap = { version = "^4.1", features = ["derive"] }
+regex = "^1.11"
 
 # GUI
 iced = { version = "^0.13.0", features = [

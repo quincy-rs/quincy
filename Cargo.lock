@@ -3130,6 +3130,7 @@ dependencies = [
  "ipnet",
  "quincy",
  "quincy-client",
+ "regex",
  "serde",
  "serde_json",
  "tokio",
