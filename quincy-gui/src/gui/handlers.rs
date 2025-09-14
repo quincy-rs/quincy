@@ -9,6 +9,7 @@ use super::app::QuincyGui;
 use super::types::QuincyInstance;
 use super::types::{EditorMsg, InstanceMsg};
 use super::types::{EditorWindow, Message, SelectedConfig};
+use crate::validation;
 
 impl QuincyGui {
     /// Handles selection of a configuration from the list.
@@ -126,6 +127,15 @@ impl QuincyGui {
         let Some(mut selected_config) = self.selected_config.take() else {
             return Task::none();
         };
+
+        // Validate the new name using regex-based validator before applying changes
+        if let Err(e) = validation::validate_config_name(&selected_config.quincy_config.name) {
+            self.last_errors
+                .insert(selected_config.quincy_config.name.clone(), e.to_string());
+            // Put the selection back unchanged and surface error in UI
+            self.selected_config = Some(selected_config);
+            return Task::none();
+        }
 
         self.rename_config_file(&mut selected_config, &old_config_name);
         self.selected_config = Some(selected_config);
@@ -346,6 +356,12 @@ impl QuincyGui {
 
         let config_name = selected_config.quincy_config.name.clone();
         let config_path = selected_config.quincy_config.path.clone();
+
+        // Validate configuration name before attempting to start the daemon/IPC
+        if let Err(e) = validation::validate_config_name(&config_name) {
+            self.last_errors.insert(config_name, e.to_string());
+            return Task::none();
+        }
 
         // Dismiss any previous error for this config on Connect
         self.last_errors.remove(&config_name);
@@ -623,7 +639,7 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Task for shutdown if main window, or Task::none() for editor windows
-    pub fn handle_editor_window_closed(&mut self, window_id: window::Id) -> Task<Message> {
+    pub fn handle_window_closed(&mut self, window_id: window::Id) -> Task<Message> {
         // Check if this is the main window
         if Some(window_id) == self.main_window_id {
             return self.handle_main_window_closed();
@@ -664,11 +680,6 @@ impl QuincyGui {
             })
             .collect();
 
-        // Close any remaining editor windows to allow the application to exit naturally
-        let editor_ids: Vec<window::Id> = self.editor_windows.keys().cloned().collect();
-        let close_editor_tasks: Vec<Task<Message>> =
-            editor_ids.into_iter().map(window::close).collect();
-
-        Task::batch([Task::batch(shutdown_tasks), Task::batch(close_editor_tasks)])
+        Task::batch(shutdown_tasks).chain(iced::exit())
     }
 }

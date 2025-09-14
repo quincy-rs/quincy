@@ -11,6 +11,7 @@ use super::styles::ColorPalette;
 use super::types::QuincyInstance;
 use super::types::{ConfigMsg, EditorMsg, InstanceMsg, SystemMsg};
 use super::types::{EditorWindow, Message, QuincyConfig, SelectedConfig};
+use crate::validation;
 
 /// Main GUI application state for the Quincy VPN client.
 ///
@@ -22,6 +23,8 @@ pub struct QuincyGui {
     pub(crate) config_dir: PathBuf,
     /// Available VPN configurations indexed by name (kept sorted by key)
     pub(crate) configs: BTreeMap<String, QuincyConfig>,
+    /// Errors encountered while loading configurations from disk
+    pub(crate) load_errors: Vec<String>,
     /// Currently running VPN instances
     pub(crate) instances: HashMap<String, QuincyInstance>,
     /// Currently selected configuration for editing
@@ -56,8 +59,8 @@ impl QuincyGui {
             std::process::exit(1);
         }
 
-        let configs = match Self::load_configurations(&config_dir) {
-            Ok(configs) => configs,
+        let (configs, load_errors) = match Self::load_configurations(&config_dir) {
+            Ok(result) => result,
             Err(e) => {
                 error!("Failed to load configurations: {}", e);
                 std::process::exit(1);
@@ -71,6 +74,7 @@ impl QuincyGui {
             min_size: Some(window_size),
             max_size: Some(window_size),
             size: window_size,
+            exit_on_close_request: true,
             ..window::Settings::default()
         };
         let (main_window_id, open_main_window) = window::open(window_settings);
@@ -79,6 +83,7 @@ impl QuincyGui {
             Self {
                 config_dir,
                 configs,
+                load_errors,
                 instances: HashMap::new(),
                 selected_config: None,
                 editor_windows: BTreeMap::new(),
@@ -126,7 +131,6 @@ impl QuincyGui {
                 }
                 EditorMsg::Open => self.handle_open_editor(),
                 EditorMsg::WindowOpened(window_id) => self.handle_editor_window_opened(window_id),
-                EditorMsg::WindowClosed(window_id) => self.handle_editor_window_closed(window_id),
             },
             Message::Instance(msg) => match msg {
                 InstanceMsg::Connect => self.handle_connect(),
@@ -165,6 +169,7 @@ impl QuincyGui {
             },
             Message::System(msg) => match msg {
                 SystemMsg::UpdateMetrics => self.handle_update_metrics(),
+                SystemMsg::WindowClosed(window_id) => self.handle_window_closed(window_id),
                 SystemMsg::Noop => Task::none(),
             },
         }
@@ -247,7 +252,7 @@ impl QuincyGui {
     pub fn subscription(&self) -> iced::Subscription<Message> {
         // Batch window close events with a 1s metrics tick
         let close_events =
-            window::close_events().map(|id| Message::Editor(EditorMsg::WindowClosed(id)));
+            window::close_events().map(|id| Message::System(SystemMsg::WindowClosed(id)));
         let tick = iced::time::every(std::time::Duration::from_secs(1))
             .map(|_| Message::System(SystemMsg::UpdateMetrics));
         Subscription::batch(vec![close_events, tick])
@@ -293,25 +298,39 @@ impl QuincyGui {
     /// * `config_dir` - Path to the configuration directory
     ///
     /// # Returns
-    /// * `Ok(HashMap)` of configuration name to QuincyConfig
+    /// * `Ok((HashMap, Vec<String>))` of configuration name to QuincyConfig and list of load error messages
     /// * `Err` if the config directory cannot be read
     ///
     /// # Errors
     /// Returns an error if the config directory cannot be read due to
     /// permissions or I/O issues
-    fn load_configurations(config_dir: &Path) -> Result<BTreeMap<String, QuincyConfig>> {
-        let entries = fs::read_dir(config_dir)
-            .map_err(|e| {
-                QuincyError::system(format!(
-                    "Failed to read config directory {}: {}",
-                    config_dir.display(),
-                    e
-                ))
-            })?
-            .filter_map(Self::process_config_entry)
-            .collect::<BTreeMap<_, _>>();
+    fn load_configurations(
+        config_dir: &Path,
+    ) -> Result<(BTreeMap<String, QuincyConfig>, Vec<String>)> {
+        let mut configs: BTreeMap<String, QuincyConfig> = BTreeMap::new();
+        let mut errors: Vec<String> = Vec::new();
 
-        Ok(entries)
+        let read_dir = fs::read_dir(config_dir).map_err(|e| {
+            QuincyError::system(format!(
+                "Failed to read config directory {}: {}",
+                config_dir.display(),
+                e
+            ))
+        })?;
+
+        for entry_res in read_dir {
+            match Self::process_config_entry(entry_res) {
+                Some(Ok((name, cfg))) => {
+                    configs.insert(name, cfg);
+                }
+                Some(Err(err_msg)) => {
+                    errors.push(err_msg);
+                }
+                None => {}
+            }
+        }
+
+        Ok((configs, errors))
     }
 
     /// Processes a single configuration file entry.
@@ -323,8 +342,11 @@ impl QuincyGui {
     /// Optional tuple of (config_name, QuincyConfig)
     fn process_config_entry(
         entry: std::result::Result<fs::DirEntry, std::io::Error>,
-    ) -> Option<(String, QuincyConfig)> {
-        let config_path = entry.ok()?.path();
+    ) -> Option<std::result::Result<(String, QuincyConfig), String>> {
+        let config_path = match entry {
+            Ok(e) => e.path(),
+            Err(e) => return Some(Err(format!("Failed to read a config entry: {}", e))),
+        };
 
         // Only process .toml files
         if !config_path.extension().is_some_and(|ext| ext == "toml") {
@@ -339,11 +361,16 @@ impl QuincyGui {
             .unwrap_or(&config_file_name)
             .to_string();
 
+        // Validate sanitized config name using regex-based validator
+        if let Err(e) = validation::validate_config_name(&config_name) {
+            return Some(Err(format!("{} (file '{}')", e, config_file_name)));
+        }
+
         let loaded_config = QuincyConfig {
             name: config_name.clone(),
             path: config_path,
         };
 
-        Some((config_name, loaded_config))
+        Some(Ok((config_name, loaded_config)))
     }
 }

@@ -73,7 +73,6 @@ pub enum EditorMsg {
     Edited(window::Id, text_editor::Action),
     Open,
     WindowOpened(window::Id),
-    WindowClosed(window::Id),
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +89,7 @@ pub enum InstanceMsg {
 
 #[derive(Debug, Clone)]
 pub enum SystemMsg {
+    WindowClosed(window::Id),
     UpdateMetrics,
     Noop,
 }

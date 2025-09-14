@@ -9,6 +9,7 @@ use crate::ipc::{
     get_ipc_socket_path, ClientStatus, ConnectionStatus, IpcConnection, IpcMessage, IpcServer,
 };
 use crate::privilege::run_elevated;
+use crate::validation;
 
 impl QuincyInstance {
     /// Starts a new Quincy VPN client instance.
@@ -30,6 +31,8 @@ impl QuincyInstance {
     /// - Elevated privileges cannot be obtained
     /// - IPC server cannot be created
     pub async fn start(name: String, config_path: PathBuf) -> Result<Self> {
+        // Validate instance/config name early to avoid spawning processes with unsafe names
+        validation::validate_instance_name(&name)?;
         info!("Starting client daemon process for: {}", name);
 
         let socket_path = get_ipc_socket_path(&name);
@@ -78,14 +81,23 @@ impl QuincyInstance {
         config_path: &Path,
         name: &str,
     ) -> Result<()> {
+        // Quote parameters that may contain spaces to ensure they are parsed correctly
+        // by the various privilege escalation mechanisms (macOS AppleScript, Linux sh -c, Windows PowerShell).
+        // We use simple double-quote wrapping and escape embedded double-quotes to minimize injection risk
+        // while keeping cross-platform behavior consistent.
+        let quoted_config = Self::quote_for_cmdline(&config_path.to_string_lossy());
+        let quoted_name = Self::quote_for_cmdline(name);
+
+        let args: [&str; 4] = [
+            "--config-path",
+            quoted_config.as_str(),
+            "--instance-name",
+            quoted_name.as_str(),
+        ];
+
         let child = run_elevated(
             &daemon_binary.to_string_lossy(),
-            &[
-                "--config-path",
-                &config_path.to_string_lossy(),
-                "--instance-name",
-                name,
-            ],
+            &args,
             "Quincy VPN Client",
             "Quincy needs administrator privileges to create network interfaces.",
         )?;
@@ -98,6 +110,26 @@ impl QuincyInstance {
         }
 
         Ok(())
+    }
+
+    /// Wraps an argument in double quotes and escapes any embedded double quotes.
+    ///
+    /// This is used to safely pass values that may contain spaces (like file paths
+    /// and instance names) through privilege escalation layers that rely on shell
+    /// command strings or Windows command-line parsing rules.
+    fn quote_for_cmdline(arg: &str) -> String {
+        let mut out = String::with_capacity(arg.len() + 2);
+        out.push('"');
+        for ch in arg.chars() {
+            if ch == '"' {
+                out.push('\\');
+                out.push('"');
+            } else {
+                out.push(ch);
+            }
+        }
+        out.push('"');
+        out
     }
 
     /// Creates a new instance with the given parameters.

@@ -392,6 +392,10 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     initialize_logging();
 
+    // Validate instance name defensively to prevent unsafe IPC names
+    use quincy_gui::validation;
+    validation::validate_instance_name(&args.instance_name)?;
+
     info!("Starting Quincy client daemon: {}", args.instance_name);
 
     let daemon = ClientDaemon::new(args.instance_name.clone());
