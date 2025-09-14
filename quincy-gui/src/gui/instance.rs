@@ -85,6 +85,7 @@ impl QuincyInstance {
         // by the various privilege escalation mechanisms (macOS AppleScript, Linux sh -c, Windows PowerShell).
         // We use simple double-quote wrapping and escape embedded double-quotes to minimize injection risk
         // while keeping cross-platform behavior consistent.
+        let quoted_binary = Self::quote_for_cmdline(&daemon_binary.to_string_lossy());
         let quoted_config = Self::quote_for_cmdline(&config_path.to_string_lossy());
         let quoted_name = Self::quote_for_cmdline(name);
 
@@ -96,7 +97,7 @@ impl QuincyInstance {
         ];
 
         let child = run_elevated(
-            &daemon_binary.to_string_lossy(),
+            &quoted_binary,
             &args,
             "Quincy VPN Client",
             "Quincy needs administrator privileges to create network interfaces.",
