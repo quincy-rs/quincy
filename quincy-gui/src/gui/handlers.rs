@@ -680,6 +680,11 @@ impl QuincyGui {
             })
             .collect();
 
-        Task::batch(shutdown_tasks).chain(iced::exit())
+        Task::batch(shutdown_tasks).chain(Task::future(exit()))
     }
+}
+
+/// A necessary function to ensure the app exits gracefully when the main window is closed.
+async fn exit() -> Message {
+    std::process::exit(0);
 }
