@@ -74,7 +74,6 @@ impl QuincyGui {
             min_size: Some(window_size),
             max_size: Some(window_size),
             size: window_size,
-            exit_on_close_request: true,
             ..window::Settings::default()
         };
         let (main_window_id, open_main_window) = window::open(window_settings);
