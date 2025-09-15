@@ -592,15 +592,7 @@ impl QuincyGui {
             size: iced::Size::new(800.0, 600.0),
             position: window::Position::Centered,
             min_size: Some(iced::Size::new(600.0, 400.0)),
-            max_size: None,
-            visible: true,
-            resizable: true,
-            decorations: true,
-            transparent: false,
-            level: window::Level::AlwaysOnTop,
-            icon: None,
-            platform_specific: window::settings::PlatformSpecific::default(),
-            exit_on_close_request: false,
+            ..window::Settings::default()
         });
 
         // Store the editor window info immediately
