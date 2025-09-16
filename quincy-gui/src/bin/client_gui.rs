@@ -1,4 +1,5 @@
 use clap::Parser;
+use iced::daemon;
 use quincy::utils::tracing::log_subscriber;
 use quincy::{QuincyError, Result};
 use quincy_gui::gui::{expand_path, QuincyGui};
@@ -45,7 +46,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let config_dir = expand_path(&args.config_dir);
 
-    iced::daemon(QuincyGui::title, QuincyGui::update, QuincyGui::view)
+    daemon(QuincyGui::title, QuincyGui::update, QuincyGui::view)
         .theme(QuincyGui::theme)
         .subscription(QuincyGui::subscription)
         .run_with(|| QuincyGui::new(config_dir))

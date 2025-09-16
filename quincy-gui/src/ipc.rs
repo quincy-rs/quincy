@@ -8,6 +8,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, info};
 
 #[cfg(unix)]
+use std::fs;
+
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 
 #[cfg(windows)]
@@ -64,13 +67,13 @@ impl IpcServer {
             // Ensure the parent directory exists
             if let Some(parent) = socket_path.parent() {
                 if !parent.exists() {
-                    std::fs::create_dir_all(parent)?;
+                    fs::create_dir_all(parent)?;
                 }
             }
 
             // Remove existing socket file if it exists
             if socket_path.exists() {
-                std::fs::remove_file(socket_path)?;
+                fs::remove_file(socket_path)?;
             }
 
             let listener = UnixListener::bind(socket_path)?;

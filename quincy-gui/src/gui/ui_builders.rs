@@ -1,10 +1,11 @@
 use iced::alignment::Horizontal;
 use iced::highlighter;
+use iced::widget::container::Style as ContainerStyle;
 use iced::widget::{
     button as button_widget, container as container_widget, text_input as text_input_widget,
 };
 use iced::widget::{column, row, scrollable, text, text_editor};
-use iced::{window, Background, Element, Length};
+use iced::{border, window, Alignment, Background, Border, Element, Font, Length};
 
 use super::app::QuincyGui;
 use super::styles::{
@@ -45,7 +46,7 @@ impl QuincyGui {
             .height(Length::Fill)
             .on_action(move |action| Message::Editor(EditorMsg::Edited(window_id, action)))
             .highlight("toml", highlighter::Theme::SolarizedDark)
-            .font(iced::Font::MONOSPACE);
+            .font(Font::MONOSPACE);
 
         let save_button = button_widget(text("Save").color(ColorPalette::TEXT_PRIMARY).size(14))
             .padding([8, 16])
@@ -59,16 +60,16 @@ impl QuincyGui {
             save_button
         ]
         .spacing(16)
-        .align_y(iced::Alignment::Center)
+        .align_y(Alignment::Center)
         .width(Length::Fill);
 
         container_widget(column![header, editor].spacing(16).height(Length::Fill))
             .padding(20)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(|_theme| iced::widget::container::Style {
+            .style(|_theme| ContainerStyle {
                 background: Some(Background::Color(ColorPalette::BACKGROUND_PRIMARY)),
-                ..iced::widget::container::Style::default()
+                ..ContainerStyle::default()
             })
             .into()
     }
@@ -329,14 +330,14 @@ impl QuincyGui {
         .padding(8)
         .width(Length::Fill)
         .height(Length::Shrink)
-        .style(|_theme| iced::widget::container::Style {
+        .style(|_theme| ContainerStyle {
             background: Some(Background::Color(ColorPalette::BACKGROUND_TERTIARY)),
-            border: iced::Border {
+            border: Border {
                 color: ColorPalette::BORDER_LIGHT,
                 width: 1.0,
-                radius: iced::border::Radius::from(6.0),
+                radius: border::Radius::from(6.0),
             },
-            ..iced::widget::container::Style::default()
+            ..ContainerStyle::default()
         })
         .into()
     }

@@ -7,10 +7,11 @@ use quincy_client::client::QuincyClient;
 use quincy_gui::ipc::{
     get_ipc_socket_path, ClientStatus, ConnectionMetrics, ConnectionStatus, IpcClient, IpcMessage,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, Mutex};
+use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
 /// Command line arguments for the Quincy client daemon.
@@ -211,7 +212,7 @@ impl ClientDaemon {
     ///
     /// # Errors
     /// Returns an error if the IPC client cannot connect to the GUI's socket
-    async fn run_ipc_client(&self, socket_path: &std::path::Path) -> Result<()> {
+    async fn run_ipc_client(&self, socket_path: &Path) -> Result<()> {
         let client = self.connect_to_gui_server(socket_path).await?;
         info!("Connected to GUI IPC server");
 
@@ -254,7 +255,7 @@ impl ClientDaemon {
     /// # Returns
     /// * `Ok(IpcClient)` if connection succeeded
     /// * `Err` if connection failed after retries
-    async fn connect_to_gui_server(&self, socket_path: &std::path::Path) -> Result<IpcClient> {
+    async fn connect_to_gui_server(&self, socket_path: &Path) -> Result<IpcClient> {
         const MAX_RETRIES: u32 = 30;
         const RETRY_DELAY: Duration = Duration::from_millis(500);
 
@@ -279,7 +280,7 @@ impl ClientDaemon {
                         "Connection attempt {} failed, retrying in {:?}: {}",
                         attempt, RETRY_DELAY, e
                     );
-                    tokio::time::sleep(RETRY_DELAY).await;
+                    sleep(RETRY_DELAY).await;
                 }
             }
         }
@@ -424,7 +425,7 @@ fn initialize_logging() {
 ///
 /// # Errors
 /// Returns an error if the IPC client fails to connect or run
-async fn run_daemon_client(daemon: &ClientDaemon, socket_path: &std::path::Path) -> Result<()> {
+async fn run_daemon_client(daemon: &ClientDaemon, socket_path: &Path) -> Result<()> {
     info!("Starting IPC client...");
     daemon.run_ipc_client(socket_path).await?;
     info!("IPC client has stopped, proceeding with cleanup...");

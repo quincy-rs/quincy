@@ -1,3 +1,4 @@
+use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -74,14 +75,14 @@ pub fn expand_path(path: &Path) -> PathBuf {
 
     #[cfg(unix)]
     if path_str.starts_with("~/") {
-        if let Ok(home) = std::env::var("HOME") {
+        if let Ok(home) = env::var("HOME") {
             return PathBuf::from(path_str.replacen("~", &home, 1));
         }
     }
 
     #[cfg(windows)]
     if path_str.contains("%AppData%") {
-        if let Ok(app_data) = std::env::var("APPDATA") {
+        if let Ok(app_data) = env::var("APPDATA") {
             return PathBuf::from(path_str.replace("%AppData%", &app_data));
         }
     }
