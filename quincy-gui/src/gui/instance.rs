@@ -1,7 +1,11 @@
 use quincy::{QuincyError, Result};
+use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
+use tokio::task::spawn_blocking;
+use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use super::types::QuincyInstance;
@@ -12,6 +16,9 @@ use crate::privilege::run_elevated;
 use crate::validation;
 
 impl QuincyInstance {
+    /// Maximum duration to wait for the daemon to establish the IPC connection.
+    const DAEMON_START_TIMEOUT: Duration = Duration::from_secs(15);
+
     /// Starts a new Quincy VPN client instance.
     ///
     /// This method creates an IPC server, spawns a privileged daemon process,
@@ -41,7 +48,19 @@ impl QuincyInstance {
         let daemon_binary = Self::get_daemon_binary_path()?;
         Self::spawn_daemon_process(&daemon_binary, &config_path, &name).await?;
 
-        let connection = ipc_server.accept().await?;
+        let connection = match timeout(Self::DAEMON_START_TIMEOUT, ipc_server.accept()).await {
+            Ok(Ok(conn)) => conn,
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                warn!(
+                    "Timed out after {:?} while waiting for daemon IPC connection",
+                    Self::DAEMON_START_TIMEOUT
+                );
+                return Err(QuincyError::system(
+                    "Timed out waiting for daemon IPC connection",
+                ));
+            }
+        };
         let mut instance = Self::create_instance(name, Some(Arc::new(Mutex::new(connection))));
 
         instance.send_start_command(&config_path).await;
@@ -58,7 +77,7 @@ impl QuincyInstance {
     /// # Errors
     /// Returns an error if the current executable path cannot be determined
     fn get_daemon_binary_path() -> Result<PathBuf> {
-        Ok(std::env::current_exe()?
+        Ok(env::current_exe()?
             .parent()
             .ok_or_else(|| QuincyError::system("Could not determine parent directory"))?
             .join("quincy-client-daemon"))
@@ -103,8 +122,7 @@ impl QuincyInstance {
             "Quincy needs administrator privileges to create network interfaces.",
         )?;
 
-        let elevation_result =
-            tokio::task::spawn_blocking(move || child.wait_with_output()).await??;
+        let elevation_result = spawn_blocking(move || child.wait_with_output()).await??;
 
         if !elevation_result.status.success() || !elevation_result.stderr.is_empty() {
             return Err(QuincyError::system("Failed to spawn daemon process"));

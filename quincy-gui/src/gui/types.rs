@@ -1,8 +1,12 @@
 use iced::widget::text_editor;
 use iced::window;
+use quincy::config::ClientConfig;
+use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-use crate::ipc::ClientStatus;
+use crate::ipc::{ClientStatus, IpcConnection};
 
 /// Represents a running Quincy VPN client instance.
 ///
@@ -14,14 +18,14 @@ pub struct QuincyInstance {
     /// Unique identifier for this instance
     pub name: String,
     /// IPC connection for communication with the daemon
-    pub(crate) ipc_client: Option<std::sync::Arc<tokio::sync::Mutex<crate::ipc::IpcConnection>>>,
+    pub(crate) ipc_client: Option<Arc<Mutex<IpcConnection>>>,
     /// Current connection status and metrics
     pub(crate) status: ClientStatus,
 }
 
-impl std::fmt::Debug for QuincyInstance {
+impl fmt::Debug for QuincyInstance {
     /// Custom Debug implementation that excludes process handles and other non-debuggable fields.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("QuincyInstance")
             .field("name", &self.name)
             .field("status", &self.status)
@@ -45,7 +49,7 @@ pub struct SelectedConfig {
     /// The text editor content for the configuration file
     pub editable_content: text_editor::Content,
     /// Parsed configuration for display
-    pub parsed_config: Option<quincy::config::ClientConfig>,
+    pub parsed_config: Option<ClientConfig>,
 }
 
 /// State for an editor window.

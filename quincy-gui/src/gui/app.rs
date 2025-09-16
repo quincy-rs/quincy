@@ -1,16 +1,25 @@
 use iced::widget::container as container_widget;
+use iced::widget::container::Style as ContainerStyle;
 use iced::widget::{column, row, text};
-use iced::{window, Background, Color, Element, Length, Subscription, Task, Theme};
+use iced::{
+    alignment::Horizontal, time, window, Background, Color, Element, Length, Size, Subscription,
+    Task, Theme,
+};
 use quincy::{QuincyError, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
+use std::process;
+use std::result::Result as StdResult;
+use std::time::Duration;
 use tracing::error;
 
 use super::styles::ColorPalette;
 use super::types::QuincyInstance;
 use super::types::{ConfigMsg, EditorMsg, InstanceMsg, SystemMsg};
 use super::types::{EditorWindow, Message, QuincyConfig, SelectedConfig};
+use crate::ipc::ConnectionStatus;
 use crate::validation;
 
 /// Main GUI application state for the Quincy VPN client.
@@ -56,18 +65,18 @@ impl QuincyGui {
     pub fn new(config_dir: PathBuf) -> (Self, Task<Message>) {
         if let Err(e) = Self::validate_and_create_config_dir(&config_dir) {
             error!("Failed to set up config directory: {}", e);
-            std::process::exit(1);
+            process::exit(1);
         }
 
         let (configs, load_errors) = match Self::load_configurations(&config_dir) {
             Ok(result) => result,
             Err(e) => {
                 error!("Failed to load configurations: {}", e);
-                std::process::exit(1);
+                process::exit(1);
             }
         };
 
-        let window_size = iced::Size::new(800.0, 610.0);
+        let window_size = Size::new(800.0, 610.0);
 
         // Create the main window
         let window_settings = window::Settings {
@@ -138,8 +147,7 @@ impl QuincyGui {
                 InstanceMsg::Disconnected => Task::none(),
                 InstanceMsg::StatusUpdated(name, status) => {
                     if let Some(inst) = self.instances.get_mut(&name) {
-                        let is_disconnect =
-                            matches!(status.status, crate::ipc::ConnectionStatus::Disconnected);
+                        let is_disconnect = matches!(status.status, ConnectionStatus::Disconnected);
                         if is_disconnect {
                             // Remove instance and record a brief error note
                             self.instances.remove(&name);
@@ -202,20 +210,20 @@ impl QuincyGui {
                         text("Editor window is open")
                             .size(16)
                             .color(ColorPalette::TEXT_SECONDARY)
-                            .align_x(iced::alignment::Horizontal::Center)
+                            .align_x(Horizontal::Center)
                     )
                     .width(Length::Fill)
                     .center_x(Length::Fill)
-                    .style(|_theme| iced::widget::container::Style {
+                    .style(|_theme| ContainerStyle {
                         background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.7))),
-                        ..iced::widget::container::Style::default()
+                        ..ContainerStyle::default()
                     })
                 ])
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(|_theme| iced::widget::container::Style {
+                .style(|_theme| ContainerStyle {
                     background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.5))),
-                    ..iced::widget::container::Style::default()
+                    ..ContainerStyle::default()
                 })
                 .into()
             } else {
@@ -248,12 +256,12 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Subscription for window close events
-    pub fn subscription(&self) -> iced::Subscription<Message> {
+    pub fn subscription(&self) -> Subscription<Message> {
         // Batch window close events with a 1s metrics tick
         let close_events =
             window::close_events().map(|id| Message::System(SystemMsg::WindowClosed(id)));
-        let tick = iced::time::every(std::time::Duration::from_secs(1))
-            .map(|_| Message::System(SystemMsg::UpdateMetrics));
+        let tick =
+            time::every(Duration::from_secs(1)).map(|_| Message::System(SystemMsg::UpdateMetrics));
         Subscription::batch(vec![close_events, tick])
     }
 
@@ -340,8 +348,8 @@ impl QuincyGui {
     /// # Returns
     /// Optional tuple of (config_name, QuincyConfig)
     fn process_config_entry(
-        entry: std::result::Result<fs::DirEntry, std::io::Error>,
-    ) -> Option<std::result::Result<(String, QuincyConfig), String>> {
+        entry: StdResult<fs::DirEntry, io::Error>,
+    ) -> Option<StdResult<(String, QuincyConfig), String>> {
         let config_path = match entry {
             Ok(e) => e.path(),
             Err(e) => return Some(Err(format!("Failed to read a config entry: {}", e))),

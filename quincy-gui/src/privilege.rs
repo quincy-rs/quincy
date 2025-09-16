@@ -1,3 +1,5 @@
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+use quincy::QuincyError;
 use quincy::Result;
 use std::process::{Child, Command, Stdio};
 use tracing::info;

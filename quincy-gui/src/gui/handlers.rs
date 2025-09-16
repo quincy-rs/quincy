@@ -1,14 +1,17 @@
 use iced::widget::text_editor;
-use iced::{window, Task};
-use quincy::config::FromPath;
+use iced::{window, Size, Task};
+use quincy::config::{ClientConfig, FromPath};
 use quincy::Result;
 use std::fs;
+use std::path::Path;
+use std::process;
 use tracing::{debug, error, info, warn};
 
 use super::app::QuincyGui;
-use super::types::QuincyInstance;
-use super::types::{EditorMsg, InstanceMsg};
-use super::types::{EditorWindow, Message, SelectedConfig};
+use super::types::{
+    EditorMsg, EditorWindow, InstanceMsg, Message, QuincyConfig, QuincyInstance, SelectedConfig,
+};
+use crate::ipc::{ClientStatus, ConnectionStatus, IpcMessage};
 use crate::validation;
 
 impl QuincyGui {
@@ -44,15 +47,12 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Result containing SelectedConfig or IO error
-    pub fn load_config_content(
-        &self,
-        config: &super::types::QuincyConfig,
-    ) -> Result<SelectedConfig> {
+    pub fn load_config_content(&self, config: &QuincyConfig) -> Result<SelectedConfig> {
         let config_content = fs::read_to_string(&config.path)?;
         let editable_content = text_editor::Content::with_text(&config_content);
 
         // Try to parse the configuration for display purposes
-        let parsed_config = match quincy::config::ClientConfig::from_path(&config.path, "QUINCY_") {
+        let parsed_config = match ClientConfig::from_path(&config.path, "QUINCY_") {
             Ok(cfg) => Some(cfg),
             Err(e) => {
                 warn!("Failed to parse config {}: {}", config.name, e);
@@ -200,7 +200,7 @@ impl QuincyGui {
     pub fn save_config_to_new_path(
         &mut self,
         selected_config: &mut SelectedConfig,
-        new_path: &std::path::Path,
+        new_path: &Path,
     ) {
         match fs::write(new_path, selected_config.editable_content.text()) {
             Ok(_) => {
@@ -217,7 +217,7 @@ impl QuincyGui {
     ///
     /// # Arguments
     /// * `old_path` - Path to the old configuration file
-    pub fn remove_old_config_file(&self, old_path: &std::path::Path) {
+    pub fn remove_old_config_file(&self, old_path: &Path) {
         match fs::remove_file(old_path) {
             Ok(_) => info!("Old config file removed: {}", old_path.display()),
             Err(e) => error!("Failed to remove old config file: {}", e),
@@ -293,8 +293,8 @@ impl QuincyGui {
     ///
     /// # Returns
     /// New QuincyConfig instance
-    pub fn create_new_config(&self, name: &str) -> super::types::QuincyConfig {
-        super::types::QuincyConfig {
+    pub fn create_new_config(&self, name: &str) -> QuincyConfig {
+        QuincyConfig {
             name: name.to_string(),
             path: self.config_dir.join(format!("{name}.toml")),
         }
@@ -307,10 +307,7 @@ impl QuincyGui {
     ///
     /// # Returns
     /// SelectedConfig with template content
-    pub fn create_selected_config_with_template(
-        &self,
-        config: super::types::QuincyConfig,
-    ) -> SelectedConfig {
+    pub fn create_selected_config_with_template(&self, config: QuincyConfig) -> SelectedConfig {
         SelectedConfig {
             quincy_config: config,
             editable_content: text_editor::Content::with_text(include_str!(
@@ -346,16 +343,21 @@ impl QuincyGui {
     /// # Returns
     /// Async task to establish the VPN connection
     pub fn handle_connect(&mut self) -> Task<Message> {
-        let selected_config = match self.selected_config.as_mut() {
-            Some(config) => config,
+        let (config_name, config_path) = match self.selected_config.as_ref() {
+            Some(config) => (
+                config.quincy_config.name.clone(),
+                config.quincy_config.path.clone(),
+            ),
             None => {
                 error!("No configuration selected");
                 return Task::none();
             }
         };
 
-        let config_name = selected_config.quincy_config.name.clone();
-        let config_path = selected_config.quincy_config.path.clone();
+        if self.instances.contains_key(&config_name) {
+            warn!("Instance {config_name} already exists; ignoring duplicate connect request");
+            return Task::none();
+        }
 
         // Validate configuration name before attempting to start the daemon/IPC
         if let Err(e) = validation::validate_config_name(&config_name) {
@@ -365,6 +367,18 @@ impl QuincyGui {
 
         // Dismiss any previous error for this config on Connect
         self.last_errors.remove(&config_name);
+
+        let placeholder_name = config_name.clone();
+        self.instances
+            .entry(config_name.clone())
+            .or_insert_with(|| QuincyInstance {
+                name: placeholder_name,
+                ipc_client: None,
+                status: ClientStatus {
+                    status: ConnectionStatus::Connecting,
+                    metrics: None,
+                },
+            });
         // Per-instance last_error was removed; rely on app-level last_errors and status
 
         Task::future(async move {
@@ -429,57 +443,45 @@ impl QuincyGui {
     /// # Returns
     /// Async task to update metrics (timer cadence is driven by Subscription)
     pub fn handle_update_metrics(&self) -> Task<Message> {
-        use std::sync::Arc;
-        use tokio::sync::Mutex;
-
         // For each instance, spawn a task that fetches status and maps it to a message.
         let tasks: Vec<Task<Message>> = self
             .instances
             .iter()
-            .map(|(name, instance)| {
+            .filter_map(|(name, instance)| {
                 let name = name.clone();
-                let ipc_opt: Option<Arc<Mutex<crate::ipc::IpcConnection>>> =
-                    instance.ipc_client.clone();
+                let ipc_client = instance.ipc_client.clone()?;
 
+                Some((name, ipc_client))
+            })
+            .map(|(name, ipc_client)| {
                 Task::future(async move {
-                    if let Some(ipc) = ipc_opt {
-                        let mut conn = ipc.lock().await;
-                        if let Err(e) = conn.send(&crate::ipc::IpcMessage::GetStatus).await {
-                            return Message::Instance(InstanceMsg::DisconnectedWithError(
-                                name,
-                                e.to_string(),
-                            ));
-                        }
-                        match conn.recv().await {
-                            Ok(crate::ipc::IpcMessage::StatusUpdate(status)) => {
-                                return Message::Instance(InstanceMsg::StatusUpdated(name, status));
-                            }
-                            Ok(crate::ipc::IpcMessage::Error(err)) => {
-                                let status = crate::ipc::ClientStatus {
-                                    status: crate::ipc::ConnectionStatus::Error(err),
-                                    metrics: None,
-                                };
-                                return Message::Instance(InstanceMsg::StatusUpdated(name, status));
-                            }
-                            Ok(other) => {
-                                return Message::Instance(InstanceMsg::DisconnectedWithError(
-                                    name,
-                                    format!("Unexpected IPC message: {:?}", other),
-                                ));
-                            }
-                            Err(e) => {
-                                return Message::Instance(InstanceMsg::DisconnectedWithError(
-                                    name,
-                                    e.to_string(),
-                                ));
-                            }
-                        }
+                    let mut conn = ipc_client.lock().await;
+                    if let Err(e) = conn.send(&IpcMessage::GetStatus).await {
+                        return Message::Instance(InstanceMsg::DisconnectedWithError(
+                            name,
+                            e.to_string(),
+                        ));
                     }
-                    // No IPC connection available: treat as disconnected with reason
-                    Message::Instance(InstanceMsg::DisconnectedWithError(
-                        name,
-                        "IPC connection missing".to_string(),
-                    ))
+                    match conn.recv().await {
+                        Ok(IpcMessage::StatusUpdate(status)) => {
+                            Message::Instance(InstanceMsg::StatusUpdated(name, status))
+                        }
+                        Ok(IpcMessage::Error(err)) => {
+                            let status = ClientStatus {
+                                status: ConnectionStatus::Error(err),
+                                metrics: None,
+                            };
+                            Message::Instance(InstanceMsg::StatusUpdated(name, status))
+                        }
+                        Ok(other) => Message::Instance(InstanceMsg::DisconnectedWithError(
+                            name,
+                            format!("Unexpected IPC message: {:?}", other),
+                        )),
+                        Err(e) => Message::Instance(InstanceMsg::DisconnectedWithError(
+                            name,
+                            e.to_string(),
+                        )),
+                    }
                 })
             })
             .collect();
@@ -502,6 +504,7 @@ impl QuincyGui {
     /// * `config_name` - The configuration that failed to connect
     /// * `error` - Error message
     pub fn handle_connect_failed(&mut self, config_name: String, error: String) -> Task<Message> {
+        self.instances.remove(&config_name);
         self.last_errors.insert(config_name, error);
         Task::none()
     }
@@ -541,19 +544,17 @@ impl QuincyGui {
                     selected_config.quincy_config.path.display()
                 );
                 // Try to re-parse the configuration after saving
-                selected_config.parsed_config = match quincy::config::ClientConfig::from_path(
-                    &selected_config.quincy_config.path,
-                    "QUINCY_",
-                ) {
-                    Ok(cfg) => Some(cfg),
-                    Err(e) => {
-                        warn!(
-                            "Failed to parse updated config {}: {}",
-                            selected_config.quincy_config.name, e
-                        );
-                        None
-                    }
-                };
+                selected_config.parsed_config =
+                    match ClientConfig::from_path(&selected_config.quincy_config.path, "QUINCY_") {
+                        Ok(cfg) => Some(cfg),
+                        Err(e) => {
+                            warn!(
+                                "Failed to parse updated config {}: {}",
+                                selected_config.quincy_config.name, e
+                            );
+                            None
+                        }
+                    };
 
                 // Update configs after successful save
                 self.configs.insert(
@@ -589,9 +590,9 @@ impl QuincyGui {
         let config_content = selected_config.editable_content.text();
 
         let (window_id, open_task) = window::open(window::Settings {
-            size: iced::Size::new(800.0, 600.0),
+            size: Size::new(800.0, 600.0),
             position: window::Position::Centered,
-            min_size: Some(iced::Size::new(600.0, 400.0)),
+            min_size: Some(Size::new(600.0, 400.0)),
             ..window::Settings::default()
         });
 
@@ -678,5 +679,5 @@ impl QuincyGui {
 
 /// A necessary function to ensure the app exits gracefully when the main window is closed.
 async fn exit() -> Message {
-    std::process::exit(0);
+    process::exit(0);
 }
