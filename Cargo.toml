@@ -1,6 +1,6 @@
 [package]
 name = "quincy"
-version = "0.15.2"
+version = "0.15.3"
 authors = ["Jakub Kubík <jakub.kubik.it@protonmail.com>"]
 license = "AGPL-3.0-or-later"
 description = "QUIC-based VPN"
@@ -41,8 +41,8 @@ jemalloc = ["jemallocator"]
 quinn = { version = "^0.11.8", default-features = false, features = ["log", "platform-verifier", "runtime-tokio", "rustls-aws-lc-rs"] }
 
 # Interfaces and networking
-tun-rs = { version = "=2.1.0", features = ["async_tokio"] }  # pinned audited version
-socket2 = "^0.5.2"
+tun-rs = { version = "=2.7.3", features = ["async_tokio"] }  # pinned audited version
+socket2 = { version = "^0.6.0", features = ["all"] }
 bytes = "^1.4"
 ipnet = { version = "^2.7", features = ["serde"] }
 
