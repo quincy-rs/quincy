@@ -5,7 +5,7 @@ identifier = "rs.quincy.quincy"
 description = "QUIC-based VPN"
 homepage = "https://github.com/quincy-rs/quincy"
 license_file = "../LICENCE"
-before_packaging_command = "resources/scripts/package_windows.ps1"
+before_packaging_command = "PowerShell -NoProfile -ExecutionPolicy Bypass -File resources/scripts/package_windows.ps1"
 icons = ["resources/common/icon.ico"]
 binaries = [
     { path = "quincy-client-gui", main = true },
