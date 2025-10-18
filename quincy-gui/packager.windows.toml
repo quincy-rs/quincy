@@ -1,0 +1,14 @@
+name = "windows"
+product_name = "Quincy"
+version = "1.0.0-beta.2"
+identifier = "rs.quincy.quincy"
+description = "QUIC-based VPN"
+homepage = "https://github.com/quincy-rs/quincy"
+license_file = "../LICENCE"
+before_packaging_command = "resources/scripts/package_windows.ps1"
+icons = ["resources/common/icon.ico"]
+binaries = [
+    { path = "quincy-client-gui", main = true },
+    { path = "quincy-client-daemon", main = false }
+]
+resources = ["target/tmp/wintun.dll"]

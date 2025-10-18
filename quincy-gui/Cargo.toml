@@ -12,25 +12,6 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
-[package.metadata.packager]
-product_name = "Quincy"
-version = "1.0.0-beta.2"
-identifier = "rs.quincy.quincy"
-description = "QUIC-based VPN"
-homepage = "https://github.com/quincy-rs/quincy"
-license_file = "../LICENCE"
-before_packaging_command = "cargo build --release"
-icons = ["resources/common/icon.png", "resources/common/icon@2x.png", "resources/common/icon.ico"]
-binaries = [
-    { path = "quincy-client-gui", main = true },
-    { path = "quincy-client-daemon", main = false }
-]
-
-[target.'cfg(windows)']
-# fetch wintun
-before_packaging_command = "resources/scripts/windows_deps.ps1"
-resources = ["target/tmp/wintun.dll"]
-
 [[bin]]
 name = "quincy-client-gui"
 path = "src/bin/client_gui.rs"
