@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use clap::Parser;
 use iced::daemon;
 use quincy::utils::tracing::log_subscriber;

@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use clap::Parser;
 use quincy::config::{ClientConfig, FromPath};
 use quincy::network::interface::tun_rs::TunRsInterface;
