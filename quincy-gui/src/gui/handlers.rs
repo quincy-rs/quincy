@@ -311,7 +311,7 @@ impl QuincyGui {
         SelectedConfig {
             quincy_config: config,
             editable_content: text_editor::Content::with_text(include_str!(
-                "../../resources/common/client.toml"
+                "../../../resources/common/client.toml"
             )),
             parsed_config: None,
         }

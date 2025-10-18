@@ -4,10 +4,11 @@ version = "1.0.0-beta.2"
 identifier = "rs.quincy.quincy"
 description = "QUIC-based VPN"
 homepage = "https://github.com/quincy-rs/quincy"
-license_file = "../LICENCE"
+license_file = "LICENCE"
 before_packaging_command = "resources/scripts/package_unix.sh"
 icons = ["resources/common/icon.png", "resources/common/icon@2x.png"]
 binaries = [
     { path = "quincy-client-gui", main = true },
     { path = "quincy-client-daemon", main = false }
 ]
+out_dir = "target/release"
