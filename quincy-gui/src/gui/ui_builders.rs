@@ -224,11 +224,18 @@ impl QuincyGui {
     pub fn build_config_button<'a>(&self, name: &'a str) -> Element<'a, Message> {
         let is_editor_open = self.is_editor_open();
 
+        // Check if any config has an active instance
+        let has_active_instance = self
+            .config_states
+            .values()
+            .any(|state| state.has_active_instance());
+
         let mut btn = button_widget(text(name).color(ColorPalette::TEXT_PRIMARY).size(14))
             .width(Length::Fill)
             .padding([6, 8]);
 
-        if !is_editor_open {
+        // Only allow selection if editor is closed AND no config is active
+        if !is_editor_open && !has_active_instance {
             btn = btn.on_press(Message::Config(ConfigMsg::Selected(name.to_string())));
         }
 
@@ -237,10 +244,12 @@ impl QuincyGui {
             .as_ref()
             .is_some_and(|config| config.quincy_config.name == name);
 
-        if is_editor_open {
-            btn.style(|_theme, _status| CustomButtonStyles::disabled())
-        } else if is_selected {
+        // Style based on selection state, but show disabled for non-selected when locked
+        if is_selected {
             btn.style(CustomButtonStyles::selected_fn())
+        } else if is_editor_open || has_active_instance {
+            // Disable non-selected buttons when editor is open or any config is active
+            btn.style(|_theme, _status| CustomButtonStyles::disabled())
         } else {
             btn.style(CustomButtonStyles::secondary_fn())
         }

@@ -27,6 +27,16 @@ impl QuincyGui {
             return Task::none();
         }
 
+        // Don't allow selection changes while any config is in an active state
+        // (Connecting, Connected, or Disconnecting) to avoid confusion about which config is running
+        if self
+            .config_states
+            .values()
+            .any(|state| state.has_active_instance())
+        {
+            return Task::none();
+        }
+
         let Some(config) = self.configs.get(&name) else {
             error!("Configuration not found: {name}");
             return Task::none();

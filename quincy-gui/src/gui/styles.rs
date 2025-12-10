@@ -354,11 +354,9 @@ impl CustomButtonStyles {
     }
 
     /// Creates a style function for selected buttons
+    /// Always shows selected style regardless of button status (including disabled)
     pub fn selected_fn() -> impl Fn(&Theme, Status) -> ButtonStyle {
-        |_theme, status| match status {
-            Status::Active | Status::Hovered | Status::Pressed => Self::selected(),
-            Status::Disabled => Self::disabled(),
-        }
+        |_theme, _status| Self::selected()
     }
 
     /// Creates a style function for danger buttons
