@@ -9,9 +9,7 @@ use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use super::types::QuincyInstance;
-use crate::ipc::{
-    get_ipc_socket_path, ClientStatus, ConnectionStatus, IpcConnection, IpcMessage, IpcServer,
-};
+use crate::ipc::{get_ipc_socket_path, ConnectionMetrics, ConnectionStatus, IpcMessage, IpcServer};
 use crate::privilege::run_elevated;
 use crate::validation;
 
@@ -22,14 +20,15 @@ impl QuincyInstance {
     /// Starts a new Quincy VPN client instance.
     ///
     /// This method creates an IPC server, spawns a privileged daemon process,
-    /// and waits for the daemon to connect.
+    /// and waits for the daemon to connect. The daemon will then start
+    /// connecting to the VPN server while listening for cancellation messages.
     ///
     /// # Arguments
     /// * `name` - Unique identifier for this instance
     /// * `config_path` - Path to the VPN configuration file
     ///
     /// # Returns
-    /// * `Ok(QuincyInstance)` if the instance started successfully
+    /// * `Ok((QuincyInstance, Option<ConnectionMetrics>))` if the instance started successfully
     /// * `Err` if the daemon process failed to start or IPC connection failed
     ///
     /// # Errors
@@ -37,7 +36,10 @@ impl QuincyInstance {
     /// - The daemon binary cannot be found
     /// - Elevated privileges cannot be obtained
     /// - IPC server cannot be created
-    pub async fn start(name: String, config_path: PathBuf) -> Result<Self> {
+    pub async fn start(
+        name: String,
+        config_path: PathBuf,
+    ) -> Result<(Self, Option<ConnectionMetrics>)> {
         // Validate instance/config name early to avoid spawning processes with unsafe names
         validation::validate_instance_name(&name)?;
         info!("Starting client daemon process for: {}", name);
@@ -61,21 +63,18 @@ impl QuincyInstance {
                 ));
             }
         };
-        let mut instance = Self::create_instance(name, Some(Arc::new(Mutex::new(connection))));
 
+        let instance = Self::new(name, Some(Arc::new(Mutex::new(connection))));
+
+        // Send start command - daemon will now start VPN connection
+        // and listen for IPC messages (including Shutdown for cancellation)
         instance.send_start_command(&config_path).await;
-        instance.update_status().await?;
+        let metrics = instance.fetch_initial_status().await?;
 
-        Ok(instance)
+        Ok((instance, metrics))
     }
 
     /// Gets the path to the daemon binary.
-    ///
-    /// # Returns
-    /// Path to the quincy-client-daemon binary
-    ///
-    /// # Errors
-    /// Returns an error if the current executable path cannot be determined
     fn get_daemon_binary_path() -> Result<PathBuf> {
         Ok(env::current_exe()?
             .parent()
@@ -84,26 +83,11 @@ impl QuincyInstance {
     }
 
     /// Spawns the daemon process with elevated privileges.
-    ///
-    /// # Arguments
-    /// * `daemon_binary` - Path to the daemon executable
-    /// * `config_path` - Path to the configuration file
-    /// * `name` - Instance name
-    ///
-    /// # Returns
-    /// Result indicating if privilege escalation succeeded
-    ///
-    /// # Errors
-    /// Returns an error if the privilege escalation process fails
     async fn spawn_daemon_process(
         daemon_binary: &Path,
         config_path: &Path,
         name: &str,
     ) -> Result<()> {
-        // Quote parameters that may contain spaces to ensure they are parsed correctly
-        // by the various privilege escalation mechanisms (macOS AppleScript, Linux sh -c, Windows PowerShell).
-        // We use simple double-quote wrapping and escape embedded double-quotes to minimize injection risk
-        // while keeping cross-platform behavior consistent.
         let quoted_binary = Self::quote_for_cmdline(&daemon_binary.to_string_lossy());
         let quoted_config = Self::quote_for_cmdline(&config_path.to_string_lossy());
         let quoted_name = Self::quote_for_cmdline(name);
@@ -132,10 +116,6 @@ impl QuincyInstance {
     }
 
     /// Wraps an argument in double quotes and escapes any embedded double quotes.
-    ///
-    /// This is used to safely pass values that may contain spaces (like file paths
-    /// and instance names) through privilege escalation layers that rely on shell
-    /// command strings or Windows command-line parsing rules.
     fn quote_for_cmdline(arg: &str) -> String {
         let mut out = String::with_capacity(arg.len() + 2);
         out.push('"');
@@ -151,29 +131,7 @@ impl QuincyInstance {
         out
     }
 
-    /// Creates a new instance with the given parameters.
-    ///
-    /// # Arguments
-    /// * `name` - Instance name
-    /// * `ipc_connection` - IPC connection to daemon
-    ///
-    /// # Returns
-    /// New QuincyInstance with default status
-    fn create_instance(name: String, ipc_connection: Option<Arc<Mutex<IpcConnection>>>) -> Self {
-        Self {
-            name,
-            ipc_client: ipc_connection,
-            status: ClientStatus {
-                status: ConnectionStatus::Disconnected,
-                metrics: None,
-            },
-        }
-    }
-
     /// Sends the start command to the daemon.
-    ///
-    /// # Arguments
-    /// * `config_path` - Path to the configuration file
     async fn send_start_command(&self, config_path: &Path) {
         if let Some(ref ipc_connection) = self.ipc_client {
             let mut connection = ipc_connection.lock().await;
@@ -188,24 +146,46 @@ impl QuincyInstance {
         }
     }
 
-    /// Stops the VPN client instance and cleans up resources.
+    /// Fetches the initial status and metrics from the daemon.
     ///
-    /// This method gracefully shuts down the daemon process and updates the instance status.
-    /// With the reversed architecture, the daemon will automatically detect disconnection
-    /// when the GUI closes the IPC connection.
+    /// # Returns
+    /// * `Ok(Some(metrics))` if connected with metrics
+    /// * `Ok(None)` if connected without metrics (still connecting)
+    /// * `Err` if daemon reports an error or communication fails
+    async fn fetch_initial_status(&self) -> Result<Option<ConnectionMetrics>> {
+        let Some(ref ipc_connection) = self.ipc_client else {
+            return Ok(None);
+        };
+
+        let mut connection = ipc_connection.lock().await;
+
+        connection.send(&IpcMessage::GetStatus).await?;
+
+        match connection.recv().await? {
+            IpcMessage::StatusUpdate(status) => match status.status {
+                ConnectionStatus::Connected => Ok(status.metrics),
+                ConnectionStatus::Connecting => Ok(None),
+                ConnectionStatus::Disconnected => Err(QuincyError::system("Daemon disconnected")),
+                ConnectionStatus::Error(err) => Err(QuincyError::system(err)),
+            },
+            IpcMessage::Error(err) => Err(QuincyError::system(err)),
+            other => {
+                warn!("Unexpected response to status request: {:?}", other);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Stops the VPN client instance and cleans up resources.
     ///
     /// # Returns
     /// * `Ok(())` if the instance was stopped successfully
     /// * `Err` if there were issues during shutdown (non-fatal)
-    ///
-    /// # Errors
-    /// Returns an error if daemon communication fails, but continues with cleanup
     pub async fn stop(&mut self) -> Result<()> {
         info!("Stopping client daemon process for: {}", self.name);
 
         self.send_shutdown_message().await;
         self.close_connection();
-        self.reset_status();
 
         Ok(())
     }
@@ -225,73 +205,5 @@ impl QuincyInstance {
     fn close_connection(&mut self) {
         self.ipc_client = None;
         info!("IPC connection closed - daemon will detect disconnection");
-    }
-
-    /// Resets the instance status to disconnected.
-    fn reset_status(&mut self) {
-        self.status = ClientStatus {
-            status: ConnectionStatus::Disconnected,
-            metrics: None,
-        };
-    }
-
-    /// Updates the current status and metrics from the daemon.
-    ///
-    /// # Returns
-    /// * `Ok(())` if status was updated successfully
-    /// * `Err` if IPC communication failed
-    ///
-    /// # Errors
-    /// Returns an error if the daemon cannot be contacted or responds with invalid data
-    pub async fn update_status(&mut self) -> Result<()> {
-        if let Some(ref ipc_connection) = self.ipc_client {
-            let mut connection = ipc_connection.lock().await;
-            match connection.send(&IpcMessage::GetStatus).await {
-                Ok(()) => match connection.recv().await {
-                    Ok(IpcMessage::StatusUpdate(status)) => {
-                        drop(connection);
-                        self.status = status.clone();
-                    }
-                    Ok(IpcMessage::Error(err)) => {
-                        drop(connection);
-                        self.set_error_status(&err);
-                    }
-                    Ok(_) => {
-                        drop(connection);
-                        warn!("Unexpected response to status request");
-                    }
-                    Err(e) => {
-                        drop(connection);
-                        warn!("Failed to receive status response: {}", e);
-                        self.set_error_status("Status response failed");
-                    }
-                },
-                Err(e) => {
-                    drop(connection);
-                    warn!("Failed to get status from daemon: {}", e);
-                    self.set_error_status("IPC communication failed");
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Sets the status to an error state with the given message.
-    ///
-    /// # Arguments
-    /// * `error_message` - Error description to display
-    fn set_error_status(&mut self, error_message: &str) {
-        self.status = ClientStatus {
-            status: ConnectionStatus::Error(error_message.to_string()),
-            metrics: None,
-        };
-    }
-
-    /// Gets the current status of this VPN instance.
-    ///
-    /// # Returns
-    /// Reference to the current client status including connection state and metrics
-    pub fn get_status(&self) -> &ClientStatus {
-        &self.status
     }
 }

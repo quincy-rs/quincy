@@ -1,28 +1,30 @@
 use iced::widget::text_editor;
-use iced::{window, Size, Task};
+use iced::Task;
 use quincy::config::{ClientConfig, FromPath};
 use quincy::Result;
 use std::fs;
 use std::path::Path;
 use std::process;
+use std::time::Instant;
 use tracing::{debug, error, info, warn};
 
 use super::app::QuincyGui;
 use super::types::{
-    EditorMsg, EditorWindow, InstanceMsg, Message, QuincyConfig, QuincyInstance, SelectedConfig,
+    ConfigState, EditorState, InstanceMsg, Message, QuincyConfig, QuincyInstance, SelectedConfig,
 };
-use crate::ipc::{ClientStatus, ConnectionStatus, IpcMessage};
+use crate::ipc::{ConnectionMetrics, ConnectionStatus, IpcMessage};
 use crate::validation;
 
 impl QuincyGui {
+    // ========== Configuration Selection Handlers ==========
+
     /// Handles selection of a configuration from the list.
-    ///
-    /// # Arguments
-    /// * `name` - Name of the configuration to select
-    ///
-    /// # Returns
-    /// Task::none() - No async task needed
     pub fn handle_config_selected(&mut self, name: String) -> Task<Message> {
+        // Don't allow selection changes while editor is open
+        if self.editor_state.is_some() {
+            return Task::none();
+        }
+
         let Some(config) = self.configs.get(&name) else {
             error!("Configuration not found: {name}");
             return Task::none();
@@ -41,17 +43,10 @@ impl QuincyGui {
     }
 
     /// Loads the content of a configuration file.
-    ///
-    /// # Arguments
-    /// * `config` - Configuration to load
-    ///
-    /// # Returns
-    /// Result containing SelectedConfig or IO error
     pub fn load_config_content(&self, config: &QuincyConfig) -> Result<SelectedConfig> {
         let config_content = fs::read_to_string(&config.path)?;
         let editable_content = text_editor::Content::with_text(&config_content);
 
-        // Try to parse the configuration for display purposes
         let parsed_config = match ClientConfig::from_path(&config.path, "QUINCY_") {
             Ok(cfg) => Some(cfg),
             Err(e) => {
@@ -67,37 +62,14 @@ impl QuincyGui {
         })
     }
 
-    /// Handles editing of the configuration text in editor window.
-    ///
-    /// # Arguments
-    /// * `window_id` - ID of the editor window
-    /// * `action` - Text editor action to perform
-    ///
-    /// # Returns
-    /// Task::none() - No async task needed
-    pub fn handle_config_edited(
-        &mut self,
-        window_id: window::Id,
-        action: text_editor::Action,
-    ) -> Task<Message> {
-        if let Some(editor_window) = self.editor_windows.get_mut(&window_id) {
-            // Apply the text editor action to update the content
-            editor_window.content.perform(action);
-            debug!("Text editor action applied to window {:?}", window_id);
-        } else {
-            error!("Editor window not found: {:?}", window_id);
-        }
-        Task::none()
-    }
+    // ========== Configuration Editing Handlers ==========
 
     /// Handles changes to the configuration name.
-    ///
-    /// # Arguments
-    /// * `new_name` - New name for the configuration
-    ///
-    /// # Returns
-    /// Task::none() - No async task needed
     pub fn handle_config_name_changed(&mut self, new_name: String) -> Task<Message> {
+        if self.editor_state.is_some() {
+            return Task::none();
+        }
+
         if let Some(selected_config) = self.selected_config.as_mut() {
             selected_config.quincy_config.name = new_name;
         } else {
@@ -107,10 +79,11 @@ impl QuincyGui {
     }
 
     /// Handles saving of a renamed configuration.
-    ///
-    /// # Returns
-    /// Task::none() - No async task needed
     pub fn handle_config_name_saved(&mut self) -> Task<Message> {
+        if self.editor_state.is_some() {
+            return Task::none();
+        }
+
         let old_config_name = {
             let Some(ref selected_config) = self.selected_config else {
                 error!("No configuration selected");
@@ -123,16 +96,18 @@ impl QuincyGui {
             old_config_name
         };
 
-        // Extract the selected config to avoid borrowing conflicts
         let Some(mut selected_config) = self.selected_config.take() else {
             return Task::none();
         };
 
-        // Validate the new name using regex-based validator before applying changes
+        // Validate the new name
         if let Err(e) = validation::validate_config_name(&selected_config.quincy_config.name) {
-            self.last_errors
-                .insert(selected_config.quincy_config.name.clone(), e.to_string());
-            // Put the selection back unchanged and surface error in UI
+            self.config_states.insert(
+                selected_config.quincy_config.name.clone(),
+                ConfigState::Error {
+                    message: e.to_string(),
+                },
+            );
             self.selected_config = Some(selected_config);
             return Task::none();
         }
@@ -143,12 +118,6 @@ impl QuincyGui {
     }
 
     /// Extracts the old configuration name from the file path.
-    ///
-    /// # Arguments
-    /// * `selected_config` - Currently selected configuration
-    ///
-    /// # Returns
-    /// Optional old configuration name
     pub fn extract_old_config_name(&self, selected_config: &SelectedConfig) -> Option<String> {
         let file_name = selected_config
             .quincy_config
@@ -167,16 +136,16 @@ impl QuincyGui {
     }
 
     /// Renames a configuration file and updates internal state.
-    ///
-    /// # Arguments
-    /// * `selected_config` - Configuration being renamed
-    /// * `old_config_name` - Previous name of the configuration
     pub fn rename_config_file(
         &mut self,
         selected_config: &mut SelectedConfig,
         old_config_name: &str,
     ) {
         self.configs.remove(old_config_name);
+        let old_state = self
+            .config_states
+            .remove(old_config_name)
+            .unwrap_or_default();
 
         let old_path = selected_config.quincy_config.path.clone();
         let new_path = self
@@ -186,17 +155,13 @@ impl QuincyGui {
         self.save_config_to_new_path(selected_config, &new_path);
         self.remove_old_config_file(&old_path);
 
-        self.configs.insert(
-            selected_config.quincy_config.name.clone(),
-            selected_config.quincy_config.clone(),
-        );
+        let new_name = selected_config.quincy_config.name.clone();
+        self.configs
+            .insert(new_name.clone(), selected_config.quincy_config.clone());
+        self.config_states.insert(new_name, old_state);
     }
 
     /// Saves configuration content to a new file path.
-    ///
-    /// # Arguments
-    /// * `selected_config` - Configuration to save
-    /// * `new_path` - New file path
     pub fn save_config_to_new_path(
         &mut self,
         selected_config: &mut SelectedConfig,
@@ -214,9 +179,6 @@ impl QuincyGui {
     }
 
     /// Removes the old configuration file.
-    ///
-    /// # Arguments
-    /// * `old_path` - Path to the old configuration file
     pub fn remove_old_config_file(&self, old_path: &Path) {
         match fs::remove_file(old_path) {
             Ok(_) => info!("Old config file removed: {}", old_path.display()),
@@ -225,10 +187,11 @@ impl QuincyGui {
     }
 
     /// Handles deletion of the current configuration.
-    ///
-    /// # Returns
-    /// Task::none() - No async task needed
     pub fn handle_config_delete(&mut self) -> Task<Message> {
+        if self.editor_state.is_some() {
+            return Task::none();
+        }
+
         let selected_config = match self.selected_config.take() {
             Some(config) => config,
             None => {
@@ -249,15 +212,18 @@ impl QuincyGui {
             }
         }
 
-        self.configs.remove(&selected_config.quincy_config.name);
+        let name = &selected_config.quincy_config.name;
+        self.configs.remove(name);
+        self.config_states.remove(name);
         Task::none()
     }
 
     /// Handles creation of a new configuration.
-    ///
-    /// # Returns
-    /// Task::none() - No async task needed
     pub fn handle_new_config(&mut self) -> Task<Message> {
+        if self.editor_state.is_some() {
+            return Task::none();
+        }
+
         let new_config_name = self.generate_unique_config_name();
         let new_config = self.create_new_config(&new_config_name);
         let selected_config = self.create_selected_config_with_template(new_config.clone());
@@ -265,15 +231,14 @@ impl QuincyGui {
         self.save_new_config_file(&selected_config);
 
         self.selected_config = Some(selected_config);
-        self.configs.insert(new_config_name, new_config);
+        self.configs.insert(new_config_name.clone(), new_config);
+        self.config_states
+            .insert(new_config_name, ConfigState::default());
 
         Task::none()
     }
 
     /// Generates a unique name for a new configuration.
-    ///
-    /// # Returns
-    /// Unique configuration name
     pub fn generate_unique_config_name(&self) -> String {
         let mut config_idx = 0;
         let mut new_config_name = "client_config".to_string();
@@ -287,12 +252,6 @@ impl QuincyGui {
     }
 
     /// Creates a new QuincyConfig with the given name.
-    ///
-    /// # Arguments
-    /// * `name` - Name for the new configuration
-    ///
-    /// # Returns
-    /// New QuincyConfig instance
     pub fn create_new_config(&self, name: &str) -> QuincyConfig {
         QuincyConfig {
             name: name.to_string(),
@@ -301,12 +260,6 @@ impl QuincyGui {
     }
 
     /// Creates a SelectedConfig with a template configuration.
-    ///
-    /// # Arguments
-    /// * `config` - Base configuration
-    ///
-    /// # Returns
-    /// SelectedConfig with template content
     pub fn create_selected_config_with_template(&self, config: QuincyConfig) -> SelectedConfig {
         SelectedConfig {
             quincy_config: config,
@@ -318,9 +271,6 @@ impl QuincyGui {
     }
 
     /// Saves a new configuration file to disk.
-    ///
-    /// # Arguments
-    /// * `selected_config` - Configuration to save
     pub fn save_new_config_file(&self, selected_config: &SelectedConfig) {
         match fs::write(
             &selected_config.quincy_config.path,
@@ -338,11 +288,117 @@ impl QuincyGui {
         }
     }
 
+    // ========== Editor Modal Handlers ==========
+
+    /// Opens the editor modal with the current configuration content.
+    pub fn handle_open_editor(&mut self) -> Task<Message> {
+        let selected_config = match self.selected_config.as_ref() {
+            Some(config) => config,
+            None => {
+                error!("No configuration selected");
+                return Task::none();
+            }
+        };
+
+        let config_name = selected_config.quincy_config.name.clone();
+        let config_content = selected_config.editable_content.text();
+
+        self.editor_state = Some(EditorState {
+            config_name: config_name.clone(),
+            content: text_editor::Content::with_text(&config_content),
+        });
+
+        info!("Editor opened for config: {}", config_name);
+        Task::none()
+    }
+
+    /// Handles text editor actions in the modal.
+    pub fn handle_editor_action(&mut self, action: text_editor::Action) -> Task<Message> {
+        if let Some(editor_state) = self.editor_state.as_mut() {
+            editor_state.content.perform(action);
+            debug!("Editor action applied");
+        }
+        Task::none()
+    }
+
+    /// Closes the editor modal without saving.
+    pub fn handle_close_editor(&mut self) -> Task<Message> {
+        if let Some(editor_state) = self.editor_state.take() {
+            info!(
+                "Editor closed without saving for config: {}",
+                editor_state.config_name
+            );
+        }
+        Task::none()
+    }
+
+    /// Saves changes from the editor and closes the modal.
+    pub fn handle_save_editor(&mut self) -> Task<Message> {
+        let editor_state = match self.editor_state.take() {
+            Some(state) => state,
+            None => {
+                error!("No editor state to save");
+                return Task::none();
+            }
+        };
+
+        let selected_config = match self.selected_config.as_mut() {
+            Some(config) => config,
+            None => {
+                error!("No configuration selected");
+                return Task::none();
+            }
+        };
+
+        let config_content = editor_state.content.text();
+
+        // Update the selected config's editable content
+        selected_config.editable_content = text_editor::Content::with_text(&config_content);
+
+        // Save to disk
+        match fs::write(&selected_config.quincy_config.path, &config_content) {
+            Ok(_) => {
+                info!(
+                    "Config file saved: {}",
+                    selected_config.quincy_config.path.display()
+                );
+
+                // Re-parse the configuration
+                selected_config.parsed_config =
+                    match ClientConfig::from_path(&selected_config.quincy_config.path, "QUINCY_") {
+                        Ok(cfg) => Some(cfg),
+                        Err(e) => {
+                            warn!(
+                                "Failed to parse updated config {}: {}",
+                                selected_config.quincy_config.name, e
+                            );
+                            None
+                        }
+                    };
+
+                // Update configs map
+                self.configs.insert(
+                    selected_config.quincy_config.name.clone(),
+                    selected_config.quincy_config.clone(),
+                );
+            }
+            Err(e) => {
+                error!("Failed to save config file: {}", e);
+            }
+        }
+
+        Task::none()
+    }
+
+    // ========== Connection State Machine Handlers ==========
+
     /// Handles VPN connection request.
-    ///
-    /// # Returns
-    /// Async task to establish the VPN connection
+    /// Transitions: Idle/Error -> Connecting
     pub fn handle_connect(&mut self) -> Task<Message> {
+        if self.editor_state.is_some() {
+            return Task::none();
+        }
+
         let (config_name, config_path) = match self.selected_config.as_ref() {
             Some(config) => (
                 config.quincy_config.name.clone(),
@@ -354,40 +410,48 @@ impl QuincyGui {
             }
         };
 
-        if self.instances.contains_key(&config_name) {
-            warn!("Instance {config_name} already exists; ignoring duplicate connect request");
+        let current_state = self
+            .config_states
+            .get(&config_name)
+            .cloned()
+            .unwrap_or_default();
+
+        if current_state.has_active_instance() {
+            warn!(
+                "Config {config_name} is already connecting/connected; ignoring duplicate request"
+            );
             return Task::none();
         }
 
-        // Validate configuration name before attempting to start the daemon/IPC
         if let Err(e) = validation::validate_config_name(&config_name) {
-            self.last_errors.insert(config_name, e.to_string());
+            self.config_states.insert(
+                config_name,
+                ConfigState::Error {
+                    message: e.to_string(),
+                },
+            );
             return Task::none();
         }
 
-        // Dismiss any previous error for this config on Connect
-        self.last_errors.remove(&config_name);
-
-        let placeholder_name = config_name.clone();
-        self.instances
-            .entry(config_name.clone())
-            .or_insert_with(|| QuincyInstance {
-                name: placeholder_name,
-                ipc_client: None,
-                status: ClientStatus {
-                    status: ConnectionStatus::Connecting,
-                    metrics: None,
-                },
-            });
-        // Per-instance last_error was removed; rely on app-level last_errors and status
+        // Set state to Connecting immediately (instance will be set when IPC connects)
+        self.config_states.insert(
+            config_name.clone(),
+            ConfigState::Connecting {
+                started_at: Instant::now(),
+                instance: None,
+            },
+        );
 
         Task::future(async move {
             info!("Connecting to instance: {}", config_name);
 
             match QuincyInstance::start(config_name.clone(), config_path).await {
-                Ok(instance) => {
-                    info!("Instance {} connected", config_name);
-                    Message::Instance(InstanceMsg::ConnectedInstance(instance))
+                Ok((instance, metrics)) => {
+                    info!(
+                        "Instance {} started, waiting for VPN connection",
+                        config_name
+                    );
+                    Message::Instance(InstanceMsg::ConnectedInstance(instance, metrics))
                 }
                 Err(e) => {
                     error!("Failed to start Quincy instance: {}", e);
@@ -398,39 +462,42 @@ impl QuincyGui {
     }
 
     /// Handles VPN disconnection request.
-    ///
-    /// # Returns
-    /// Async task to disconnect from the VPN
+    /// Transitions: Connected -> Disconnecting -> Idle
     pub fn handle_disconnect(&mut self) -> Task<Message> {
-        let instance_config = match &self.selected_config {
-            Some(config) => config.quincy_config.clone(),
+        if self.editor_state.is_some() {
+            return Task::none();
+        }
+
+        let config_name = match &self.selected_config {
+            Some(config) => config.quincy_config.name.clone(),
             None => {
                 error!("No configuration selected");
                 return Task::none();
             }
         };
 
-        // Dismiss any previous error for this config on Disconnect
-        self.last_errors.remove(&instance_config.name);
-
-        let mut client_instance = match self.instances.remove(&instance_config.name) {
-            Some(client) => client,
+        let current_state = self.config_states.remove(&config_name);
+        let mut instance = match current_state {
+            Some(ConfigState::Connected { instance, .. }) => instance,
+            Some(other) => {
+                self.config_states.insert(config_name.clone(), other);
+                error!("Cannot disconnect: not in Connected state");
+                return Task::none();
+            }
             None => {
-                error!(
-                    "No client instance found for configuration: {}",
-                    instance_config.name
-                );
+                error!("No state found for configuration: {}", config_name);
                 return Task::none();
             }
         };
 
-        // No per-instance last_error; rely on status and app-level errors
+        self.config_states
+            .insert(config_name.clone(), ConfigState::Disconnecting);
 
-        info!("Instance {} disconnected", instance_config.name);
+        info!("Disconnecting instance: {}", config_name);
 
         Task::future(async move {
-            match client_instance.stop().await {
-                Ok(_) => info!("Instance {} disconnected", instance_config.name),
+            match instance.stop().await {
+                Ok(_) => info!("Instance {} disconnected", config_name),
                 Err(e) => error!("Failed to stop client instance: {}", e),
             }
 
@@ -438,19 +505,78 @@ impl QuincyGui {
         })
     }
 
-    /// Handles periodic metrics updates for all running instances.
-    ///
-    /// # Returns
-    /// Async task to update metrics (timer cadence is driven by Subscription)
-    pub fn handle_update_metrics(&self) -> Task<Message> {
-        // For each instance, spawn a task that fetches status and maps it to a message.
-        let tasks: Vec<Task<Message>> = self
-            .instances
-            .iter()
-            .filter_map(|(name, instance)| {
-                let name = name.clone();
-                let ipc_client = instance.ipc_client.clone()?;
+    /// Handles cancellation of an in-progress connection.
+    /// Transitions: Connecting -> Idle
+    pub fn handle_cancel_connect(&mut self) -> Task<Message> {
+        let config_name = match &self.selected_config {
+            Some(config) => config.quincy_config.name.clone(),
+            None => {
+                error!("No configuration selected");
+                return Task::none();
+            }
+        };
 
+        // Get the current state and extract instance if in Connecting state
+        let current_state = self.config_states.remove(&config_name);
+        match current_state {
+            Some(ConfigState::Connecting { instance, .. }) => {
+                info!("Cancelling connection for: {}", config_name);
+
+                // Transition to Idle immediately
+                self.config_states
+                    .insert(config_name.clone(), ConfigState::Idle);
+
+                // Send shutdown to daemon via IPC if we have an instance
+                if let Some(inst) = instance {
+                    Task::future(async move {
+                        if let Some(ipc_client) = inst.ipc_client() {
+                            let mut conn = ipc_client.lock().await;
+                            if let Err(e) = conn.send(&IpcMessage::Shutdown).await {
+                                warn!("Failed to send shutdown to daemon: {}", e);
+                            } else {
+                                info!("Sent shutdown to daemon for {}", config_name);
+                            }
+                        }
+                        Message::Instance(InstanceMsg::Disconnected)
+                    })
+                } else {
+                    // No instance yet (still spawning daemon), just transition to Idle
+                    // The async task will return ConnectFailed or ConnectedInstance,
+                    // which we'll ignore since we're now Idle
+                    info!("Cancelled before daemon connected for {}", config_name);
+                    Task::none()
+                }
+            }
+            Some(other) => {
+                // Not in Connecting state, put it back
+                self.config_states.insert(config_name, other);
+                warn!("Cannot cancel: not in Connecting state");
+                Task::none()
+            }
+            None => {
+                warn!("Cannot cancel: no state found");
+                Task::none()
+            }
+        }
+    }
+
+    /// Handles periodic metrics updates for all connected and connecting instances.
+    /// Also polls instances in `Connecting` state to detect when they become `Connected`.
+    pub fn handle_update_metrics(&self) -> Task<Message> {
+        let tasks: Vec<Task<Message>> = self
+            .config_states
+            .iter()
+            .filter_map(|(name, state)| {
+                let instance = match state {
+                    ConfigState::Connected { instance, .. } => instance,
+                    ConfigState::Connecting {
+                        instance: Some(instance),
+                        ..
+                    } => instance,
+                    _ => return None,
+                };
+                let name = name.clone();
+                let ipc_client = instance.ipc_client()?.clone();
                 Some((name, ipc_client))
             })
             .map(|(name, ipc_client)| {
@@ -463,15 +589,22 @@ impl QuincyGui {
                         ));
                     }
                     match conn.recv().await {
-                        Ok(IpcMessage::StatusUpdate(status)) => {
-                            Message::Instance(InstanceMsg::StatusUpdated(name, status))
-                        }
+                        Ok(IpcMessage::StatusUpdate(status)) => match status.status {
+                            ConnectionStatus::Disconnected => {
+                                Message::Instance(InstanceMsg::DisconnectedWithError(
+                                    name,
+                                    "Connection lost".to_string(),
+                                ))
+                            }
+                            ConnectionStatus::Error(err) => {
+                                Message::Instance(InstanceMsg::DisconnectedWithError(name, err))
+                            }
+                            _ => {
+                                Message::Instance(InstanceMsg::StatusUpdated(name, status.metrics))
+                            }
+                        },
                         Ok(IpcMessage::Error(err)) => {
-                            let status = ClientStatus {
-                                status: ConnectionStatus::Error(err),
-                                metrics: None,
-                            };
-                            Message::Instance(InstanceMsg::StatusUpdated(name, status))
+                            Message::Instance(InstanceMsg::DisconnectedWithError(name, err))
                         }
                         Ok(other) => Message::Instance(InstanceMsg::DisconnectedWithError(
                             name,
@@ -489,195 +622,176 @@ impl QuincyGui {
         Task::batch(tasks)
     }
 
-    /// Handles a successful connection event by clearing any stored last error for the config.
-    ///
-    /// # Arguments
-    /// * `config_name` - The configuration name that connected
-    pub fn handle_connected(&mut self, config_name: String) -> Task<Message> {
-        self.last_errors.remove(&config_name);
+    /// Handles disconnection with error.
+    /// Transitions: Any -> Error
+    pub fn handle_disconnected_with_error(&mut self, name: String, error: String) -> Task<Message> {
+        info!("Config {} disconnected with error: {}", name, error);
+        self.config_states
+            .insert(name, ConfigState::Error { message: error });
         Task::none()
     }
 
-    /// Handles a failed connection attempt and stores its error message for display.
-    ///
-    /// # Arguments
-    /// * `config_name` - The configuration that failed to connect
-    /// * `error` - Error message
-    pub fn handle_connect_failed(&mut self, config_name: String, error: String) -> Task<Message> {
-        self.instances.remove(&config_name);
-        self.last_errors.insert(config_name, error);
-        Task::none()
-    }
+    /// Handles successful instance startup (daemon connected, VPN connecting).
+    /// Transitions: Idle -> Connecting
+    /// The daemon is now connected via IPC and starting the VPN connection.
+    pub fn handle_connected_instance(
+        &mut self,
+        instance: QuincyInstance,
+        metrics: Option<ConnectionMetrics>,
+    ) -> Task<Message> {
+        let name = instance.name.clone();
 
-    /// Handles saving of the current configuration from editor window.
-    ///
-    /// # Arguments
-    /// * `window_id` - ID of the editor window
-    ///
-    /// # Returns
-    /// Task::none() - No async task needed
-    pub fn handle_config_save_from_editor(&mut self, window_id: window::Id) -> Task<Message> {
-        let config_content = match self.editor_windows.get(&window_id) {
-            Some(editor_window) => editor_window.content.text(),
-            None => {
-                error!("Editor window not found: {:?}", window_id);
-                return Task::none();
-            }
-        };
-
-        let selected_config = match self.selected_config.as_mut() {
-            Some(config) => config,
-            None => {
-                error!("No configuration selected");
-                return Task::none();
-            }
-        };
-
-        // Update the main config content
-        selected_config.editable_content = text_editor::Content::with_text(&config_content);
-
-        // Save the file
-        match fs::write(&selected_config.quincy_config.path, &config_content) {
-            Ok(_) => {
-                info!(
-                    "Config file saved: {}",
-                    selected_config.quincy_config.path.display()
-                );
-                // Try to re-parse the configuration after saving
-                selected_config.parsed_config =
-                    match ClientConfig::from_path(&selected_config.quincy_config.path, "QUINCY_") {
-                        Ok(cfg) => Some(cfg),
-                        Err(e) => {
-                            warn!(
-                                "Failed to parse updated config {}: {}",
-                                selected_config.quincy_config.name, e
-                            );
-                            None
-                        }
-                    };
-
-                // Update configs after successful save
-                self.configs.insert(
-                    selected_config.quincy_config.name.clone(),
-                    selected_config.quincy_config.clone(),
-                );
-
-                // Close the editor window after successful save
-                self.editor_modal_open = false;
-                window::close(window_id)
-            }
-            Err(e) => {
-                error!("Failed to save config file: {}", e);
-                Task::none()
-            }
-        }
-    }
-
-    /// Handles opening the configuration editor in a separate window.
-    ///
-    /// # Returns
-    /// Task to open editor window
-    pub fn handle_open_editor(&mut self) -> Task<Message> {
-        let selected_config = match self.selected_config.as_ref() {
-            Some(config) => config,
-            None => {
-                error!("No configuration selected");
-                return Task::none();
-            }
-        };
-
-        let config_name = selected_config.quincy_config.name.clone();
-        let config_content = selected_config.editable_content.text();
-
-        let (window_id, open_task) = window::open(window::Settings {
-            size: Size::new(800.0, 600.0),
-            position: window::Position::Centered,
-            min_size: Some(Size::new(600.0, 400.0)),
-            ..window::Settings::default()
-        });
-
-        // Store the editor window info immediately
-        let editor_window = EditorWindow {
-            config_name,
-            content: text_editor::Content::with_text(&config_content),
-        };
-        self.editor_windows.insert(window_id, editor_window);
-        self.editor_modal_open = true;
-
-        Task::batch([open_task.map(move |_| Message::Editor(EditorMsg::WindowOpened(window_id)))])
-    }
-
-    /// Handles editor window opened event.
-    ///
-    /// # Arguments
-    /// * `window_id` - ID of the opened editor window
-    ///
-    /// # Returns
-    /// Task::none() - No async task needed
-    pub fn handle_editor_window_opened(&mut self, window_id: window::Id) -> Task<Message> {
-        // Already inserted on open; just confirm it still exists and log.
-        if let Some(editor_window) = self.editor_windows.get(&window_id) {
-            info!(
-                "Editor window opened for config: {}",
-                editor_window.config_name
+        // If we have metrics, go straight to Connected
+        // Otherwise, update Connecting state with the instance
+        if metrics.is_some() {
+            info!("Instance {} fully connected", name);
+            self.config_states
+                .insert(name, ConfigState::Connected { instance, metrics });
+        } else {
+            info!("Instance {} daemon started, VPN connecting", name);
+            // Preserve the original started_at if we're already in Connecting state
+            let started_at = match self.config_states.get(&name) {
+                Some(ConfigState::Connecting { started_at, .. }) => *started_at,
+                _ => Instant::now(),
+            };
+            self.config_states.insert(
+                name,
+                ConfigState::Connecting {
+                    started_at,
+                    instance: Some(instance),
+                },
             );
         }
+
         Task::none()
     }
 
-    /// Handles window closed event - determines if it's main window or editor window.
-    ///
-    /// # Arguments
-    /// * `window_id` - ID of the closed window
-    ///
-    /// # Returns
-    /// Task for shutdown if main window, or Task::none() for editor windows
-    pub fn handle_window_closed(&mut self, window_id: window::Id) -> Task<Message> {
-        // Check if this is the main window
+    /// Handles status/metrics update from daemon.
+    /// May transition Connecting -> Connected when VPN is ready.
+    pub fn handle_status_updated(
+        &mut self,
+        name: String,
+        metrics: Option<ConnectionMetrics>,
+    ) -> Task<Message> {
+        let current_state = self.config_states.remove(&name);
+
+        match current_state {
+            Some(ConfigState::Connecting {
+                instance: Some(instance),
+                ..
+            }) => {
+                // VPN is now connected
+                info!("Instance {} VPN connected", name);
+                self.config_states
+                    .insert(name, ConfigState::Connected { instance, metrics });
+            }
+            Some(ConfigState::Connecting { instance: None, .. }) => {
+                // No instance yet, can't transition - put state back
+                warn!("Status update for {} but no instance yet", name);
+                self.config_states.insert(
+                    name,
+                    ConfigState::Connecting {
+                        started_at: Instant::now(),
+                        instance: None,
+                    },
+                );
+            }
+            Some(ConfigState::Connected { instance, .. }) => {
+                // Update metrics
+                self.config_states
+                    .insert(name, ConfigState::Connected { instance, metrics });
+            }
+            Some(other) => {
+                // Put it back unchanged
+                self.config_states.insert(name, other);
+            }
+            None => {}
+        }
+
+        Task::none()
+    }
+
+    /// Handles successful disconnection.
+    /// Transitions: Disconnecting -> Idle
+    pub fn handle_disconnected(&mut self) -> Task<Message> {
+        let config_name = match &self.selected_config {
+            Some(config) => config.quincy_config.name.clone(),
+            None => {
+                error!("No configuration selected");
+                return Task::none();
+            }
+        };
+
+        let current_state = self.config_states.get(&config_name);
+        if !matches!(current_state, Some(ConfigState::Disconnecting)) {
+            debug!(
+                "Ignoring Disconnected message for {} in state {:?}",
+                config_name, current_state
+            );
+            return Task::none();
+        }
+
+        info!("Instance {} disconnected successfully", config_name);
+        self.config_states.insert(config_name, ConfigState::Idle);
+        Task::none()
+    }
+
+    /// Handles a successful connection event (legacy handler).
+    pub fn handle_connected(&mut self, _config_name: String) -> Task<Message> {
+        Task::none()
+    }
+
+    /// Handles a failed connection attempt.
+    /// Transitions: Connecting -> Error
+    pub fn handle_connect_failed(&mut self, config_name: String, error: String) -> Task<Message> {
+        info!("Connection failed for {}: {}", config_name, error);
+        self.config_states
+            .insert(config_name, ConfigState::Error { message: error });
+        Task::none()
+    }
+
+    // ========== Window Lifecycle Handlers ==========
+
+    /// Handles window closed event.
+    pub fn handle_window_closed(&mut self, window_id: iced::window::Id) -> Task<Message> {
         if Some(window_id) == self.main_window_id {
             return self.handle_main_window_closed();
-        }
-
-        // Otherwise, it's an editor window
-        if let Some(editor_window) = self.editor_windows.remove(&window_id) {
-            info!(
-                "Editor window closed for config: {}",
-                editor_window.config_name
-            );
-            // Re-enable main window interaction when editor is closed
-            self.editor_modal_open = false;
         }
         Task::none()
     }
 
     /// Handles main window closed event - shuts down all connections and exits.
-    ///
-    /// # Returns
-    /// Task to shutdown all connections and exit the application
     pub fn handle_main_window_closed(&mut self) -> Task<Message> {
         info!("Main window closed, shutting down application");
 
-        // Snapshot keys to avoid borrow issues, then remove each instance
-        let instance_names: Vec<String> = self.instances.keys().cloned().collect();
-        let shutdown_tasks: Vec<Task<Message>> = instance_names
-            .into_iter()
-            .filter_map(|config_name| {
-                self.instances.remove(&config_name).map(|mut instance| {
-                    Task::future(async move {
+        let shutdown_tasks: Vec<Task<Message>> = self
+            .config_states
+            .iter_mut()
+            .filter_map(|(name, state)| {
+                if let ConfigState::Connected { instance, .. } = state {
+                    let name = name.clone();
+                    let mut instance = instance.clone();
+                    Some(Task::future(async move {
                         if let Err(e) = instance.stop().await {
-                            error!("Failed to stop instance {}: {}", config_name, e);
+                            error!("Failed to stop instance {}: {}", name, e);
                         }
                         Message::Instance(InstanceMsg::Disconnected)
-                    })
-                })
+                    }))
+                } else {
+                    None
+                }
             })
             .collect();
+
+        for state in self.config_states.values_mut() {
+            *state = ConfigState::Idle;
+        }
 
         Task::batch(shutdown_tasks).chain(Task::future(exit()))
     }
 }
 
-/// A necessary function to ensure the app exits gracefully when the main window is closed.
+/// Exits the application gracefully.
 async fn exit() -> Message {
     process::exit(0);
 }

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, ReadHalf, WriteHalf};
 use tracing::{debug, info};
 
 #[cfg(unix)]
@@ -155,104 +155,93 @@ impl IpcClient {
     }
 }
 
-pub enum IpcConnection {
-    #[cfg(unix)]
-    Unix(UnixStream),
-    #[cfg(windows)]
-    WindowsServer(NamedPipeServer),
-    #[cfg(windows)]
-    WindowsClient(NamedPipeClient),
+/// IPC connection with properly buffered reader for reliable message reception.
+#[cfg(unix)]
+pub struct IpcConnection {
+    reader: BufReader<ReadHalf<UnixStream>>,
+    writer: WriteHalf<UnixStream>,
+}
+
+#[cfg(windows)]
+pub struct IpcConnection {
+    // Windows uses different stream types, simplified for now
+    reader: BufReader<tokio::io::ReadHalf<NamedPipeServer>>,
+    writer: tokio::io::WriteHalf<NamedPipeServer>,
+    is_client: bool,
 }
 
 impl IpcConnection {
+    /// Creates a new IPC connection from a Unix stream.
     #[cfg(unix)]
     pub fn new_unix(stream: UnixStream) -> Self {
-        Self::Unix(stream)
+        let (read_half, write_half) = tokio::io::split(stream);
+        Self {
+            reader: BufReader::new(read_half),
+            writer: write_half,
+        }
     }
 
+    /// Connects to an IPC server at the given path.
+    #[cfg(unix)]
+    pub async fn connect(path: &Path) -> Result<Self> {
+        let stream = UnixStream::connect(path).await?;
+        Ok(Self::new_unix(stream))
+    }
+
+    /// Creates a new IPC connection from a Windows named pipe server.
     #[cfg(windows)]
     pub fn new_windows_server(stream: NamedPipeServer) -> Self {
-        Self::WindowsServer(stream)
+        let (read_half, write_half) = tokio::io::split(stream);
+        Self {
+            reader: BufReader::new(read_half),
+            writer: write_half,
+            is_client: false,
+        }
     }
 
+    /// Creates a new IPC connection from a Windows named pipe client.
     #[cfg(windows)]
     pub fn new_windows_client(stream: NamedPipeClient) -> Self {
-        Self::WindowsClient(stream)
+        // For Windows client, we need a different approach
+        // This is a simplified version - may need refinement
+        let (read_half, write_half) = tokio::io::split(stream);
+        Self {
+            reader: BufReader::new(read_half),
+            writer: write_half,
+            is_client: true,
+        }
+    }
+
+    /// Connects to an IPC server at the given path.
+    #[cfg(windows)]
+    pub async fn connect(path: &Path) -> Result<Self> {
+        let pipe_name = path.to_string_lossy();
+        let client = ClientOptions::new().open(&*pipe_name)?;
+        Ok(Self::new_windows_client(client))
     }
 
     pub async fn send(&mut self, message: &IpcMessage) -> Result<()> {
         let json = serde_json::to_string(message)?;
         debug!("Sending IPC message: {}", json);
 
-        match self {
-            #[cfg(unix)]
-            Self::Unix(stream) => {
-                stream.write_all(json.as_bytes()).await?;
-                stream.write_all(b"\n").await?;
-                stream.flush().await?;
-            }
-            #[cfg(windows)]
-            Self::WindowsServer(stream) => {
-                stream.write_all(json.as_bytes()).await?;
-                stream.write_all(b"\n").await?;
-                stream.flush().await?;
-            }
-            #[cfg(windows)]
-            Self::WindowsClient(stream) => {
-                stream.write_all(json.as_bytes()).await?;
-                stream.write_all(b"\n").await?;
-                stream.flush().await?;
-            }
-        }
+        self.writer.write_all(json.as_bytes()).await?;
+        self.writer.write_all(b"\n").await?;
+        self.writer.flush().await?;
 
         Ok(())
     }
 
     pub async fn recv(&mut self) -> Result<IpcMessage> {
-        match self {
-            #[cfg(unix)]
-            Self::Unix(stream) => {
-                let mut reader = BufReader::new(stream);
-                let mut line = String::new();
-                reader.read_line(&mut line).await?;
+        let mut line = String::new();
+        self.reader.read_line(&mut line).await?;
 
-                if line.is_empty() {
-                    return Err(QuincyError::system("Connection closed"));
-                }
-
-                debug!("Received IPC message: {}", line.trim());
-                let message: IpcMessage = serde_json::from_str(line.trim())?;
-                Ok(message)
-            }
-            #[cfg(windows)]
-            Self::WindowsServer(stream) => {
-                let mut reader = BufReader::new(stream);
-                let mut line = String::new();
-                reader.read_line(&mut line).await?;
-
-                if line.is_empty() {
-                    return Err(QuincyError::system("Connection closed"));
-                }
-
-                debug!("Received IPC message: {}", line.trim());
-                let message: IpcMessage = serde_json::from_str(line.trim())?;
-                Ok(message)
-            }
-            #[cfg(windows)]
-            Self::WindowsClient(stream) => {
-                let mut reader = BufReader::new(stream);
-                let mut line = String::new();
-                reader.read_line(&mut line).await?;
-
-                if line.is_empty() {
-                    return Err(QuincyError::system("Connection closed"));
-                }
-
-                debug!("Received IPC message: {}", line.trim());
-                let message: IpcMessage = serde_json::from_str(line.trim())?;
-                Ok(message)
-            }
+        if line.is_empty() {
+            return Err(QuincyError::system("Connection closed"));
         }
+
+        debug!("Received IPC message: {}", line.trim());
+        let message: IpcMessage = serde_json::from_str(line.trim())?;
+        Ok(message)
     }
 }
 

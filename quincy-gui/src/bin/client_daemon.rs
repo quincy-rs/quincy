@@ -12,7 +12,7 @@ use quincy_gui::ipc::{
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
@@ -49,12 +49,6 @@ struct ClientDaemon {
 
 impl ClientDaemon {
     /// Creates a new ClientDaemon instance.
-    ///
-    /// # Arguments
-    /// * `instance_name` - Unique identifier for this daemon instance
-    ///
-    /// # Returns
-    /// A new ClientDaemon with all fields initialized to their default states
     fn new(instance_name: String) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
         Self {
@@ -66,21 +60,13 @@ impl ClientDaemon {
     }
 
     /// Starts the VPN client with the given configuration.
-    ///
-    /// # Arguments
-    /// * `config_path` - Path to the client configuration file
-    /// * `env_prefix` - Prefix for environment variable overrides
-    ///
-    /// # Returns
-    /// * `Ok(())` if the client started successfully
-    /// * `Err` if the client is already running or failed to start
-    ///
-    /// # Errors
-    /// Returns an error if:
-    /// - A client is already running
-    /// - The configuration file cannot be loaded
-    /// - The client fails to start
-    async fn start_client(&self, config_path: PathBuf, env_prefix: &str) -> Result<()> {
+    /// This is a blocking operation that can be cancelled via the cancel_rx channel.
+    async fn start_client_cancellable(
+        &self,
+        config_path: PathBuf,
+        env_prefix: &str,
+        mut cancel_rx: oneshot::Receiver<()>,
+    ) -> Result<bool> {
         let mut client_guard = self.client.lock().await;
 
         if client_guard.is_some() {
@@ -90,23 +76,31 @@ impl ClientDaemon {
         let config = ClientConfig::from_path(&config_path, env_prefix)?;
         let mut client = QuincyClient::new(config);
 
-        client.start().await?;
+        // Start the client in a separate task so we can listen for cancellation
+        let start_future = client.start();
 
-        *self.connection_start_time.lock().await = Some(Instant::now());
-        *client_guard = Some(client);
-
-        info!("Client started successfully");
-        Ok(())
+        tokio::select! {
+            result = start_future => {
+                match result {
+                    Ok(()) => {
+                        *self.connection_start_time.lock().await = Some(Instant::now());
+                        *client_guard = Some(client);
+                        info!("Client started successfully");
+                        Ok(true)
+                    }
+                    Err(e) => Err(e)
+                }
+            }
+            _ = &mut cancel_rx => {
+                info!("Client start cancelled");
+                // Client.start() was interrupted - drop the client
+                drop(client);
+                Ok(false)
+            }
+        }
     }
 
     /// Stops the running VPN client.
-    ///
-    /// # Returns
-    /// * `Ok(())` if the client was stopped successfully or wasn't running
-    /// * `Err` if the client failed to stop gracefully
-    ///
-    /// # Errors
-    /// Returns an error if the client shutdown process fails
     async fn stop_client(&self) -> Result<()> {
         let mut client_guard = self.client.lock().await;
 
@@ -121,9 +115,6 @@ impl ClientDaemon {
     }
 
     /// Gets the current status and metrics of the VPN client.
-    ///
-    /// # Returns
-    /// A `ClientStatus` containing the connection state and performance metrics
     async fn get_status(&self) -> ClientStatus {
         let client_guard = self.client.lock().await;
 
@@ -140,12 +131,6 @@ impl ClientDaemon {
     }
 
     /// Determines the current connection status based on client state.
-    ///
-    /// # Arguments
-    /// * `client` - Reference to the VPN client
-    ///
-    /// # Returns
-    /// The current connection status
     fn determine_connection_status(
         &self,
         client: &QuincyClient<TunRsInterface>,
@@ -167,12 +152,6 @@ impl ClientDaemon {
     }
 
     /// Extracts connection metrics from the client if available.
-    ///
-    /// # Arguments
-    /// * `client` - Reference to the VPN client
-    ///
-    /// # Returns
-    /// Connection metrics if available, None otherwise
     async fn extract_connection_metrics(
         &self,
         client: &QuincyClient<TunRsInterface>,
@@ -201,38 +180,30 @@ impl ClientDaemon {
     }
 
     /// Connects to the GUI's IPC server and handles communication.
-    ///
-    /// This method connects to the GUI's IPC server and processes messages.
-    /// Connection loss automatically triggers daemon shutdown.
-    ///
-    /// # Arguments
-    /// * `socket_path` - Path to the Unix domain socket for IPC communication
-    ///
-    /// # Returns
-    /// * `Ok(())` when the connection ends gracefully
-    /// * `Err` if the connection fails to establish
-    ///
-    /// # Errors
-    /// Returns an error if the IPC client cannot connect to the GUI's socket
-    async fn run_ipc_client(&self, socket_path: &Path) -> Result<()> {
-        let client = self.connect_to_gui_server(socket_path).await?;
+    /// The daemon first establishes IPC, then waits for StartClient command.
+    /// During VPN connection, it listens for cancellation.
+    async fn run_ipc_client(&self, socket_path: &Path, config_path: &Path) -> Result<()> {
+        let mut ipc_client = self.connect_to_gui_server(socket_path).await?;
         info!("Connected to GUI IPC server");
 
         let mut shutdown_rx = self.shutdown_tx.subscribe();
-        let mut ipc_client = client;
 
+        // Main message loop
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
-                    info!("IPC client received shutdown signal, stopping client");
+                    info!("IPC client received shutdown signal");
                     break;
                 }
                 result = ipc_client.recv() => {
                     match result {
                         Ok(message) => {
-                            let response = self.handle_message(message).await;
-                            if let Err(e) = ipc_client.send(&response).await {
-                                error!("Failed to send IPC response: {}", e);
+                            let should_exit = self.handle_message_with_cancel(
+                                message,
+                                &mut ipc_client,
+                                config_path,
+                            ).await?;
+                            if should_exit {
                                 break;
                             }
                         }
@@ -249,14 +220,143 @@ impl ClientDaemon {
         Ok(())
     }
 
+    /// Handles a message, with special handling for StartClient to support cancellation.
+    /// Returns true if the daemon should exit.
+    async fn handle_message_with_cancel(
+        &self,
+        message: IpcMessage,
+        ipc_client: &mut IpcClient,
+        config_path: &Path,
+    ) -> Result<bool> {
+        match message {
+            IpcMessage::StartClient {
+                config_path: cfg_path,
+            } => {
+                // Use the config path from the message, or fall back to the one from args
+                let path = if cfg_path.as_os_str().is_empty() {
+                    config_path.to_path_buf()
+                } else {
+                    cfg_path
+                };
+
+                // Create a cancellation channel
+                let (cancel_tx, cancel_rx) = oneshot::channel();
+
+                // Spawn a task to listen for cancel messages while connecting
+                let cancel_tx = Arc::new(Mutex::new(Some(cancel_tx)));
+                let cancel_tx_clone = cancel_tx.clone();
+                let shutdown_tx = self.shutdown_tx.clone();
+
+                // We need to handle IPC messages while the VPN is connecting
+                // Run the connection with cancellation support
+                let daemon = self.clone();
+                let path_clone = path.clone();
+
+                // Start connecting in a spawned task
+                let mut connect_handle = tokio::spawn(async move {
+                    daemon
+                        .start_client_cancellable(path_clone, "QUINCY_", cancel_rx)
+                        .await
+                });
+
+                // While connecting, listen for IPC messages
+                loop {
+                    tokio::select! {
+                        // Connection completed
+                        result = &mut connect_handle => {
+                            match result {
+                                Ok(Ok(true)) => {
+                                    // Successfully connected
+                                    let status = self.get_status().await;
+                                    if let Err(e) = ipc_client.send(&IpcMessage::StatusUpdate(status)).await {
+                                        error!("Failed to send status: {}", e);
+                                    }
+                                    break Ok(false);
+                                }
+                                Ok(Ok(false)) => {
+                                    // Cancelled
+                                    if let Err(e) = ipc_client.send(&IpcMessage::Error("Connection cancelled".to_string())).await {
+                                        error!("Failed to send cancel response: {}", e);
+                                    }
+                                    break Ok(true); // Exit daemon
+                                }
+                                Ok(Err(e)) => {
+                                    // Connection failed
+                                    if let Err(send_err) = ipc_client.send(&IpcMessage::Error(e.to_string())).await {
+                                        error!("Failed to send error: {}", send_err);
+                                    }
+                                    break Ok(false);
+                                }
+                                Err(e) => {
+                                    error!("Connect task panicked: {}", e);
+                                    break Ok(true);
+                                }
+                            }
+                        }
+                        // IPC message received while connecting
+                        msg_result = ipc_client.recv() => {
+                            match msg_result {
+                                Ok(IpcMessage::Shutdown) | Ok(IpcMessage::StopClient) => {
+                                    info!("Received cancel/shutdown while connecting");
+                                    // Signal cancellation to abort the VPN connection
+                                    if let Some(tx) = cancel_tx_clone.lock().await.take() {
+                                        let _ = tx.send(());
+                                    }
+                                    let _ = shutdown_tx.send(());
+                                    // Exit the daemon
+                                    break Ok(true);
+                                }
+                                Ok(IpcMessage::GetStatus) => {
+                                    // Send "connecting" status
+                                    let status = ClientStatus {
+                                        status: ConnectionStatus::Connecting,
+                                        metrics: None,
+                                    };
+                                    if let Err(e) = ipc_client.send(&IpcMessage::StatusUpdate(status)).await {
+                                        error!("Failed to send status: {}", e);
+                                    }
+                                }
+                                Ok(other) => {
+                                    debug!("Ignoring message while connecting: {:?}", other);
+                                }
+                                Err(e) => {
+                                    info!("IPC connection lost while connecting: {}", e);
+                                    // Signal cancellation
+                                    if let Some(tx) = cancel_tx_clone.lock().await.take() {
+                                        let _ = tx.send(());
+                                    }
+                                    break Ok(true);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            IpcMessage::StopClient => {
+                let response = self.handle_stop_client_message().await;
+                ipc_client.send(&response).await?;
+                Ok(false)
+            }
+            IpcMessage::GetStatus => {
+                let status = self.get_status().await;
+                ipc_client.send(&IpcMessage::StatusUpdate(status)).await?;
+                Ok(false)
+            }
+            IpcMessage::Shutdown => {
+                let response = self.handle_shutdown_message().await;
+                ipc_client.send(&response).await?;
+                Ok(true)
+            }
+            _ => {
+                ipc_client
+                    .send(&IpcMessage::Error("Invalid message".to_string()))
+                    .await?;
+                Ok(false)
+            }
+        }
+    }
+
     /// Connects to the GUI's IPC server with retry logic.
-    ///
-    /// # Arguments
-    /// * `socket_path` - Path to the socket to connect to
-    ///
-    /// # Returns
-    /// * `Ok(IpcClient)` if connection succeeded
-    /// * `Err` if connection failed after retries
     async fn connect_to_gui_server(&self, socket_path: &Path) -> Result<IpcClient> {
         const MAX_RETRIES: u32 = 30;
         const RETRY_DELAY: Duration = Duration::from_millis(500);
@@ -290,49 +390,7 @@ impl ClientDaemon {
         unreachable!()
     }
 
-    /// Handles an incoming IPC message and returns the appropriate response.
-    ///
-    /// # Arguments
-    /// * `message` - The IPC message to process
-    ///
-    /// # Returns
-    /// The response message to send back to the client
-    async fn handle_message(&self, message: IpcMessage) -> IpcMessage {
-        match message {
-            IpcMessage::StartClient { config_path } => {
-                self.handle_start_client_message(config_path).await
-            }
-            IpcMessage::StopClient => self.handle_stop_client_message().await,
-            IpcMessage::GetStatus => {
-                let status = self.get_status().await;
-                IpcMessage::StatusUpdate(status)
-            }
-            IpcMessage::Shutdown => self.handle_shutdown_message().await,
-            _ => IpcMessage::Error("Invalid message".to_string()),
-        }
-    }
-
-    /// Handles a StartClient IPC message.
-    ///
-    /// # Arguments
-    /// * `config_path` - Path to the client configuration file
-    ///
-    /// # Returns
-    /// Status update or error message
-    async fn handle_start_client_message(&self, config_path: PathBuf) -> IpcMessage {
-        match self.start_client(config_path, "QUINCY_").await {
-            Ok(()) => {
-                let status = self.get_status().await;
-                IpcMessage::StatusUpdate(status)
-            }
-            Err(e) => IpcMessage::Error(e.to_string()),
-        }
-    }
-
     /// Handles a StopClient IPC message.
-    ///
-    /// # Returns
-    /// Status update or error message
     async fn handle_stop_client_message(&self) -> IpcMessage {
         match self.stop_client().await {
             Ok(()) => {
@@ -344,9 +402,6 @@ impl ClientDaemon {
     }
 
     /// Handles a Shutdown IPC message.
-    ///
-    /// # Returns
-    /// Shutdown acknowledgment message
     async fn handle_shutdown_message(&self) -> IpcMessage {
         info!("Received shutdown request, stopping client and daemon");
         if let Err(e) = self.stop_client().await {
@@ -362,10 +417,6 @@ impl ClientDaemon {
 }
 
 impl Clone for ClientDaemon {
-    /// Clones the ClientDaemon by sharing all Arc-wrapped fields.
-    ///
-    /// This enables multiple tasks to share access to the same daemon instance
-    /// while maintaining thread safety through the Arc<Mutex<>> pattern.
     fn clone(&self) -> Self {
         Self {
             client: self.client.clone(),
@@ -377,19 +428,6 @@ impl Clone for ClientDaemon {
 }
 
 /// Main entry point for the Quincy client daemon.
-///
-/// This function initializes logging, creates a daemon instance, and runs the IPC server.
-/// It handles graceful shutdown and cleanup when the daemon terminates.
-///
-/// # Returns
-/// * `Ok(())` on successful completion
-/// * `Err` if initialization or server startup fails
-///
-/// # Errors
-/// Returns an error if:
-/// - Logging setup fails
-/// - IPC server cannot be started
-/// - Socket cleanup fails
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -404,8 +442,9 @@ async fn main() -> Result<()> {
     let daemon = ClientDaemon::new(args.instance_name.clone());
     let socket_path = get_ipc_socket_path(&args.instance_name);
 
-    run_daemon_client(&daemon, &socket_path).await?;
-    // Socket cleanup is handled by GUI since it owns the socket
+    daemon
+        .run_ipc_client(&socket_path, &args.config_path)
+        .await?;
 
     info!("Daemon shutdown complete");
     Ok(())
@@ -414,22 +453,4 @@ async fn main() -> Result<()> {
 /// Initializes the logging system for the daemon.
 fn initialize_logging() {
     let _logger = tracing::subscriber::set_global_default(log_subscriber("info"));
-}
-
-/// Runs the daemon IPC client until shutdown.
-///
-/// # Arguments
-/// * `daemon` - The daemon instance to run
-/// * `socket_path` - Path to the IPC socket
-///
-/// # Returns
-/// Result of the client operation
-///
-/// # Errors
-/// Returns an error if the IPC client fails to connect or run
-async fn run_daemon_client(daemon: &ClientDaemon, socket_path: &Path) -> Result<()> {
-    info!("Starting IPC client...");
-    daemon.run_ipc_client(socket_path).await?;
-    info!("IPC client has stopped, proceeding with cleanup...");
-    Ok(())
 }

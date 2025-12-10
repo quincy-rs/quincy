@@ -1,12 +1,9 @@
 use iced::widget::container as container_widget;
 use iced::widget::container::Style as ContainerStyle;
-use iced::widget::{column, row, text};
-use iced::{
-    alignment::Horizontal, time, window, Background, Color, Element, Length, Size, Subscription,
-    Task, Theme,
-};
+use iced::widget::{row, stack, text};
+use iced::{time, window, Background, Color, Element, Length, Size, Subscription, Task, Theme};
 use quincy::{QuincyError, Result};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -15,16 +12,13 @@ use std::result::Result as StdResult;
 use std::time::Duration;
 use tracing::error;
 
-use super::styles::ColorPalette;
-use super::types::QuincyInstance;
-use super::types::{ConfigMsg, EditorMsg, InstanceMsg, SystemMsg};
-use super::types::{EditorWindow, Message, QuincyConfig, SelectedConfig};
-use crate::ipc::ConnectionStatus;
+use super::types::{ConfigMsg, ConfigState, EditorMsg, EditorState, InstanceMsg, SystemMsg};
+use super::types::{Message, QuincyConfig, SelectedConfig};
 use crate::validation;
 
 /// Main GUI application state for the Quincy VPN client.
 ///
-/// This structure manages configuration files, running VPN instances,
+/// This structure manages configuration files, connection states,
 /// and the user interface state. It provides a graphical interface
 /// for managing multiple VPN configurations and connections.
 pub struct QuincyGui {
@@ -34,18 +28,14 @@ pub struct QuincyGui {
     pub(crate) configs: BTreeMap<String, QuincyConfig>,
     /// Errors encountered while loading configurations from disk
     pub(crate) load_errors: Vec<String>,
-    /// Currently running VPN instances
-    pub(crate) instances: HashMap<String, QuincyInstance>,
+    /// Connection state for each configuration (state machine approach)
+    pub(crate) config_states: BTreeMap<String, ConfigState>,
     /// Currently selected configuration for editing
     pub(crate) selected_config: Option<SelectedConfig>,
-    /// Editor windows for configuration editing
-    pub(crate) editor_windows: BTreeMap<window::Id, EditorWindow>,
+    /// Editor modal state (Some when editor is open, None when closed)
+    pub(crate) editor_state: Option<EditorState>,
     /// Main window ID
     pub(crate) main_window_id: Option<window::Id>,
-    /// Whether an editor window is currently open (for modal behavior)
-    pub(crate) editor_modal_open: bool,
-    /// Last connection errors per configuration (for cases where no instance exists yet)
-    pub(crate) last_errors: HashMap<String, String>,
 }
 
 impl QuincyGui {
@@ -87,17 +77,21 @@ impl QuincyGui {
         };
         let (main_window_id, open_main_window) = window::open(window_settings);
 
+        // Initialize config states for all loaded configurations
+        let config_states: BTreeMap<String, ConfigState> = configs
+            .keys()
+            .map(|name| (name.clone(), ConfigState::default()))
+            .collect();
+
         (
             Self {
                 config_dir,
                 configs,
                 load_errors,
-                instances: HashMap::new(),
+                config_states,
                 selected_config: None,
-                editor_windows: BTreeMap::new(),
+                editor_state: None,
                 main_window_id: Some(main_window_id),
-                editor_modal_open: false,
-                last_errors: HashMap::new(),
             },
             // Only open the main window; periodic updates are driven by Subscription
             open_main_window.map(|_| Message::System(SystemMsg::Noop)),
@@ -129,46 +123,29 @@ impl QuincyGui {
                 ConfigMsg::Selected(name) => self.handle_config_selected(name),
                 ConfigMsg::NameChanged(new_name) => self.handle_config_name_changed(new_name),
                 ConfigMsg::NameSaved => self.handle_config_name_saved(),
-                ConfigMsg::Save(window_id) => self.handle_config_save_from_editor(window_id),
                 ConfigMsg::Delete => self.handle_config_delete(),
                 ConfigMsg::New => self.handle_new_config(),
             },
             Message::Editor(msg) => match msg {
-                EditorMsg::Edited(window_id, action) => {
-                    self.handle_config_edited(window_id, action)
-                }
+                EditorMsg::Action(action) => self.handle_editor_action(action),
                 EditorMsg::Open => self.handle_open_editor(),
-                EditorMsg::WindowOpened(window_id) => self.handle_editor_window_opened(window_id),
+                EditorMsg::Close => self.handle_close_editor(),
+                EditorMsg::Save => self.handle_save_editor(),
             },
             Message::Instance(msg) => match msg {
                 InstanceMsg::Connect => self.handle_connect(),
                 InstanceMsg::Disconnect => self.handle_disconnect(),
+                InstanceMsg::CancelConnect => self.handle_cancel_connect(),
                 InstanceMsg::Connected(config_name) => self.handle_connected(config_name),
-                InstanceMsg::Disconnected => Task::none(),
+                InstanceMsg::Disconnected => self.handle_disconnected(),
                 InstanceMsg::StatusUpdated(name, status) => {
-                    if let Some(inst) = self.instances.get_mut(&name) {
-                        let is_disconnect = matches!(status.status, ConnectionStatus::Disconnected);
-                        if is_disconnect {
-                            // Remove instance and record a brief error note
-                            self.instances.remove(&name);
-                            self.last_errors
-                                .entry(name)
-                                .or_insert_with(|| "Connection lost".to_string());
-                        } else {
-                            inst.status = status;
-                        }
-                    }
-                    Task::none()
+                    self.handle_status_updated(name, status)
                 }
                 InstanceMsg::DisconnectedWithError(name, error) => {
-                    self.instances.remove(&name);
-                    self.last_errors.insert(name, error);
-                    Task::none()
+                    self.handle_disconnected_with_error(name, error)
                 }
-                InstanceMsg::ConnectedInstance(instance) => {
-                    let name = instance.name.clone();
-                    self.instances.insert(name.clone(), instance);
-                    self.handle_connected(name)
+                InstanceMsg::ConnectedInstance(instance, metrics) => {
+                    self.handle_connected_instance(instance, metrics)
                 }
                 InstanceMsg::ConnectFailed(config_name, error) => {
                     self.handle_connect_failed(config_name, error)
@@ -186,70 +163,50 @@ impl QuincyGui {
     ///
     /// This method creates the complete GUI layout with a left panel for
     /// configuration selection and a right panel for editing and monitoring.
+    /// When the editor is open, it overlays the main content as a modal.
     ///
     /// # Returns
     /// Complete UI element tree for the application
-    pub fn view(&self, window_id: window::Id) -> Element<'_, Message> {
-        if Some(window_id) == self.main_window_id {
-            // Main window view
-            let left_panel = self.build_config_selection_panel();
-            let right_panel = self.build_config_details_panel();
+    pub fn view(&self, _window_id: window::Id) -> Element<'_, Message> {
+        let left_panel = self.build_config_selection_panel();
+        let right_panel = self.build_config_details_panel();
 
-            let main_content =
-                container_widget(row![left_panel, right_panel].spacing(10).padding(20))
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill)
-                    .width(Length::Fill)
-                    .height(Length::Fill);
+        let main_content = container_widget(row![left_panel, right_panel].spacing(10).padding(20))
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .width(Length::Fill)
+            .height(Length::Fill);
 
-            // If editor modal is open, overlay a semi-transparent layer to indicate main window is disabled
-            if self.editor_modal_open {
-                container_widget(column![
-                    main_content,
-                    container_widget(
-                        text("Editor window is open")
-                            .size(16)
-                            .color(ColorPalette::TEXT_SECONDARY)
-                            .align_x(Horizontal::Center)
-                    )
-                    .width(Length::Fill)
-                    .center_x(Length::Fill)
-                    .style(|_theme| ContainerStyle {
-                        background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.7))),
-                        ..ContainerStyle::default()
-                    })
-                ])
+        // If editor modal is open, use stack to overlay the editor
+        if self.editor_state.is_some() {
+            let backdrop = container_widget(text(""))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(|_theme| ContainerStyle {
-                    background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.5))),
+                    background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.6))),
                     ..ContainerStyle::default()
-                })
+                });
+
+            let editor_modal = self.build_editor_modal();
+
+            stack![main_content, backdrop, editor_modal]
+                .width(Length::Fill)
+                .height(Length::Fill)
                 .into()
-            } else {
-                main_content.into()
-            }
         } else {
-            // Editor window view
-            self.build_editor_window_view(window_id)
+            main_content.into()
         }
     }
 
     /// Returns the window title for a given window.
     ///
     /// # Arguments
-    /// * `window_id` - ID of the window
+    /// * `_window_id` - ID of the window (unused, only one window now)
     ///
     /// # Returns
     /// Window title string
-    pub fn title(&self, window_id: window::Id) -> String {
-        if Some(window_id) == self.main_window_id {
-            "Quincy VPN Client".to_string()
-        } else if let Some(editor_window) = self.editor_windows.get(&window_id) {
-            format!("Quincy Config Editor - {}", editor_window.config_name)
-        } else {
-            "Quincy Config Editor".to_string()
-        }
+    pub fn title(&self, _window_id: window::Id) -> String {
+        "Quincy VPN Client".to_string()
     }
 
     /// Returns subscription for window events.
