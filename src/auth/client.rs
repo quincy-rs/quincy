@@ -3,6 +3,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use ipnet::IpNet;
 use quinn::Connection;
+use tokio::time::timeout;
 
 use crate::config::{AuthType, ClientAuthenticationConfig};
 
@@ -53,7 +54,7 @@ impl AuthClient {
             })
             .await?;
 
-        let auth_response = auth_stream.recv_message().await?;
+        let auth_response = timeout(self.auth_timeout, auth_stream.recv_message()).await??;
 
         match auth_response {
             AuthMessage::Authenticated {
