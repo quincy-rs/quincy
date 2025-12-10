@@ -9,6 +9,7 @@ use std::time::Instant;
 use tracing::{debug, error, info, warn};
 
 use super::app::QuincyGui;
+use super::error::GuiError;
 use super::types::{
     ConfigState, ConfirmAction, ConfirmMsg, ConfirmationState, EditorState, InstanceMsg, Message,
     QuincyConfig, QuincyInstance, SelectedConfig,
@@ -48,11 +49,11 @@ impl QuincyGui {
         let config_content = fs::read_to_string(&config.path)?;
         let editable_content = text_editor::Content::with_text(&config_content);
 
-        let parsed_config = match ClientConfig::from_path(&config.path, "QUINCY_") {
-            Ok(cfg) => Some(cfg),
+        let (parsed_config, parse_error) = match ClientConfig::from_path(&config.path, "QUINCY_") {
+            Ok(cfg) => (Some(cfg), None),
             Err(e) => {
                 warn!("Failed to parse config {}: {}", config.name, e);
-                None
+                (None, Some(e.to_string()))
             }
         };
 
@@ -60,6 +61,7 @@ impl QuincyGui {
             quincy_config: config.clone(),
             editable_content,
             parsed_config,
+            parse_error,
         })
     }
 
@@ -105,9 +107,7 @@ impl QuincyGui {
         if let Err(e) = validation::validate_config_name(&selected_config.quincy_config.name) {
             self.config_states.insert(
                 selected_config.quincy_config.name.clone(),
-                ConfigState::Error {
-                    message: e.to_string(),
-                },
+                ConfigState::Error { error: e.into() },
             );
             self.selected_config = Some(selected_config);
             return Task::none();
@@ -262,6 +262,7 @@ impl QuincyGui {
                 "../../../resources/common/client.toml"
             )),
             parsed_config: None,
+            parse_error: None,
         }
     }
 
@@ -389,17 +390,19 @@ impl QuincyGui {
                 );
 
                 // Re-parse the configuration
-                selected_config.parsed_config =
+                let (parsed_config, parse_error) =
                     match ClientConfig::from_path(&selected_config.quincy_config.path, "QUINCY_") {
-                        Ok(cfg) => Some(cfg),
+                        Ok(cfg) => (Some(cfg), None),
                         Err(e) => {
                             warn!(
                                 "Failed to parse updated config {}: {}",
                                 selected_config.quincy_config.name, e
                             );
-                            None
+                            (None, Some(e.to_string()))
                         }
                     };
+                selected_config.parsed_config = parsed_config;
+                selected_config.parse_error = parse_error;
 
                 // Update configs map
                 self.configs.insert(
@@ -449,12 +452,8 @@ impl QuincyGui {
         }
 
         if let Err(e) = validation::validate_config_name(&config_name) {
-            self.config_states.insert(
-                config_name,
-                ConfigState::Error {
-                    message: e.to_string(),
-                },
-            );
+            self.config_states
+                .insert(config_name, ConfigState::Error { error: e.into() });
             return Task::none();
         }
 
@@ -480,7 +479,7 @@ impl QuincyGui {
                 }
                 Err(e) => {
                     error!("Failed to start Quincy instance: {}", e);
-                    Message::Instance(InstanceMsg::ConnectFailed(config_name, e.to_string()))
+                    Message::Instance(InstanceMsg::ConnectFailed(config_name, e.into()))
                 }
             }
         })
@@ -610,7 +609,7 @@ impl QuincyGui {
                     if let Err(e) = conn.send(&IpcMessage::GetStatus).await {
                         return Message::Instance(InstanceMsg::DisconnectedWithError(
                             name,
-                            e.to_string(),
+                            GuiError::ipc(e.to_string()),
                         ));
                     }
                     match conn.recv().await {
@@ -618,7 +617,7 @@ impl QuincyGui {
                             ConnectionStatus::Disconnected => {
                                 Message::Instance(InstanceMsg::DisconnectedWithError(
                                     name,
-                                    "Connection lost".to_string(),
+                                    GuiError::connection_closed("Connection lost"),
                                 ))
                             }
                             ConnectionStatus::Error(err) => {
@@ -633,11 +632,11 @@ impl QuincyGui {
                         }
                         Ok(other) => Message::Instance(InstanceMsg::DisconnectedWithError(
                             name,
-                            format!("Unexpected IPC message: {:?}", other),
+                            GuiError::ipc(format!("Unexpected IPC message: {:?}", other)),
                         )),
                         Err(e) => Message::Instance(InstanceMsg::DisconnectedWithError(
                             name,
-                            e.to_string(),
+                            GuiError::ipc(e.to_string()),
                         )),
                     }
                 })
@@ -649,10 +648,14 @@ impl QuincyGui {
 
     /// Handles disconnection with error.
     /// Transitions: Any -> Error
-    pub fn handle_disconnected_with_error(&mut self, name: String, error: String) -> Task<Message> {
+    pub fn handle_disconnected_with_error(
+        &mut self,
+        name: String,
+        error: GuiError,
+    ) -> Task<Message> {
         info!("Config {} disconnected with error: {}", name, error);
         self.config_states
-            .insert(name, ConfigState::Error { message: error });
+            .insert(name, ConfigState::Error { error });
         Task::none()
     }
 
@@ -768,10 +771,10 @@ impl QuincyGui {
 
     /// Handles a failed connection attempt.
     /// Transitions: Connecting -> Error
-    pub fn handle_connect_failed(&mut self, config_name: String, error: String) -> Task<Message> {
+    pub fn handle_connect_failed(&mut self, config_name: String, error: GuiError) -> Task<Message> {
         info!("Connection failed for {}: {}", config_name, error);
         self.config_states
-            .insert(config_name, ConfigState::Error { message: error });
+            .insert(config_name, ConfigState::Error { error });
         Task::none()
     }
 

@@ -53,3 +53,4 @@ serde_json = { workspace = true }
 
 # Utils
 regex = { workspace =true }
+thiserror = { workspace = true }

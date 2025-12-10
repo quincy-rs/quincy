@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
 
+use super::error::GuiError;
 use crate::ipc::{ConnectionMetrics, IpcConnection};
 
 /// Connection state machine for a VPN configuration.
@@ -37,8 +38,8 @@ pub enum ConfigState {
     Disconnecting,
     /// An error occurred
     Error {
-        /// Error message to display
-        message: String,
+        /// Error to display
+        error: GuiError,
     },
 }
 
@@ -85,10 +86,10 @@ impl ConfigState {
         }
     }
 
-    /// Returns the error message if in error state.
-    pub fn error_message(&self) -> Option<&str> {
+    /// Returns the error if in error state.
+    pub fn error(&self) -> Option<&GuiError> {
         match self {
-            Self::Error { message } => Some(message),
+            Self::Error { error } => Some(error),
             _ => None,
         }
     }
@@ -147,8 +148,10 @@ pub struct SelectedConfig {
     pub quincy_config: QuincyConfig,
     /// The text editor content for the configuration file
     pub editable_content: text_editor::Content,
-    /// Parsed configuration for display
+    /// Parsed configuration for display (None if parsing failed)
     pub parsed_config: Option<ClientConfig>,
+    /// Parse error message if configuration failed to parse
+    pub parse_error: Option<String>,
 }
 
 /// State for the inline editor modal.
@@ -221,9 +224,9 @@ pub enum InstanceMsg {
     /// Status/metrics update received from daemon
     StatusUpdated(String, Option<ConnectionMetrics>),
     /// Connection was lost with an error
-    DisconnectedWithError(String, String),
+    DisconnectedWithError(String, GuiError),
     /// Connection attempt failed
-    ConnectFailed(String, String),
+    ConnectFailed(String, GuiError),
 }
 
 #[derive(Debug, Clone)]

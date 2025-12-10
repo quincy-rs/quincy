@@ -12,6 +12,7 @@
 //! - `utils`: Utility functions for formatting and path handling
 
 mod app;
+mod error;
 mod handlers;
 mod instance;
 mod styles;
@@ -21,5 +22,6 @@ mod utils;
 
 // Re-export the main application struct and types
 pub use app::QuincyGui;
+pub use error::GuiError;
 pub use types::{EditorState, Message, QuincyConfig, SelectedConfig};
 pub use utils::{expand_path, format_bytes, format_duration};

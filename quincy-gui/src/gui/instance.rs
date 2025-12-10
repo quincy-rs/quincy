@@ -166,9 +166,9 @@ impl QuincyInstance {
                 ConnectionStatus::Connected => Ok(status.metrics),
                 ConnectionStatus::Connecting => Ok(None),
                 ConnectionStatus::Disconnected => Err(QuincyError::system("Daemon disconnected")),
-                ConnectionStatus::Error(err) => Err(QuincyError::system(err)),
+                ConnectionStatus::Error(err) => Err(QuincyError::system(err.to_string())),
             },
-            IpcMessage::Error(err) => Err(QuincyError::system(err)),
+            IpcMessage::Error(err) => Err(QuincyError::system(err.to_string())),
             other => {
                 warn!("Unexpected response to status request: {:?}", other);
                 Ok(None)
