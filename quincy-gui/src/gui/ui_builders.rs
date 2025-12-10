@@ -1,5 +1,5 @@
 use iced::alignment::Horizontal;
-use iced::highlighter;
+use iced::highlighter::Theme as HighlighterTheme;
 use iced::widget::container::Style as ContainerStyle;
 use iced::widget::{
     button as button_widget, container as container_widget, text_input as text_input_widget,
@@ -53,7 +53,7 @@ impl QuincyGui {
                 .color(ColorPalette::TEXT_PRIMARY)
                 .size(Typography::BODY),
         )
-        .padding([Spacing::SM + 2, Spacing::LG])
+        .padding([Spacing::SM + 2.0, Spacing::LG])
         .on_press(Message::Confirm(ConfirmMsg::Confirm))
         .style(CustomButtonStyles::danger_fn());
 
@@ -62,7 +62,7 @@ impl QuincyGui {
                 .color(ColorPalette::TEXT_PRIMARY)
                 .size(Typography::BODY),
         )
-        .padding([Spacing::SM + 2, Spacing::LG])
+        .padding([Spacing::SM + 2.0, Spacing::LG])
         .on_press(Message::Confirm(ConfirmMsg::Cancel))
         .style(CustomButtonStyles::secondary_fn());
 
@@ -134,7 +134,7 @@ impl QuincyGui {
         let editor = text_editor(&editor_state.content)
             .height(Length::Fill)
             .on_action(|action| Message::Editor(EditorMsg::Action(action)))
-            .highlight("toml", highlighter::Theme::SolarizedDark)
+            .highlight("toml", HighlighterTheme::SolarizedDark)
             .font(Font::MONOSPACE);
 
         // Header with title
@@ -148,7 +148,7 @@ impl QuincyGui {
                 .color(ColorPalette::TEXT_PRIMARY)
                 .size(Typography::BODY),
         )
-        .padding([Spacing::SM + 2, Spacing::LG])
+        .padding([Spacing::SM + 2.0, Spacing::LG])
         .on_press(Message::Editor(EditorMsg::Save))
         .style(CustomButtonStyles::primary_fn());
 
@@ -157,7 +157,7 @@ impl QuincyGui {
                 .color(ColorPalette::TEXT_PRIMARY)
                 .size(Typography::BODY),
         )
-        .padding([Spacing::SM + 2, Spacing::LG])
+        .padding([Spacing::SM + 2.0, Spacing::LG])
         .on_press(Message::Editor(EditorMsg::Close))
         .style(CustomButtonStyles::secondary_fn());
 
@@ -207,7 +207,7 @@ impl QuincyGui {
 
         container_widget(
             column![config_buttons, new_config_button]
-                .spacing(Spacing::SM + 2)
+                .spacing(Spacing::SM + 2.0)
                 .height(Length::Fill)
                 .clip(false),
         )
@@ -250,7 +250,7 @@ impl QuincyGui {
                 .size(Typography::BODY),
         )
         .width(Length::Fill)
-        .padding([Spacing::SM + 2, Spacing::MD]);
+        .padding([Spacing::SM + 2.0, Spacing::MD]);
 
         // Only allow selection if editor is closed AND no config is active
         if !is_editor_open && !has_active_instance {
@@ -286,7 +286,7 @@ impl QuincyGui {
                 .width(Length::Fill),
         )
         .width(Length::Fill)
-        .padding([Spacing::SM + 2, Spacing::MD]);
+        .padding([Spacing::SM + 2.0, Spacing::MD]);
 
         if !is_editor_open {
             btn = btn.on_press(Message::Config(ConfigMsg::New));
@@ -353,7 +353,7 @@ impl QuincyGui {
 
         let mut input =
             text_input_widget("Configuration name", &selected_config.quincy_config.name)
-                .padding([Spacing::SM + 2, Spacing::MD])
+                .padding([Spacing::SM + 2.0, Spacing::MD])
                 .size(Typography::BODY);
 
         if !is_editor_open {
@@ -522,7 +522,7 @@ impl QuincyGui {
         if let Some(metrics) = metrics {
             content.extend([
                 container_widget(text(""))
-                    .height(Length::Fixed(Spacing::MD as f32))
+                    .height(Length::Fixed(Spacing::MD))
                     .into(),
                 text("Connection Details")
                     .size(Typography::BODY)
@@ -631,7 +631,7 @@ impl QuincyGui {
                     .color(ColorPalette::TEXT_PRIMARY)
                     .size(Typography::BODY),
             )
-            .padding([Spacing::SM + 2, Spacing::LG]);
+            .padding([Spacing::SM + 2.0, Spacing::LG]);
 
             if !is_editor_open {
                 btn = btn.on_press(Message::Instance(InstanceMsg::Disconnect));
@@ -649,7 +649,7 @@ impl QuincyGui {
                     .color(ColorPalette::TEXT_PRIMARY)
                     .size(Typography::BODY),
             )
-            .padding([Spacing::SM + 2, Spacing::LG])
+            .padding([Spacing::SM + 2.0, Spacing::LG])
             .on_press(Message::Instance(InstanceMsg::CancelConnect))
             .style(CustomButtonStyles::danger_fn())
         } else if matches!(state, ConfigState::Disconnecting) {
@@ -659,7 +659,7 @@ impl QuincyGui {
                     .color(ColorPalette::TEXT_MUTED)
                     .size(Typography::BODY),
             )
-            .padding([Spacing::SM + 2, Spacing::LG])
+            .padding([Spacing::SM + 2.0, Spacing::LG])
             .style(|_theme, _status| CustomButtonStyles::disabled())
         } else {
             // Idle or Error -> show Connect button
@@ -668,7 +668,7 @@ impl QuincyGui {
                     .color(ColorPalette::TEXT_PRIMARY)
                     .size(Typography::BODY),
             )
-            .padding([Spacing::SM + 2, Spacing::LG]);
+            .padding([Spacing::SM + 2.0, Spacing::LG]);
 
             if !is_editor_open {
                 btn = btn.on_press(Message::Instance(InstanceMsg::Connect));
@@ -688,7 +688,7 @@ impl QuincyGui {
                     .color(ColorPalette::TEXT_MUTED)
                     .size(Typography::BODY),
             )
-            .padding([Spacing::SM + 2, Spacing::LG])
+            .padding([Spacing::SM + 2.0, Spacing::LG])
             .style(|_theme, _status| CustomButtonStyles::disabled())
         } else {
             button_widget(
@@ -696,7 +696,7 @@ impl QuincyGui {
                     .color(ColorPalette::TEXT_PRIMARY)
                     .size(Typography::BODY),
             )
-            .padding([Spacing::SM + 2, Spacing::LG])
+            .padding([Spacing::SM + 2.0, Spacing::LG])
             .on_press(Message::Editor(EditorMsg::Open))
             .style(CustomButtonStyles::secondary_fn())
         };
@@ -708,7 +708,7 @@ impl QuincyGui {
                     .color(ColorPalette::TEXT_MUTED)
                     .size(Typography::BODY),
             )
-            .padding([Spacing::SM + 2, Spacing::LG])
+            .padding([Spacing::SM + 2.0, Spacing::LG])
             .style(|_theme, _status| CustomButtonStyles::disabled())
         } else {
             button_widget(
@@ -716,7 +716,7 @@ impl QuincyGui {
                     .color(ColorPalette::TEXT_PRIMARY)
                     .size(Typography::BODY),
             )
-            .padding([Spacing::SM + 2, Spacing::LG])
+            .padding([Spacing::SM + 2.0, Spacing::LG])
             .on_press(Message::Config(ConfigMsg::Delete))
             .style(CustomButtonStyles::danger_fn())
         };
