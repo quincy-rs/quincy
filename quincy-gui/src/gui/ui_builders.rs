@@ -5,79 +5,101 @@ use iced::widget::{
     button as button_widget, container as container_widget, text_input as text_input_widget,
 };
 use iced::widget::{column, row, scrollable, text, text_editor};
-use iced::{border, window, Alignment, Background, Border, Element, Font, Length};
+use iced::{border, Alignment, Background, Border, Element, Font, Length};
 
 use super::app::QuincyGui;
 use super::styles::{
     ColorPalette, CustomButtonStyles, CustomContainerStyles, CustomTextInputStyle,
 };
-use super::types::{ConfigMsg, EditorMsg, InstanceMsg};
+use super::types::{ConfigMsg, ConfigState, EditorMsg, InstanceMsg};
 use super::types::{Message, SelectedConfig};
 use super::utils::{format_bytes, format_duration};
-use crate::ipc::{ConnectionMetrics, ConnectionStatus};
+use crate::ipc::ConnectionMetrics;
 
 impl QuincyGui {
-    /// Builds the editor window view.
+    /// Returns true if the editor modal is currently open.
+    fn is_editor_open(&self) -> bool {
+        self.editor_state.is_some()
+    }
+
+    /// Builds the editor modal overlay.
     ///
-    /// # Arguments
-    /// * `window_id` - ID of the editor window
-    ///
-    /// # Returns
-    /// Element for the editor window
-    pub fn build_editor_window_view(&self, window_id: window::Id) -> Element<'_, Message> {
-        let editor_window = match self.editor_windows.get(&window_id) {
-            Some(window) => window,
+    /// This creates a centered modal dialog with the text editor and action buttons.
+    pub fn build_editor_modal(&self) -> Element<'_, Message> {
+        let editor_state = match self.editor_state.as_ref() {
+            Some(state) => state,
             None => {
-                return container_widget(
-                    text("Editor window not found")
-                        .color(ColorPalette::ERROR)
-                        .size(16),
-                )
-                .center_x(Length::Fill)
-                .center_y(Length::Fill)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into();
+                return container_widget(text(""))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into();
             }
         };
 
-        // Use the actual text editor with TOML syntax highlighting
-        let editor = text_editor(&editor_window.content)
+        // Text editor with TOML syntax highlighting
+        let editor = text_editor(&editor_state.content)
             .height(Length::Fill)
-            .on_action(move |action| Message::Editor(EditorMsg::Edited(window_id, action)))
+            .on_action(|action| Message::Editor(EditorMsg::Action(action)))
             .highlight("toml", highlighter::Theme::SolarizedDark)
             .font(Font::MONOSPACE);
 
+        // Header with title
+        let header = text(format!("Editing: {}", editor_state.config_name))
+            .size(16)
+            .color(ColorPalette::TEXT_PRIMARY);
+
+        // Action buttons - matching main window style
         let save_button = button_widget(text("Save").color(ColorPalette::TEXT_PRIMARY).size(14))
-            .padding([8, 16])
-            .on_press(Message::Config(ConfigMsg::Save(window_id)))
+            .padding([6, 12])
+            .on_press(Message::Editor(EditorMsg::Save))
             .style(CustomButtonStyles::primary_fn());
 
-        let header = row![
-            text(format!("Editing: {}", editor_window.config_name))
-                .size(18)
-                .color(ColorPalette::TEXT_PRIMARY),
-            save_button
-        ]
-        .spacing(16)
-        .align_y(Alignment::Center)
-        .width(Length::Fill);
+        let cancel_button =
+            button_widget(text("Cancel").color(ColorPalette::TEXT_PRIMARY).size(14))
+                .padding([6, 12])
+                .on_press(Message::Editor(EditorMsg::Close))
+                .style(CustomButtonStyles::secondary_fn());
 
-        container_widget(column![header, editor].spacing(16).height(Length::Fill))
-            .padding(20)
+        let button_row = row![cancel_button, save_button]
+            .spacing(8)
+            .align_y(Alignment::Center);
+
+        let header_row = row![header, button_row]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .width(Length::Fill);
+
+        // Modal content
+        let modal_content = column![header_row, editor]
+            .spacing(8)
             .width(Length::Fill)
-            .height(Length::Fill)
+            .height(Length::Fill);
+
+        // Modal container with styling
+        let modal_box = container_widget(modal_content)
+            .padding(8)
+            .width(Length::Fixed(700.0))
+            .height(Length::Fixed(500.0))
             .style(|_theme| ContainerStyle {
                 background: Some(Background::Color(ColorPalette::BACKGROUND_PRIMARY)),
+                border: Border {
+                    color: ColorPalette::BORDER_LIGHT,
+                    width: 1.0,
+                    radius: border::Radius::from(8.0),
+                },
                 ..ContainerStyle::default()
-            })
+            });
+
+        // Center the modal
+        container_widget(modal_box)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
             .into()
     }
 
     /// Builds the left panel containing configuration selection and new config button.
-    ///
-    /// # Returns
-    /// Container element with the configuration list
     pub fn build_config_selection_panel(&self) -> Element<'_, Message> {
         let config_buttons = self.build_config_button_list();
         let new_config_button = self.build_new_config_button();
@@ -96,9 +118,6 @@ impl QuincyGui {
     }
 
     /// Builds the scrollable list of configuration buttons.
-    ///
-    /// # Returns
-    /// Scrollable element containing configuration buttons
     pub fn build_config_button_list(&self) -> Element<'_, Message> {
         let configs = self.configs.keys().collect::<Vec<_>>();
 
@@ -115,19 +134,14 @@ impl QuincyGui {
     }
 
     /// Builds a single configuration selection button.
-    ///
-    /// # Arguments
-    /// * `name` - Name of the configuration
-    ///
-    /// # Returns
-    /// Button element for the configuration
     pub fn build_config_button<'a>(&self, name: &'a str) -> Element<'a, Message> {
+        let is_editor_open = self.is_editor_open();
+
         let mut btn = button_widget(text(name).color(ColorPalette::TEXT_PRIMARY).size(14))
             .width(Length::Fill)
             .padding([6, 8]);
 
-        // Disable button interactions when editor modal is open
-        if !self.editor_modal_open {
+        if !is_editor_open {
             btn = btn.on_press(Message::Config(ConfigMsg::Selected(name.to_string())));
         }
 
@@ -136,7 +150,7 @@ impl QuincyGui {
             .as_ref()
             .is_some_and(|config| config.quincy_config.name == name);
 
-        if self.editor_modal_open {
+        if is_editor_open {
             btn.style(|_theme, _status| CustomButtonStyles::disabled())
         } else if is_selected {
             btn.style(CustomButtonStyles::selected_fn())
@@ -147,10 +161,9 @@ impl QuincyGui {
     }
 
     /// Builds the "New Configuration" button.
-    ///
-    /// # Returns
-    /// Button element for creating new configurations
     pub fn build_new_config_button(&self) -> Element<'_, Message> {
+        let is_editor_open = self.is_editor_open();
+
         let mut btn = button_widget(
             text("+")
                 .color(ColorPalette::TEXT_PRIMARY)
@@ -161,12 +174,11 @@ impl QuincyGui {
         .width(Length::Fill)
         .padding([6, 8]);
 
-        // Disable button when editor modal is open
-        if !self.editor_modal_open {
+        if !is_editor_open {
             btn = btn.on_press(Message::Config(ConfigMsg::New));
         }
 
-        if self.editor_modal_open {
+        if is_editor_open {
             btn.style(|_theme, _status| CustomButtonStyles::disabled())
         } else {
             btn.style(CustomButtonStyles::secondary_fn())
@@ -175,9 +187,6 @@ impl QuincyGui {
     }
 
     /// Builds the right panel containing configuration details and controls.
-    ///
-    /// # Returns
-    /// Container element with configuration editing interface
     pub fn build_config_details_panel(&self) -> Element<'_, Message> {
         let content = if let Some(selected_config) = self.selected_config.as_ref() {
             self.build_selected_config_content(selected_config)
@@ -194,24 +203,21 @@ impl QuincyGui {
     }
 
     /// Builds the content for when a configuration is selected.
-    ///
-    /// # Arguments
-    /// * `selected_config` - The currently selected configuration
-    ///
-    /// # Returns
-    /// Column element with configuration editing interface
     pub fn build_selected_config_content<'a>(
         &'a self,
         selected_config: &'a SelectedConfig,
     ) -> Element<'a, Message> {
-        let has_client = self
-            .instances
-            .contains_key(&selected_config.quincy_config.name);
+        let config_name = &selected_config.quincy_config.name;
+        let config_state = self
+            .config_states
+            .get(config_name)
+            .cloned()
+            .unwrap_or_default();
 
         let name_input = self.build_config_name_input(selected_config);
         let config_view = self.build_config_view_section(selected_config);
-        let monitoring_section = self.build_monitoring_section(selected_config, has_client);
-        let action_buttons = self.build_action_buttons(has_client);
+        let monitoring_section = self.build_monitoring_section_from_state(&config_state);
+        let action_buttons = self.build_action_buttons_from_state(&config_state);
 
         column![
             container_widget(name_input).height(Length::Shrink),
@@ -225,23 +231,18 @@ impl QuincyGui {
     }
 
     /// Builds the configuration name input field.
-    ///
-    /// # Arguments
-    /// * `selected_config` - The currently selected configuration
-    ///
-    /// # Returns
-    /// Text input element for the configuration name
     pub fn build_config_name_input(
         &self,
         selected_config: &SelectedConfig,
     ) -> Element<'_, Message> {
+        let is_editor_open = self.is_editor_open();
+
         let mut input =
             text_input_widget("Configuration name", &selected_config.quincy_config.name)
                 .padding([6, 8])
                 .size(14);
 
-        // Disable input when editor modal is open
-        if !self.editor_modal_open {
+        if !is_editor_open {
             input = input
                 .on_input(|s| Message::Config(ConfigMsg::NameChanged(s)))
                 .on_submit(Message::Config(ConfigMsg::NameSaved));
@@ -251,12 +252,6 @@ impl QuincyGui {
     }
 
     /// Builds the configuration view section with read-only fields.
-    ///
-    /// # Arguments
-    /// * `selected_config` - The currently selected configuration
-    ///
-    /// # Returns
-    /// Container element with configuration view
     pub fn build_config_view_section(
         &self,
         selected_config: &SelectedConfig,
@@ -343,13 +338,6 @@ impl QuincyGui {
     }
 
     /// Builds a single configuration field display with owned strings.
-    ///
-    /// # Arguments
-    /// * `label` - Field label
-    /// * `value` - Field value
-    ///
-    /// # Returns
-    /// Column element with label and value
     pub fn build_owned_config_field(&self, label: String, value: String) -> Element<'_, Message> {
         column![
             text(label).size(12).color(ColorPalette::TEXT_SECONDARY),
@@ -359,101 +347,38 @@ impl QuincyGui {
         .into()
     }
 
-    /// Builds the monitoring section showing connection status and metrics.
-    ///
-    /// # Arguments
-    /// * `selected_config` - The currently selected configuration
-    /// * `has_client` - Whether a client instance is running for this config
-    ///
-    /// # Returns
-    /// Column element with monitoring information
-    pub fn build_monitoring_section(
-        &self,
-        selected_config: &SelectedConfig,
-        has_client: bool,
-    ) -> Element<'_, Message> {
-        if has_client {
-            if let Some(instance) = self.instances.get(&selected_config.quincy_config.name) {
-                let status = instance.get_status();
-                self.build_instance_status_display(
-                    &status.status,
-                    status.metrics.as_ref(),
-                    &instance.name,
-                    None,
-                )
-            } else {
-                // Show loading status when client is starting
-                self.build_instance_status_display(
-                    &ConnectionStatus::Connecting,
-                    None,
-                    &selected_config.quincy_config.name,
-                    None,
-                )
-            }
-        } else {
-            // Always show disconnected status when no client is running
-            let last_error = self
-                .last_errors
-                .get(&selected_config.quincy_config.name)
-                .map(|s| s.as_str());
-            self.build_instance_status_display(
-                &ConnectionStatus::Disconnected,
+    /// Builds the monitoring section from the ConfigState.
+    pub fn build_monitoring_section_from_state(&self, state: &ConfigState) -> Element<'_, Message> {
+        let (status_text, status_color, container_style, metrics) = match state {
+            ConfigState::Idle => (
+                "Disconnected".to_string(),
+                ColorPalette::TEXT_SECONDARY,
+                CustomContainerStyles::status_section(),
                 None,
-                &selected_config.quincy_config.name,
-                last_error,
-            )
-        }
-    }
-
-    /// Builds the status display for a running instance.
-    ///
-    /// # Arguments
-    /// * `connection_status` - Current connection status
-    /// * `metrics` - Optional connection metrics
-    /// * `instance_name` - Instance/config name for routing actions
-    /// * `last_error` - Last connection error to display, if any
-    ///
-    /// # Returns
-    /// Column element with status information and optional dismissable error window
-    pub fn build_instance_status_display(
-        &self,
-        connection_status: &ConnectionStatus,
-        metrics: Option<&ConnectionMetrics>,
-        _instance_name: &str,
-        last_error: Option<&str>,
-    ) -> Element<'_, Message> {
-        // Determine primary status label, color and container style.
-        // If Disconnected and there is a last_error, show that error instead of "Disconnected".
-        let (status_text, status_color, container_style) = match connection_status {
-            ConnectionStatus::Connected => (
-                "Connected".to_string(),
-                ColorPalette::SUCCESS,
-                CustomContainerStyles::status_connected(),
             ),
-            ConnectionStatus::Connecting => (
+            ConfigState::Connecting { .. } => (
                 "Connecting...".to_string(),
                 ColorPalette::WARNING,
                 CustomContainerStyles::status_section(),
+                None,
             ),
-            ConnectionStatus::Disconnected => {
-                if let Some(err) = last_error {
-                    (
-                        err.to_string(),
-                        ColorPalette::ERROR,
-                        CustomContainerStyles::status_error(),
-                    )
-                } else {
-                    (
-                        "Disconnected".to_string(),
-                        ColorPalette::TEXT_SECONDARY,
-                        CustomContainerStyles::status_section(),
-                    )
-                }
-            }
-            ConnectionStatus::Error(err) => (
-                err.clone(),
+            ConfigState::Connected { metrics, .. } => (
+                "Connected".to_string(),
+                ColorPalette::SUCCESS,
+                CustomContainerStyles::status_connected(),
+                metrics.as_ref(),
+            ),
+            ConfigState::Disconnecting => (
+                "Disconnecting...".to_string(),
+                ColorPalette::WARNING,
+                CustomContainerStyles::status_section(),
+                None,
+            ),
+            ConfigState::Error { message } => (
+                message.clone(),
                 ColorPalette::ERROR,
                 CustomContainerStyles::status_error(),
+                None,
             ),
         };
 
@@ -465,15 +390,11 @@ impl QuincyGui {
             text(status_text).size(14).color(status_color).into(),
         ];
 
-        // We no longer append a separate inline error if we already used it as the primary label.
-        // For explicit Error(_) states, the label already shows the error text.
-
-        // Add metrics if available
         if let Some(metrics) = metrics {
             content.extend([
                 container_widget(text("").size(4))
                     .height(Length::Fixed(8.0))
-                    .into(), // Spacer
+                    .into(),
                 text("Connection Details")
                     .size(14)
                     .color(ColorPalette::TEXT_SECONDARY)
@@ -490,18 +411,10 @@ impl QuincyGui {
             .into()
     }
 
-    /// Builds the connection information display with IP addresses at top and stats on the right.
-    ///
-    /// # Arguments
-    /// * `metrics` - Connection metrics to display
-    ///
-    /// # Returns
-    /// Row element with IP addresses/connection time on left and transfer stats on right
+    /// Builds the connection information display.
     pub fn build_connection_info(&self, metrics: &ConnectionMetrics) -> Element<'_, Message> {
-        // Build IP addresses section
         let mut ip_info = Vec::new();
 
-        // Add client IP address if available
         if let Some(client_addr) = metrics.client_address {
             ip_info.push(
                 column![
@@ -517,7 +430,6 @@ impl QuincyGui {
             );
         }
 
-        // Add server IP address if available
         if let Some(server_addr) = metrics.server_address {
             ip_info.push(
                 column![
@@ -533,7 +445,6 @@ impl QuincyGui {
             );
         }
 
-        // Add connection duration below IP addresses
         ip_info.push(
             column![
                 text("Connected for")
@@ -549,7 +460,6 @@ impl QuincyGui {
 
         let left_column = column(ip_info).spacing(2);
 
-        // Build transfer statistics vertically on the right side
         let right_column = column![
             column![
                 text("Upload").size(12).color(ColorPalette::TEXT_SECONDARY),
@@ -576,15 +486,15 @@ impl QuincyGui {
             .into()
     }
 
-    /// Builds the action buttons row (Connect/Disconnect, Edit, Delete).
-    ///
-    /// # Arguments
-    /// * `has_client` - Whether a client instance is running
-    ///
-    /// # Returns
-    /// Row element with action buttons
-    pub fn build_action_buttons(&self, has_client: bool) -> Element<'_, Message> {
-        let connection_button = if has_client {
+    /// Builds the action buttons row based on ConfigState.
+    pub fn build_action_buttons_from_state(&self, state: &ConfigState) -> Element<'_, Message> {
+        let is_editor_open = self.is_editor_open();
+        let is_active = state.has_active_instance();
+        let is_connected = state.is_connected();
+        let is_connecting = matches!(state, ConfigState::Connecting { .. });
+
+        let connection_button = if is_connected {
+            // Connected -> show Disconnect button
             let mut btn = button_widget(
                 text("Disconnect")
                     .color(ColorPalette::TEXT_PRIMARY)
@@ -592,46 +502,60 @@ impl QuincyGui {
             )
             .padding([6, 12]);
 
-            if !self.editor_modal_open {
+            if !is_editor_open {
                 btn = btn.on_press(Message::Instance(InstanceMsg::Disconnect));
             }
 
-            if self.editor_modal_open {
+            if is_editor_open {
                 btn.style(|_theme, _status| CustomButtonStyles::disabled())
             } else {
                 btn.style(CustomButtonStyles::primary_fn())
             }
+        } else if is_connecting {
+            // Connecting -> show Cancel button
+            button_widget(text("Cancel").color(ColorPalette::TEXT_PRIMARY).size(14))
+                .padding([6, 12])
+                .on_press(Message::Instance(InstanceMsg::CancelConnect))
+                .style(CustomButtonStyles::danger_fn())
+        } else if matches!(state, ConfigState::Disconnecting) {
+            // Disconnecting -> show disabled button
+            button_widget(
+                text("Disconnecting...")
+                    .color(ColorPalette::TEXT_MUTED)
+                    .size(14),
+            )
+            .padding([6, 12])
+            .style(|_theme, _status| CustomButtonStyles::disabled())
         } else {
+            // Idle or Error -> show Connect button
             let mut btn = button_widget(text("Connect").color(ColorPalette::TEXT_PRIMARY).size(14))
                 .padding([6, 12]);
 
-            if !self.editor_modal_open {
+            if !is_editor_open {
                 btn = btn.on_press(Message::Instance(InstanceMsg::Connect));
             }
 
-            if self.editor_modal_open {
+            if is_editor_open {
                 btn.style(|_theme, _status| CustomButtonStyles::disabled())
             } else {
                 btn.style(CustomButtonStyles::primary_fn())
             }
         };
 
-        let mut edit_button =
-            button_widget(text("Edit").color(ColorPalette::TEXT_PRIMARY).size(14)).padding([6, 12]);
-
-        // Disable edit button when editor modal is open
-        if !self.editor_modal_open {
-            edit_button = edit_button.on_press(Message::Editor(EditorMsg::Open));
-        }
-
-        let edit_button = if self.editor_modal_open {
-            edit_button.style(|_theme, _status| CustomButtonStyles::disabled())
+        // Edit button - disabled when editor is open OR when instance is active
+        let edit_button = if is_editor_open || is_active {
+            button_widget(text("Edit").color(ColorPalette::TEXT_MUTED).size(14))
+                .padding([6, 12])
+                .style(|_theme, _status| CustomButtonStyles::disabled())
         } else {
-            edit_button.style(CustomButtonStyles::secondary_fn())
+            button_widget(text("Edit").color(ColorPalette::TEXT_PRIMARY).size(14))
+                .padding([6, 12])
+                .on_press(Message::Editor(EditorMsg::Open))
+                .style(CustomButtonStyles::secondary_fn())
         };
 
-        let delete_button = if has_client || self.editor_modal_open {
-            // Disable delete button when client is running or editor modal is open
+        // Delete button - disabled when active or editor open
+        let delete_button = if is_active || is_editor_open {
             button_widget(text("Delete").color(ColorPalette::TEXT_MUTED).size(14))
                 .padding([6, 12])
                 .style(|_theme, _status| CustomButtonStyles::disabled())
@@ -649,11 +573,7 @@ impl QuincyGui {
     }
 
     /// Builds the content shown when no configuration is selected.
-    ///
-    /// # Returns
-    /// Column element with "no selection" message
     pub fn build_no_selection_content(&self) -> Element<'_, Message> {
-        // Base message when nothing is selected
         let mut contents: Vec<Element<'_, Message>> = vec![
             text("No configuration selected")
                 .size(24)
@@ -669,7 +589,6 @@ impl QuincyGui {
                 .into(),
         ];
 
-        // If there were load errors, surface them prominently for better UX
         if !self.load_errors.is_empty() {
             contents.push(
                 text("Configuration load errors")
