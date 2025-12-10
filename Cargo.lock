@@ -3128,6 +3128,7 @@ dependencies = [
  "dashmap",
  "iced",
  "ipnet",
+ "nu-ansi-term",
  "quincy",
  "quincy-client",
  "regex",
@@ -3136,6 +3137,7 @@ dependencies = [
  "thiserror 2.0.16",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
