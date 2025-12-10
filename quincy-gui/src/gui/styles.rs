@@ -31,6 +31,8 @@ impl Spacing {
     pub const XS: f32 = 2.0;
     /// Small spacing (4px) - within columns, tight groups
     pub const SM: f32 = 4.0;
+    /// Button vertical padding (6px) - standard button vertical padding
+    pub const BUTTON_V: f32 = 6.0;
     /// Medium spacing (8px) - button groups, modal sections, standard padding
     pub const MD: f32 = 8.0;
     /// Large spacing (12px) - section spacing, button padding horizontal
