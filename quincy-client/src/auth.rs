@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use ipnet::IpNet;
 use quinn::Connection;
-use tokio::time::timeout;
 
 use quincy::{
     auth::{
@@ -12,6 +11,7 @@ use quincy::{
     error::AuthError,
     Result,
 };
+use tokio::time::timeout;
 
 /// Represents an authentication client handling initial authentication and session management.
 pub struct AuthClient {
@@ -54,7 +54,9 @@ impl AuthClient {
             })
             .await?;
 
-        let auth_response = timeout(self.auth_timeout, auth_stream.recv_message()).await??;
+        let auth_response = timeout(self.auth_timeout, auth_stream.recv_message())
+            .await
+            .map_err(|_| AuthError::Timeout)??;
 
         match auth_response {
             AuthMessage::Authenticated {
