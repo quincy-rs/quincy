@@ -23,6 +23,36 @@ impl QuincyGui {
         self.editor_state.is_some()
     }
 
+    /// Helper function to build a styled button with consistent styling and optional message handling.
+    ///
+    /// # Parameters
+    /// - `label`: The text label for the button
+    /// - `message`: Optional message to attach (if None, button will be disabled)
+    /// - `style_fn`: The style function to apply to the button
+    ///
+    /// # Returns
+    /// A properly styled button Element
+    fn styled_button<'a>(
+        label: &'a str,
+        message: Option<Message>,
+        style_fn: impl Fn(&iced::Theme, button_widget::Status) -> button_widget::Style + 'a,
+    ) -> Element<'a, Message> {
+        let text_color = if message.is_some() {
+            ColorPalette::TEXT_PRIMARY
+        } else {
+            ColorPalette::TEXT_MUTED
+        };
+
+        let mut btn = button_widget(text(label).color(text_color).size(Typography::BODY))
+            .padding([Spacing::BUTTON_V, Spacing::LG]);
+
+        if let Some(msg) = message {
+            btn = btn.on_press(msg);
+        }
+
+        btn.style(style_fn).into()
+    }
+
     /// Builds the confirmation modal overlay.
     ///
     /// This creates a centered modal dialog with a title, message, and Confirm/Cancel buttons.
@@ -48,23 +78,17 @@ impl QuincyGui {
             .color(ColorPalette::TEXT_SECONDARY);
 
         // Action buttons
-        let confirm_button = button_widget(
-            text("Confirm")
-                .color(ColorPalette::TEXT_PRIMARY)
-                .size(Typography::BODY),
-        )
-        .padding([Spacing::SM + 2.0, Spacing::LG])
-        .on_press(Message::Confirm(ConfirmMsg::Confirm))
-        .style(CustomButtonStyles::danger_fn());
+        let confirm_button = Self::styled_button(
+            "Confirm",
+            Some(Message::Confirm(ConfirmMsg::Confirm)),
+            |theme, status| CustomButtonStyles::danger_fn()(theme, status),
+        );
 
-        let cancel_button = button_widget(
-            text("Cancel")
-                .color(ColorPalette::TEXT_PRIMARY)
-                .size(Typography::BODY),
-        )
-        .padding([Spacing::SM + 2.0, Spacing::LG])
-        .on_press(Message::Confirm(ConfirmMsg::Cancel))
-        .style(CustomButtonStyles::secondary_fn());
+        let cancel_button = Self::styled_button(
+            "Cancel",
+            Some(Message::Confirm(ConfirmMsg::Cancel)),
+            |theme, status| CustomButtonStyles::secondary_fn()(theme, status),
+        );
 
         let button_row = row![cancel_button, confirm_button]
             .spacing(Spacing::MD)
@@ -143,23 +167,17 @@ impl QuincyGui {
             .color(ColorPalette::TEXT_PRIMARY);
 
         // Action buttons - matching main window style
-        let save_button = button_widget(
-            text("Save")
-                .color(ColorPalette::TEXT_PRIMARY)
-                .size(Typography::BODY),
-        )
-        .padding([Spacing::SM + 2.0, Spacing::LG])
-        .on_press(Message::Editor(EditorMsg::Save))
-        .style(CustomButtonStyles::primary_fn());
+        let save_button = Self::styled_button(
+            "Save",
+            Some(Message::Editor(EditorMsg::Save)),
+            |theme, status| CustomButtonStyles::primary_fn()(theme, status),
+        );
 
-        let cancel_button = button_widget(
-            text("Cancel")
-                .color(ColorPalette::TEXT_PRIMARY)
-                .size(Typography::BODY),
-        )
-        .padding([Spacing::SM + 2.0, Spacing::LG])
-        .on_press(Message::Editor(EditorMsg::Close))
-        .style(CustomButtonStyles::secondary_fn());
+        let cancel_button = Self::styled_button(
+            "Cancel",
+            Some(Message::Editor(EditorMsg::Close)),
+            |theme, status| CustomButtonStyles::secondary_fn()(theme, status),
+        );
 
         let button_row = row![cancel_button, save_button]
             .spacing(Spacing::MD)
@@ -207,7 +225,7 @@ impl QuincyGui {
 
         container_widget(
             column![config_buttons, new_config_button]
-                .spacing(Spacing::SM + 2.0)
+                .spacing(Spacing::BUTTON_V)
                 .height(Length::Fill)
                 .clip(false),
         )
@@ -250,7 +268,7 @@ impl QuincyGui {
                 .size(Typography::BODY),
         )
         .width(Length::Fill)
-        .padding([Spacing::SM + 2.0, Spacing::MD]);
+        .padding([Spacing::BUTTON_V, Spacing::MD]);
 
         // Only allow selection if editor is closed AND no config is active
         if !is_editor_open && !has_active_instance {
@@ -286,7 +304,7 @@ impl QuincyGui {
                 .width(Length::Fill),
         )
         .width(Length::Fill)
-        .padding([Spacing::SM + 2.0, Spacing::MD]);
+        .padding([Spacing::BUTTON_V, Spacing::MD]);
 
         if !is_editor_open {
             btn = btn.on_press(Message::Config(ConfigMsg::New));
@@ -353,7 +371,7 @@ impl QuincyGui {
 
         let mut input =
             text_input_widget("Configuration name", &selected_config.quincy_config.name)
-                .padding([Spacing::SM + 2.0, Spacing::MD])
+                .padding([Spacing::BUTTON_V, Spacing::MD])
                 .size(Typography::BODY);
 
         if !is_editor_open {
@@ -626,99 +644,74 @@ impl QuincyGui {
 
         let connection_button = if is_connected {
             // Connected -> show Disconnect button
-            let mut btn = button_widget(
-                text("Disconnect")
-                    .color(ColorPalette::TEXT_PRIMARY)
-                    .size(Typography::BODY),
-            )
-            .padding([Spacing::SM + 2.0, Spacing::LG]);
-
-            if !is_editor_open {
-                btn = btn.on_press(Message::Instance(InstanceMsg::Disconnect));
-            }
-
-            if is_editor_open {
-                btn.style(|_theme, _status| CustomButtonStyles::disabled())
+            let message = if !is_editor_open {
+                Some(Message::Instance(InstanceMsg::Disconnect))
             } else {
-                btn.style(CustomButtonStyles::primary_fn())
+                None
+            };
+            if is_editor_open {
+                Self::styled_button("Disconnect", message, |_theme, _status| {
+                    CustomButtonStyles::disabled()
+                })
+            } else {
+                Self::styled_button("Disconnect", message, |theme, status| {
+                    CustomButtonStyles::primary_fn()(theme, status)
+                })
             }
         } else if is_connecting {
             // Connecting -> show Cancel button
-            button_widget(
-                text("Cancel")
-                    .color(ColorPalette::TEXT_PRIMARY)
-                    .size(Typography::BODY),
+            Self::styled_button(
+                "Cancel",
+                Some(Message::Instance(InstanceMsg::CancelConnect)),
+                |theme, status| CustomButtonStyles::danger_fn()(theme, status),
             )
-            .padding([Spacing::SM + 2.0, Spacing::LG])
-            .on_press(Message::Instance(InstanceMsg::CancelConnect))
-            .style(CustomButtonStyles::danger_fn())
         } else if matches!(state, ConfigState::Disconnecting) {
             // Disconnecting -> show disabled button
-            button_widget(
-                text("Disconnecting...")
-                    .color(ColorPalette::TEXT_MUTED)
-                    .size(Typography::BODY),
-            )
-            .padding([Spacing::SM + 2.0, Spacing::LG])
-            .style(|_theme, _status| CustomButtonStyles::disabled())
+            Self::styled_button("Disconnecting...", None, |_theme, _status| {
+                CustomButtonStyles::disabled()
+            })
         } else {
             // Idle or Error -> show Connect button
-            let mut btn = button_widget(
-                text("Connect")
-                    .color(ColorPalette::TEXT_PRIMARY)
-                    .size(Typography::BODY),
-            )
-            .padding([Spacing::SM + 2.0, Spacing::LG]);
-
-            if !is_editor_open {
-                btn = btn.on_press(Message::Instance(InstanceMsg::Connect));
-            }
-
-            if is_editor_open {
-                btn.style(|_theme, _status| CustomButtonStyles::disabled())
+            let message = if !is_editor_open {
+                Some(Message::Instance(InstanceMsg::Connect))
             } else {
-                btn.style(CustomButtonStyles::primary_fn())
+                None
+            };
+            if is_editor_open {
+                Self::styled_button("Connect", message, |_theme, _status| {
+                    CustomButtonStyles::disabled()
+                })
+            } else {
+                Self::styled_button("Connect", message, |theme, status| {
+                    CustomButtonStyles::primary_fn()(theme, status)
+                })
             }
         };
 
         // Edit button - disabled when editor is open OR when instance is active
         let edit_button = if is_editor_open || is_active {
-            button_widget(
-                text("Edit")
-                    .color(ColorPalette::TEXT_MUTED)
-                    .size(Typography::BODY),
-            )
-            .padding([Spacing::SM + 2.0, Spacing::LG])
-            .style(|_theme, _status| CustomButtonStyles::disabled())
+            Self::styled_button("Edit", None, |_theme, _status| {
+                CustomButtonStyles::disabled()
+            })
         } else {
-            button_widget(
-                text("Edit")
-                    .color(ColorPalette::TEXT_PRIMARY)
-                    .size(Typography::BODY),
+            Self::styled_button(
+                "Edit",
+                Some(Message::Editor(EditorMsg::Open)),
+                |theme, status| CustomButtonStyles::secondary_fn()(theme, status),
             )
-            .padding([Spacing::SM + 2.0, Spacing::LG])
-            .on_press(Message::Editor(EditorMsg::Open))
-            .style(CustomButtonStyles::secondary_fn())
         };
 
         // Delete button - disabled when active or editor open
         let delete_button = if is_active || is_editor_open {
-            button_widget(
-                text("Delete")
-                    .color(ColorPalette::TEXT_MUTED)
-                    .size(Typography::BODY),
-            )
-            .padding([Spacing::SM + 2.0, Spacing::LG])
-            .style(|_theme, _status| CustomButtonStyles::disabled())
+            Self::styled_button("Delete", None, |_theme, _status| {
+                CustomButtonStyles::disabled()
+            })
         } else {
-            button_widget(
-                text("Delete")
-                    .color(ColorPalette::TEXT_PRIMARY)
-                    .size(Typography::BODY),
+            Self::styled_button(
+                "Delete",
+                Some(Message::Config(ConfigMsg::Delete)),
+                |theme, status| CustomButtonStyles::danger_fn()(theme, status),
             )
-            .padding([Spacing::SM + 2.0, Spacing::LG])
-            .on_press(Message::Config(ConfigMsg::Delete))
-            .style(CustomButtonStyles::danger_fn())
         };
 
         row![connection_button, edit_button, delete_button]

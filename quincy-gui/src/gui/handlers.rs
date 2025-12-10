@@ -17,6 +17,20 @@ use super::types::{
 use crate::ipc::{ConnectionMetrics, ConnectionStatus, IpcMessage};
 use crate::validation;
 
+/// Helper function to parse a config file and return the parsed config and any error.
+/// Returns a tuple of (Option<ClientConfig>, Option<String>) where:
+/// - The first element is Some(config) if parsing succeeded, None otherwise
+/// - The second element is Some(error_string) if parsing failed, None otherwise
+fn try_parse_config(path: &Path, name: &str) -> (Option<ClientConfig>, Option<String>) {
+    match ClientConfig::from_path(path, "QUINCY_") {
+        Ok(cfg) => (Some(cfg), None),
+        Err(e) => {
+            warn!("Failed to parse config {}: {}", name, e);
+            (None, Some(e.to_string()))
+        }
+    }
+}
+
 impl QuincyGui {
     // ========== Configuration Selection Handlers ==========
 
@@ -59,13 +73,7 @@ impl QuincyGui {
         let config_content = fs::read_to_string(&config.path)?;
         let editable_content = text_editor::Content::with_text(&config_content);
 
-        let (parsed_config, parse_error) = match ClientConfig::from_path(&config.path, "QUINCY_") {
-            Ok(cfg) => (Some(cfg), None),
-            Err(e) => {
-                warn!("Failed to parse config {}: {}", config.name, e);
-                (None, Some(e.to_string()))
-            }
-        };
+        let (parsed_config, parse_error) = try_parse_config(&config.path, &config.name);
 
         Ok(SelectedConfig {
             quincy_config: config.clone(),
@@ -103,10 +111,17 @@ impl QuincyGui {
                 return Task::none();
             };
 
-            let Some(old_config_name) = self.extract_old_config_name(selected_config) else {
-                return Task::none();
+            // Extract old config name from file path
+            let file_name = match selected_config.quincy_config.path.file_name() {
+                Some(name) => name.to_string_lossy().to_string(),
+                None => return Task::none(),
             };
-            old_config_name
+
+            file_name
+                .to_lowercase()
+                .strip_suffix(".toml")
+                .unwrap_or(&file_name)
+                .to_string()
         };
 
         let Some(mut selected_config) = self.selected_config.take() else {
@@ -128,24 +143,6 @@ impl QuincyGui {
         Task::none()
     }
 
-    /// Extracts the old configuration name from the file path.
-    pub fn extract_old_config_name(&self, selected_config: &SelectedConfig) -> Option<String> {
-        let file_name = selected_config
-            .quincy_config
-            .path
-            .file_name()?
-            .to_string_lossy()
-            .to_string();
-
-        Some(
-            file_name
-                .to_lowercase()
-                .strip_suffix(".toml")
-                .unwrap_or(&file_name)
-                .to_string(),
-        )
-    }
-
     /// Renames a configuration file and updates internal state.
     pub fn rename_config_file(
         &mut self,
@@ -164,7 +161,12 @@ impl QuincyGui {
             .join(format!("{}.toml", selected_config.quincy_config.name));
 
         self.save_config_to_new_path(selected_config, &new_path);
-        self.remove_old_config_file(&old_path);
+
+        // Remove old config file
+        match fs::remove_file(&old_path) {
+            Ok(_) => info!("Old config file removed: {}", old_path.display()),
+            Err(e) => error!("Failed to remove old config file: {}", e),
+        }
 
         let new_name = selected_config.quincy_config.name.clone();
         self.configs
@@ -186,14 +188,6 @@ impl QuincyGui {
             Err(e) => {
                 error!("Failed to save config file: {}", e);
             }
-        }
-    }
-
-    /// Removes the old configuration file.
-    pub fn remove_old_config_file(&self, old_path: &Path) {
-        match fs::remove_file(old_path) {
-            Ok(_) => info!("Old config file removed: {}", old_path.display()),
-            Err(e) => error!("Failed to remove old config file: {}", e),
         }
     }
 
@@ -229,55 +223,31 @@ impl QuincyGui {
             return Task::none();
         }
 
-        let new_config_name = self.generate_unique_config_name();
-        let new_config = self.create_new_config(&new_config_name);
-        let selected_config = self.create_selected_config_with_template(new_config.clone());
-
-        self.save_new_config_file(&selected_config);
-
-        self.selected_config = Some(selected_config);
-        self.configs.insert(new_config_name.clone(), new_config);
-        self.config_states
-            .insert(new_config_name, ConfigState::default());
-
-        Task::none()
-    }
-
-    /// Generates a unique name for a new configuration.
-    pub fn generate_unique_config_name(&self) -> String {
+        // Generate unique config name
         let mut config_idx = 0;
         let mut new_config_name = "client_config".to_string();
-
         while self.configs.contains_key(&new_config_name) {
             config_idx += 1;
             new_config_name = format!("client_config_{config_idx}");
         }
 
-        new_config_name
-    }
+        // Create new config
+        let new_config = QuincyConfig {
+            name: new_config_name.clone(),
+            path: self.config_dir.join(format!("{}.toml", new_config_name)),
+        };
 
-    /// Creates a new QuincyConfig with the given name.
-    pub fn create_new_config(&self, name: &str) -> QuincyConfig {
-        QuincyConfig {
-            name: name.to_string(),
-            path: self.config_dir.join(format!("{name}.toml")),
-        }
-    }
-
-    /// Creates a SelectedConfig with a template configuration.
-    pub fn create_selected_config_with_template(&self, config: QuincyConfig) -> SelectedConfig {
-        SelectedConfig {
-            quincy_config: config,
+        // Create selected config with template
+        let selected_config = SelectedConfig {
+            quincy_config: new_config.clone(),
             editable_content: text_editor::Content::with_text(include_str!(
                 "../../../resources/common/client.toml"
             )),
             parsed_config: None,
             parse_error: None,
-        }
-    }
+        };
 
-    /// Saves a new configuration file to disk.
-    pub fn save_new_config_file(&self, selected_config: &SelectedConfig) {
+        // Save to disk
         match fs::write(
             &selected_config.quincy_config.path,
             selected_config.editable_content.text(),
@@ -292,6 +262,13 @@ impl QuincyGui {
                 error!("Failed to save config file: {}", e);
             }
         }
+
+        self.selected_config = Some(selected_config);
+        self.configs.insert(new_config_name.clone(), new_config);
+        self.config_states
+            .insert(new_config_name, ConfigState::default());
+
+        Task::none()
     }
 
     // ========== Editor Modal Handlers ==========
@@ -400,17 +377,10 @@ impl QuincyGui {
                 );
 
                 // Re-parse the configuration
-                let (parsed_config, parse_error) =
-                    match ClientConfig::from_path(&selected_config.quincy_config.path, "QUINCY_") {
-                        Ok(cfg) => (Some(cfg), None),
-                        Err(e) => {
-                            warn!(
-                                "Failed to parse updated config {}: {}",
-                                selected_config.quincy_config.name, e
-                            );
-                            (None, Some(e.to_string()))
-                        }
-                    };
+                let (parsed_config, parse_error) = try_parse_config(
+                    &selected_config.quincy_config.path,
+                    &selected_config.quincy_config.name,
+                );
                 selected_config.parsed_config = parsed_config;
                 selected_config.parse_error = parse_error;
 
