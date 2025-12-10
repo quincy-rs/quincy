@@ -12,7 +12,7 @@ use super::app::QuincyGui;
 use super::error::GuiError;
 use super::types::{
     ConfigState, ConfirmAction, ConfirmMsg, ConfirmationState, EditorState, InstanceMsg, Message,
-    QuincyConfig, QuincyInstance, SelectedConfig,
+    QuincyConfig, QuincyInstance, SelectedConfig, SystemMsg,
 };
 use crate::ipc::{ConnectionMetrics, ConnectionStatus, IpcMessage};
 use crate::validation;
@@ -623,7 +623,11 @@ impl QuincyGui {
                             ConnectionStatus::Error(err) => {
                                 Message::Instance(InstanceMsg::DisconnectedWithError(name, err))
                             }
-                            _ => {
+                            ConnectionStatus::Connecting => {
+                                // Still connecting, no state change needed
+                                Message::System(SystemMsg::Noop)
+                            }
+                            ConnectionStatus::Connected => {
                                 Message::Instance(InstanceMsg::StatusUpdated(name, status.metrics))
                             }
                         },
