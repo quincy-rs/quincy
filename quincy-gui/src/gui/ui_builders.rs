@@ -392,11 +392,17 @@ impl QuincyGui {
             ]
             .spacing(8)
         } else {
+            let error_msg = selected_config
+                .parse_error
+                .clone()
+                .unwrap_or_else(|| "Unknown error".to_string());
             column![
-                text("Configuration parsing failed - use Edit to view raw content")
+                text("Configuration parsing failed")
                     .size(14)
-                    .color(ColorPalette::TEXT_MUTED)
+                    .color(ColorPalette::ERROR),
+                text(error_msg).size(12).color(ColorPalette::TEXT_SECONDARY),
             ]
+            .spacing(4)
         };
 
         container_widget(
@@ -461,8 +467,8 @@ impl QuincyGui {
                 CustomContainerStyles::status_section(),
                 None,
             ),
-            ConfigState::Error { message } => (
-                message.clone(),
+            ConfigState::Error { error } => (
+                error.to_string(),
                 ColorPalette::ERROR,
                 CustomContainerStyles::status_error(),
                 None,

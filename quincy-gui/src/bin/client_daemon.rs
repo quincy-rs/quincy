@@ -6,6 +6,7 @@ use quincy::network::interface::tun_rs::TunRsInterface;
 use quincy::utils::tracing::log_subscriber;
 use quincy::{QuincyError, Result};
 use quincy_client::client::QuincyClient;
+use quincy_gui::gui::GuiError;
 use quincy_gui::ipc::{
     get_ipc_socket_path, ClientStatus, ConnectionMetrics, ConnectionStatus, IpcClient, IpcMessage,
 };
@@ -140,7 +141,7 @@ impl ClientDaemon {
                 match relayer.connection().close_reason() {
                     None => ConnectionStatus::Connected,
                     Some(reason) => {
-                        ConnectionStatus::Error(format!("Connection closed: {reason:?}"))
+                        ConnectionStatus::Error(GuiError::connection_closed(format!("{reason:?}")))
                     }
                 }
             } else {
@@ -275,14 +276,22 @@ impl ClientDaemon {
                                 }
                                 Ok(Ok(false)) => {
                                     // Cancelled
-                                    if let Err(e) = ipc_client.send(&IpcMessage::Error("Connection cancelled".to_string())).await {
+                                    if let Err(e) = ipc_client
+                                        .send(&IpcMessage::Error(GuiError::other(
+                                            "Connection cancelled",
+                                        )))
+                                        .await
+                                    {
                                         error!("Failed to send cancel response: {}", e);
                                     }
                                     break Ok(true); // Exit daemon
                                 }
                                 Ok(Err(e)) => {
                                     // Connection failed
-                                    if let Err(send_err) = ipc_client.send(&IpcMessage::Error(e.to_string())).await {
+                                    if let Err(send_err) = ipc_client
+                                        .send(&IpcMessage::Error(e.into()))
+                                        .await
+                                    {
                                         error!("Failed to send error: {}", send_err);
                                     }
                                     break Ok(false);
@@ -349,7 +358,7 @@ impl ClientDaemon {
             }
             _ => {
                 ipc_client
-                    .send(&IpcMessage::Error("Invalid message".to_string()))
+                    .send(&IpcMessage::Error(GuiError::ipc("Invalid message")))
                     .await?;
                 Ok(false)
             }
@@ -397,7 +406,7 @@ impl ClientDaemon {
                 let status = self.get_status().await;
                 IpcMessage::StatusUpdate(status)
             }
-            Err(e) => IpcMessage::Error(e.to_string()),
+            Err(e) => IpcMessage::Error(e.into()),
         }
     }
 

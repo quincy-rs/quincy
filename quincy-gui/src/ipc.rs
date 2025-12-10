@@ -7,6 +7,8 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, ReadHalf, WriteHalf};
 use tracing::{debug, info};
 
+use crate::gui::GuiError;
+
 #[cfg(unix)]
 use std::fs;
 
@@ -37,7 +39,7 @@ pub enum ConnectionStatus {
     Disconnected,
     Connecting,
     Connected,
-    Error(String),
+    Error(GuiError),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,7 +54,7 @@ pub enum IpcMessage {
     StopClient,
     GetStatus,
     StatusUpdate(ClientStatus),
-    Error(String),
+    Error(GuiError),
     Shutdown,
 }
 
