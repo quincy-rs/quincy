@@ -71,11 +71,10 @@ clap = { version = "^4.1", features = ["derive"] }
 regex = "^1.11"
 
 # GUI
-iced = { version = "^0.13.0", features = [
+iced = { version = "^0.14.0", features = [
     "tokio",
     "advanced",
     "highlighter",
-    "multi-window",
 ] }
 
 # Alloc

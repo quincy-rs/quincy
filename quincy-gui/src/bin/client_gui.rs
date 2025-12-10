@@ -43,8 +43,7 @@ pub struct Args {
 /// - Logging initialization fails
 /// - Window creation fails
 /// - The GUI event loop encounters a fatal error
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     // Initialize logging: prefer RUST_LOG env var, fall back to CLI arg
@@ -66,11 +65,19 @@ async fn main() -> Result<()> {
 
     let config_dir = expand_path(&args.config_dir);
 
-    daemon(QuincyGui::title, QuincyGui::update, QuincyGui::view)
-        .theme(QuincyGui::theme)
-        .subscription(QuincyGui::subscription)
-        .run_with(|| QuincyGui::new(config_dir))
-        .map_err(|e| QuincyError::system(format!("GUI framework error: {e}")))?;
+    daemon(
+        {
+            let config_dir = config_dir.clone();
+            move || QuincyGui::new(config_dir.clone())
+        },
+        QuincyGui::update,
+        QuincyGui::view,
+    )
+    .title(QuincyGui::title)
+    .theme(QuincyGui::theme)
+    .subscription(QuincyGui::subscription)
+    .run()
+    .map_err(|e| QuincyError::system(format!("GUI framework error: {e}")))?;
 
     Ok(())
 }

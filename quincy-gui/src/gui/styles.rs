@@ -28,19 +28,19 @@ pub struct Spacing;
 
 impl Spacing {
     /// Extra small spacing (2px) - tight label/value pairs
-    pub const XS: u16 = 2;
+    pub const XS: f32 = 2.0;
     /// Small spacing (4px) - within columns, tight groups
-    pub const SM: u16 = 4;
+    pub const SM: f32 = 4.0;
     /// Medium spacing (8px) - button groups, modal sections, standard padding
-    pub const MD: u16 = 8;
+    pub const MD: f32 = 8.0;
     /// Large spacing (12px) - section spacing, button padding horizontal
-    pub const LG: u16 = 12;
+    pub const LG: f32 = 12.0;
     /// Extra large spacing (16px) - modal content padding
-    pub const XL: u16 = 16;
+    pub const XL: f32 = 16.0;
     /// 2x extra large spacing (20px) - main layout padding
-    pub const XXL: u16 = 20;
+    pub const XXL: f32 = 20.0;
     /// 3x extra large spacing (24px) - large column gaps
-    pub const XXXL: u16 = 24;
+    pub const XXXL: f32 = 24.0;
 }
 
 /// Layout dimensions for windows and modals.
@@ -123,6 +123,7 @@ impl CustomButtonStyles {
                 offset: Vector::new(0.0, 2.0),
                 blur_radius: 4.0,
             },
+            snap: false,
         }
     }
 
@@ -141,6 +142,7 @@ impl CustomButtonStyles {
                 offset: Vector::new(0.0, 3.0),
                 blur_radius: 8.0,
             },
+            snap: false,
         }
     }
 
@@ -159,6 +161,7 @@ impl CustomButtonStyles {
                 offset: Vector::new(0.0, 1.0),
                 blur_radius: 2.0,
             },
+            snap: false,
         }
     }
 
@@ -177,6 +180,7 @@ impl CustomButtonStyles {
                 offset: Vector::new(0.0, 1.0),
                 blur_radius: 2.0,
             },
+            snap: false,
         }
     }
 
@@ -195,6 +199,7 @@ impl CustomButtonStyles {
                 offset: Vector::new(0.0, 2.0),
                 blur_radius: 4.0,
             },
+            snap: false,
         }
     }
 
@@ -213,6 +218,7 @@ impl CustomButtonStyles {
                 offset: Vector::new(0.0, 1.0),
                 blur_radius: 2.0,
             },
+            snap: false,
         }
     }
 
@@ -231,6 +237,7 @@ impl CustomButtonStyles {
                 offset: Vector::new(0.0, 2.0),
                 blur_radius: 6.0,
             },
+            snap: false,
         }
     }
 
@@ -249,6 +256,7 @@ impl CustomButtonStyles {
                 offset: Vector::new(0.0, 2.0),
                 blur_radius: 4.0,
             },
+            snap: false,
         }
     }
 
@@ -267,6 +275,7 @@ impl CustomButtonStyles {
                 offset: Vector::new(0.0, 3.0),
                 blur_radius: 8.0,
             },
+            snap: false,
         }
     }
 
@@ -285,6 +294,7 @@ impl CustomButtonStyles {
                 offset: Vector::new(0.0, 0.0),
                 blur_radius: 0.0,
             },
+            snap: false,
         }
     }
 }
@@ -308,6 +318,7 @@ impl CustomContainerStyles {
                 blur_radius: 12.0,
             },
             text_color: Some(ColorPalette::TEXT_PRIMARY),
+            snap: false,
         }
     }
 
@@ -326,6 +337,7 @@ impl CustomContainerStyles {
                 blur_radius: 6.0,
             },
             text_color: Some(ColorPalette::TEXT_PRIMARY),
+            snap: false,
         }
     }
 
@@ -344,6 +356,7 @@ impl CustomContainerStyles {
                 blur_radius: 8.0,
             },
             text_color: Some(ColorPalette::TEXT_PRIMARY),
+            snap: false,
         }
     }
 
@@ -362,6 +375,7 @@ impl CustomContainerStyles {
                 blur_radius: 8.0,
             },
             text_color: Some(ColorPalette::TEXT_PRIMARY),
+            snap: false,
         }
     }
 }
@@ -448,7 +462,7 @@ impl CustomTextInputStyle {
             text_input::Status::Active
             | text_input::Status::Hovered
             | text_input::Status::Disabled => Self::base(),
-            text_input::Status::Focused => Self::focused(),
+            text_input::Status::Focused { .. } => Self::focused(),
         }
     }
 }

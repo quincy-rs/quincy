@@ -186,7 +186,7 @@ impl QuincyGui {
 
         let main_content = container_widget(
             row![left_panel, right_panel]
-                .spacing(Spacing::MD + 2)
+                .spacing(Spacing::MD + 2.0)
                 .padding(Spacing::XXL),
         )
         .center_x(Length::Fill)
