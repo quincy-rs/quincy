@@ -11,6 +11,9 @@ use tracing::{debug, info};
 use std::fs;
 
 #[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 
 #[cfg(windows)]
@@ -78,7 +81,9 @@ impl IpcServer {
 
             let listener = UnixListener::bind(socket_path)?;
 
-            // Socket created by GUI user, no special permissions needed
+            // Set socket file permissions to 0600 (user read/write only)
+            let permissions = fs::Permissions::from_mode(0o600);
+            fs::set_permissions(socket_path, permissions)?;
 
             info!("IPC server listening on: {:?}", socket_path);
             Ok(Self { listener })
@@ -246,5 +251,21 @@ impl IpcConnection {
 }
 
 pub fn get_ipc_socket_path(instance_name: &str) -> PathBuf {
-    env::temp_dir().join(format!("quincy-{instance_name}.sock"))
+    #[cfg(unix)]
+    {
+        // Use XDG_RUNTIME_DIR if available and the directory exists
+        if let Ok(runtime_dir) = env::var("XDG_RUNTIME_DIR") {
+            let runtime_path = PathBuf::from(&runtime_dir);
+            if runtime_path.exists() && runtime_path.is_dir() {
+                return runtime_path.join(format!("quincy-{instance_name}.sock"));
+            }
+        }
+        // Fall back to temp_dir if XDG_RUNTIME_DIR is not available
+        env::temp_dir().join(format!("quincy-{instance_name}.sock"))
+    }
+
+    #[cfg(not(unix))]
+    {
+        env::temp_dir().join(format!("quincy-{instance_name}.sock"))
+    }
 }
