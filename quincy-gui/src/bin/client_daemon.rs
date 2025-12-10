@@ -3,7 +3,6 @@
 use clap::Parser;
 use quincy::config::{ClientConfig, FromPath};
 use quincy::network::interface::tun_rs::TunRsInterface;
-use quincy::utils::tracing::log_subscriber;
 use quincy::{QuincyError, Result};
 use quincy_client::client::QuincyClient;
 use quincy_gui::gui::GuiError;
@@ -16,6 +15,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
+use tracing_subscriber::EnvFilter;
 
 /// Command line arguments for the Quincy client daemon.
 #[derive(Parser)]
@@ -30,6 +30,9 @@ pub struct Args {
     /// Environment variable prefix for configuration
     #[arg(long, default_value = "QUINCY_")]
     pub env_prefix: String,
+    /// Log level (trace, debug, info, warn, error)
+    #[arg(long, default_value = "info")]
+    pub log_level: String,
 }
 
 /// The Quincy client daemon that manages VPN connections and IPC communication.
@@ -440,7 +443,7 @@ impl Clone for ClientDaemon {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    initialize_logging();
+    initialize_logging(&args.log_level);
 
     // Validate instance name defensively to prevent unsafe IPC names
     use quincy_gui::validation;
@@ -460,6 +463,18 @@ async fn main() -> Result<()> {
 }
 
 /// Initializes the logging system for the daemon.
-fn initialize_logging() {
-    let _logger = tracing::subscriber::set_global_default(log_subscriber("info"));
+/// Prefers RUST_LOG environment variable, falls back to log_level argument.
+fn initialize_logging(log_level: &str) {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
+
+    // Enable ANSI color support on Windows
+    #[cfg(windows)]
+    let with_ansi = nu_ansi_term::enable_ansi_support().is_ok();
+    #[cfg(not(windows))]
+    let with_ansi = true;
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_ansi(with_ansi)
+        .init();
 }

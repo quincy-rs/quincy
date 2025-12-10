@@ -46,6 +46,8 @@ tokio = { workspace = true }
 
 # Tracing/Logging
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+nu-ansi-term = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
