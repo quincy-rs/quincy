@@ -1,7 +1,9 @@
 use iced::widget::container as container_widget;
 use iced::widget::container::Style as ContainerStyle;
 use iced::widget::{row, stack, text};
-use iced::{time, window, Background, Color, Element, Length, Size, Subscription, Task, Theme};
+use iced::{time, window, Background, Element, Length, Size, Subscription, Task, Theme};
+
+use super::styles::{ColorPalette, Layout, Spacing};
 use quincy::{QuincyError, Result};
 use std::collections::BTreeMap;
 use std::fs;
@@ -71,7 +73,7 @@ impl QuincyGui {
             }
         };
 
-        let window_size = Size::new(800.0, 610.0);
+        let window_size = Size::new(Layout::WINDOW_WIDTH, Layout::WINDOW_HEIGHT);
 
         // Create the main window
         let window_settings = window::Settings {
@@ -182,11 +184,15 @@ impl QuincyGui {
         let left_panel = self.build_config_selection_panel();
         let right_panel = self.build_config_details_panel();
 
-        let main_content = container_widget(row![left_panel, right_panel].spacing(10).padding(20))
-            .center_x(Length::Fill)
-            .center_y(Length::Fill)
-            .width(Length::Fill)
-            .height(Length::Fill);
+        let main_content = container_widget(
+            row![left_panel, right_panel]
+                .spacing(Spacing::MD + 2)
+                .padding(Spacing::XXL),
+        )
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .width(Length::Fill)
+        .height(Length::Fill);
 
         // Build stack layers based on which modals are open
         let has_editor = self.editor_state.is_some();
@@ -200,7 +206,7 @@ impl QuincyGui {
             .width(Length::Fill)
             .height(Length::Fill)
             .style(|_theme| ContainerStyle {
-                background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.6))),
+                background: Some(Background::Color(ColorPalette::BACKDROP_OVERLAY)),
                 ..ContainerStyle::default()
             });
 

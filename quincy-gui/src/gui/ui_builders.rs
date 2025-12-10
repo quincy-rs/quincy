@@ -5,11 +5,12 @@ use iced::widget::{
     button as button_widget, container as container_widget, text_input as text_input_widget,
 };
 use iced::widget::{column, opaque, row, scrollable, stack, text, text_editor};
-use iced::{border, Alignment, Background, Border, Color, Element, Font, Length};
+use iced::{border, Alignment, Background, Border, Element, Font, Length};
 
 use super::app::QuincyGui;
 use super::styles::{
-    ColorPalette, CustomButtonStyles, CustomContainerStyles, CustomTextInputStyle,
+    BorderRadius, ColorPalette, CustomButtonStyles, CustomContainerStyles, CustomTextInputStyle,
+    Layout, Spacing, Typography,
 };
 use super::types::{ConfigMsg, ConfigState, ConfirmMsg, EditorMsg, InstanceMsg};
 use super::types::{Message, SelectedConfig};
@@ -38,41 +39,47 @@ impl QuincyGui {
 
         // Title
         let title = text(&confirmation_state.title)
-            .size(18)
+            .size(Typography::TITLE)
             .color(ColorPalette::TEXT_PRIMARY);
 
         // Message
         let message = text(&confirmation_state.message)
-            .size(14)
+            .size(Typography::BODY)
             .color(ColorPalette::TEXT_SECONDARY);
 
         // Action buttons
-        let confirm_button =
-            button_widget(text("Confirm").color(ColorPalette::TEXT_PRIMARY).size(14))
-                .padding([6, 12])
-                .on_press(Message::Confirm(ConfirmMsg::Confirm))
-                .style(CustomButtonStyles::danger_fn());
+        let confirm_button = button_widget(
+            text("Confirm")
+                .color(ColorPalette::TEXT_PRIMARY)
+                .size(Typography::BODY),
+        )
+        .padding([Spacing::SM + 2, Spacing::LG])
+        .on_press(Message::Confirm(ConfirmMsg::Confirm))
+        .style(CustomButtonStyles::danger_fn());
 
-        let cancel_button =
-            button_widget(text("Cancel").color(ColorPalette::TEXT_PRIMARY).size(14))
-                .padding([6, 12])
-                .on_press(Message::Confirm(ConfirmMsg::Cancel))
-                .style(CustomButtonStyles::secondary_fn());
+        let cancel_button = button_widget(
+            text("Cancel")
+                .color(ColorPalette::TEXT_PRIMARY)
+                .size(Typography::BODY),
+        )
+        .padding([Spacing::SM + 2, Spacing::LG])
+        .on_press(Message::Confirm(ConfirmMsg::Cancel))
+        .style(CustomButtonStyles::secondary_fn());
 
         let button_row = row![cancel_button, confirm_button]
-            .spacing(8)
+            .spacing(Spacing::MD)
             .align_y(Alignment::Center);
 
         // Modal content
         let modal_content = column![title, message, button_row]
-            .spacing(16)
+            .spacing(Spacing::XL)
             .width(Length::Shrink)
             .height(Length::Shrink)
             .align_x(Alignment::Center);
 
         // Modal container with styling - smaller than editor modal
         let modal_box = container_widget(modal_content)
-            .padding(16)
+            .padding(Spacing::XL)
             .width(Length::Shrink)
             .height(Length::Shrink)
             .style(|_theme| ContainerStyle {
@@ -80,7 +87,7 @@ impl QuincyGui {
                 border: Border {
                     color: ColorPalette::BORDER_LIGHT,
                     width: 1.0,
-                    radius: border::Radius::from(8.0),
+                    radius: border::Radius::from(BorderRadius::LARGE),
                 },
                 ..ContainerStyle::default()
             });
@@ -91,7 +98,7 @@ impl QuincyGui {
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(|_theme| ContainerStyle {
-                    background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.6))),
+                    background: Some(Background::Color(ColorPalette::BACKDROP_OVERLAY)),
                     ..ContainerStyle::default()
                 }),
         );
@@ -132,47 +139,54 @@ impl QuincyGui {
 
         // Header with title
         let header = text(format!("Editing: {}", editor_state.config_name))
-            .size(16)
+            .size(Typography::HEADING)
             .color(ColorPalette::TEXT_PRIMARY);
 
         // Action buttons - matching main window style
-        let save_button = button_widget(text("Save").color(ColorPalette::TEXT_PRIMARY).size(14))
-            .padding([6, 12])
-            .on_press(Message::Editor(EditorMsg::Save))
-            .style(CustomButtonStyles::primary_fn());
+        let save_button = button_widget(
+            text("Save")
+                .color(ColorPalette::TEXT_PRIMARY)
+                .size(Typography::BODY),
+        )
+        .padding([Spacing::SM + 2, Spacing::LG])
+        .on_press(Message::Editor(EditorMsg::Save))
+        .style(CustomButtonStyles::primary_fn());
 
-        let cancel_button =
-            button_widget(text("Cancel").color(ColorPalette::TEXT_PRIMARY).size(14))
-                .padding([6, 12])
-                .on_press(Message::Editor(EditorMsg::Close))
-                .style(CustomButtonStyles::secondary_fn());
+        let cancel_button = button_widget(
+            text("Cancel")
+                .color(ColorPalette::TEXT_PRIMARY)
+                .size(Typography::BODY),
+        )
+        .padding([Spacing::SM + 2, Spacing::LG])
+        .on_press(Message::Editor(EditorMsg::Close))
+        .style(CustomButtonStyles::secondary_fn());
 
         let button_row = row![cancel_button, save_button]
-            .spacing(8)
+            .spacing(Spacing::MD)
             .align_y(Alignment::Center);
 
         let header_row = row![header, button_row]
-            .spacing(8)
+            .spacing(Spacing::MD)
             .align_y(Alignment::Center)
             .width(Length::Fill);
 
         // Modal content
         let modal_content = column![header_row, editor]
-            .spacing(8)
+            .spacing(Spacing::MD)
             .width(Length::Fill)
             .height(Length::Fill);
 
         // Modal container with styling
         let modal_box = container_widget(modal_content)
-            .padding(8)
-            .width(Length::Fixed(700.0))
-            .height(Length::Fixed(500.0))
+            .padding(Spacing::XXL)
+            .width(Length::Fixed(Layout::EDITOR_WIDTH))
+            .height(Length::Fixed(Layout::EDITOR_HEIGHT))
             .style(|_theme| ContainerStyle {
                 background: Some(Background::Color(ColorPalette::BACKGROUND_PRIMARY)),
                 border: Border {
                     color: ColorPalette::BORDER_LIGHT,
                     width: 1.0,
-                    radius: border::Radius::from(8.0),
+                    radius: border::Radius::from(BorderRadius::LARGE),
                 },
                 ..ContainerStyle::default()
             });
@@ -193,13 +207,13 @@ impl QuincyGui {
 
         container_widget(
             column![config_buttons, new_config_button]
-                .spacing(6)
+                .spacing(Spacing::SM + 2)
                 .height(Length::Fill)
                 .clip(false),
         )
         .width(Length::FillPortion(1))
         .height(Length::Fill)
-        .padding(8)
+        .padding(Spacing::MD)
         .style(|_theme| CustomContainerStyles::panel())
         .into()
     }
@@ -214,7 +228,7 @@ impl QuincyGui {
                     .into_iter()
                     .map(|name| self.build_config_button(name)),
             )
-            .spacing(4),
+            .spacing(Spacing::SM),
         )
         .height(Length::Fill)
         .into()
@@ -230,9 +244,13 @@ impl QuincyGui {
             .values()
             .any(|state| state.has_active_instance());
 
-        let mut btn = button_widget(text(name).color(ColorPalette::TEXT_PRIMARY).size(14))
-            .width(Length::Fill)
-            .padding([6, 8]);
+        let mut btn = button_widget(
+            text(name)
+                .color(ColorPalette::TEXT_PRIMARY)
+                .size(Typography::BODY),
+        )
+        .width(Length::Fill)
+        .padding([Spacing::SM + 2, Spacing::MD]);
 
         // Only allow selection if editor is closed AND no config is active
         if !is_editor_open && !has_active_instance {
@@ -263,12 +281,12 @@ impl QuincyGui {
         let mut btn = button_widget(
             text("+")
                 .color(ColorPalette::TEXT_PRIMARY)
-                .size(20)
+                .size(Typography::ICON_LARGE)
                 .center()
                 .width(Length::Fill),
         )
         .width(Length::Fill)
-        .padding([6, 8]);
+        .padding([Spacing::SM + 2, Spacing::MD]);
 
         if !is_editor_open {
             btn = btn.on_press(Message::Config(ConfigMsg::New));
@@ -293,7 +311,7 @@ impl QuincyGui {
         container_widget(content)
             .width(Length::FillPortion(3))
             .height(Length::Fill)
-            .padding(8)
+            .padding(Spacing::MD)
             .style(|_theme| CustomContainerStyles::panel())
             .into()
     }
@@ -321,7 +339,7 @@ impl QuincyGui {
             container_widget(monitoring_section).height(Length::Shrink),
             container_widget(action_buttons).height(Length::Shrink)
         ]
-        .spacing(8)
+        .spacing(Spacing::MD)
         .height(Length::Fill)
         .into()
     }
@@ -335,8 +353,8 @@ impl QuincyGui {
 
         let mut input =
             text_input_widget("Configuration name", &selected_config.quincy_config.name)
-                .padding([6, 8])
-                .size(14);
+                .padding([Spacing::SM + 2, Spacing::MD])
+                .size(Typography::BODY);
 
         if !is_editor_open {
             input = input
@@ -399,7 +417,7 @@ impl QuincyGui {
                 self.build_owned_config_field("Routes".to_string(), routes_display),
                 self.build_owned_config_field("DNS Servers".to_string(), dns_servers_display),
             ]
-            .spacing(8)
+            .spacing(Spacing::MD)
         } else {
             let error_msg = selected_config
                 .parse_error
@@ -407,24 +425,26 @@ impl QuincyGui {
                 .unwrap_or_else(|| "Unknown error".to_string());
             column![
                 text("Configuration parsing failed")
-                    .size(14)
+                    .size(Typography::BODY)
                     .color(ColorPalette::ERROR),
-                text(error_msg).size(12).color(ColorPalette::TEXT_SECONDARY),
+                text(error_msg)
+                    .size(Typography::CAPTION)
+                    .color(ColorPalette::TEXT_SECONDARY),
             ]
-            .spacing(4)
+            .spacing(Spacing::SM)
         };
 
         container_widget(
             column![
                 text("Configuration")
-                    .size(16)
+                    .size(Typography::HEADING)
                     .color(ColorPalette::TEXT_PRIMARY),
                 config_info
             ]
-            .spacing(12)
+            .spacing(Spacing::LG)
             .height(Length::Shrink),
         )
-        .padding(8)
+        .padding(Spacing::MD)
         .width(Length::Fill)
         .height(Length::Shrink)
         .style(|_theme| ContainerStyle {
@@ -432,7 +452,7 @@ impl QuincyGui {
             border: Border {
                 color: ColorPalette::BORDER_LIGHT,
                 width: 1.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             ..ContainerStyle::default()
         })
@@ -442,10 +462,14 @@ impl QuincyGui {
     /// Builds a single configuration field display with owned strings.
     pub fn build_owned_config_field(&self, label: String, value: String) -> Element<'_, Message> {
         column![
-            text(label).size(12).color(ColorPalette::TEXT_SECONDARY),
-            text(value).size(14).color(ColorPalette::TEXT_PRIMARY)
+            text(label)
+                .size(Typography::CAPTION)
+                .color(ColorPalette::TEXT_SECONDARY),
+            text(value)
+                .size(Typography::BODY)
+                .color(ColorPalette::TEXT_PRIMARY)
         ]
-        .spacing(2)
+        .spacing(Spacing::XS)
         .into()
     }
 
@@ -486,28 +510,31 @@ impl QuincyGui {
 
         let mut content = vec![
             text("Connection Status")
-                .size(16)
+                .size(Typography::HEADING)
                 .color(ColorPalette::TEXT_PRIMARY)
                 .into(),
-            text(status_text).size(14).color(status_color).into(),
+            text(status_text)
+                .size(Typography::BODY)
+                .color(status_color)
+                .into(),
         ];
 
         if let Some(metrics) = metrics {
             content.extend([
-                container_widget(text("").size(4))
-                    .height(Length::Fixed(8.0))
+                container_widget(text(""))
+                    .height(Length::Fixed(Spacing::MD as f32))
                     .into(),
                 text("Connection Details")
-                    .size(14)
+                    .size(Typography::BODY)
                     .color(ColorPalette::TEXT_SECONDARY)
                     .into(),
                 self.build_connection_info(metrics),
             ]);
         }
 
-        container_widget(column(content).spacing(4).height(Length::Shrink))
+        container_widget(column(content).spacing(Spacing::SM).height(Length::Shrink))
             .style(move |_theme| container_style)
-            .padding(8)
+            .padding(Spacing::MD)
             .width(Length::Fill)
             .height(Length::Shrink)
             .into()
@@ -521,13 +548,13 @@ impl QuincyGui {
             ip_info.push(
                 column![
                     text("Client IP")
-                        .size(12)
+                        .size(Typography::CAPTION)
                         .color(ColorPalette::TEXT_SECONDARY),
                     text(client_addr.to_string())
-                        .size(14)
+                        .size(Typography::BODY)
                         .color(ColorPalette::TEXT_PRIMARY),
                 ]
-                .spacing(2)
+                .spacing(Spacing::XS)
                 .into(),
             );
         }
@@ -536,13 +563,13 @@ impl QuincyGui {
             ip_info.push(
                 column![
                     text("Server IP")
-                        .size(12)
+                        .size(Typography::CAPTION)
                         .color(ColorPalette::TEXT_SECONDARY),
                     text(server_addr.to_string())
-                        .size(14)
+                        .size(Typography::BODY)
                         .color(ColorPalette::TEXT_PRIMARY),
                 ]
-                .spacing(2)
+                .spacing(Spacing::XS)
                 .into(),
             );
         }
@@ -550,40 +577,42 @@ impl QuincyGui {
         ip_info.push(
             column![
                 text("Connected for")
-                    .size(12)
+                    .size(Typography::CAPTION)
                     .color(ColorPalette::TEXT_SECONDARY),
                 text(format_duration(metrics.connection_duration))
-                    .size(14)
+                    .size(Typography::BODY)
                     .color(ColorPalette::TEXT_PRIMARY),
             ]
-            .spacing(2)
+            .spacing(Spacing::XS)
             .into(),
         );
 
-        let left_column = column(ip_info).spacing(2);
+        let left_column = column(ip_info).spacing(Spacing::XS);
 
         let right_column = column![
             column![
-                text("Upload").size(12).color(ColorPalette::TEXT_SECONDARY),
+                text("Upload")
+                    .size(Typography::CAPTION)
+                    .color(ColorPalette::TEXT_SECONDARY),
                 text(format_bytes(metrics.bytes_sent))
-                    .size(14)
+                    .size(Typography::BODY)
                     .color(ColorPalette::ACCENT_PRIMARY),
             ]
-            .spacing(2),
+            .spacing(Spacing::XS),
             column![
                 text("Download")
-                    .size(12)
+                    .size(Typography::CAPTION)
                     .color(ColorPalette::TEXT_SECONDARY),
                 text(format_bytes(metrics.bytes_received))
-                    .size(14)
+                    .size(Typography::BODY)
                     .color(ColorPalette::ACCENT_PRIMARY),
             ]
-            .spacing(2)
+            .spacing(Spacing::XS)
         ]
-        .spacing(2);
+        .spacing(Spacing::XS);
 
         row![left_column, right_column]
-            .spacing(24)
+            .spacing(Spacing::XXXL)
             .width(Length::Fill)
             .into()
     }
@@ -600,9 +629,9 @@ impl QuincyGui {
             let mut btn = button_widget(
                 text("Disconnect")
                     .color(ColorPalette::TEXT_PRIMARY)
-                    .size(14),
+                    .size(Typography::BODY),
             )
-            .padding([6, 12]);
+            .padding([Spacing::SM + 2, Spacing::LG]);
 
             if !is_editor_open {
                 btn = btn.on_press(Message::Instance(InstanceMsg::Disconnect));
@@ -615,23 +644,31 @@ impl QuincyGui {
             }
         } else if is_connecting {
             // Connecting -> show Cancel button
-            button_widget(text("Cancel").color(ColorPalette::TEXT_PRIMARY).size(14))
-                .padding([6, 12])
-                .on_press(Message::Instance(InstanceMsg::CancelConnect))
-                .style(CustomButtonStyles::danger_fn())
+            button_widget(
+                text("Cancel")
+                    .color(ColorPalette::TEXT_PRIMARY)
+                    .size(Typography::BODY),
+            )
+            .padding([Spacing::SM + 2, Spacing::LG])
+            .on_press(Message::Instance(InstanceMsg::CancelConnect))
+            .style(CustomButtonStyles::danger_fn())
         } else if matches!(state, ConfigState::Disconnecting) {
             // Disconnecting -> show disabled button
             button_widget(
                 text("Disconnecting...")
                     .color(ColorPalette::TEXT_MUTED)
-                    .size(14),
+                    .size(Typography::BODY),
             )
-            .padding([6, 12])
+            .padding([Spacing::SM + 2, Spacing::LG])
             .style(|_theme, _status| CustomButtonStyles::disabled())
         } else {
             // Idle or Error -> show Connect button
-            let mut btn = button_widget(text("Connect").color(ColorPalette::TEXT_PRIMARY).size(14))
-                .padding([6, 12]);
+            let mut btn = button_widget(
+                text("Connect")
+                    .color(ColorPalette::TEXT_PRIMARY)
+                    .size(Typography::BODY),
+            )
+            .padding([Spacing::SM + 2, Spacing::LG]);
 
             if !is_editor_open {
                 btn = btn.on_press(Message::Instance(InstanceMsg::Connect));
@@ -646,30 +683,46 @@ impl QuincyGui {
 
         // Edit button - disabled when editor is open OR when instance is active
         let edit_button = if is_editor_open || is_active {
-            button_widget(text("Edit").color(ColorPalette::TEXT_MUTED).size(14))
-                .padding([6, 12])
-                .style(|_theme, _status| CustomButtonStyles::disabled())
+            button_widget(
+                text("Edit")
+                    .color(ColorPalette::TEXT_MUTED)
+                    .size(Typography::BODY),
+            )
+            .padding([Spacing::SM + 2, Spacing::LG])
+            .style(|_theme, _status| CustomButtonStyles::disabled())
         } else {
-            button_widget(text("Edit").color(ColorPalette::TEXT_PRIMARY).size(14))
-                .padding([6, 12])
-                .on_press(Message::Editor(EditorMsg::Open))
-                .style(CustomButtonStyles::secondary_fn())
+            button_widget(
+                text("Edit")
+                    .color(ColorPalette::TEXT_PRIMARY)
+                    .size(Typography::BODY),
+            )
+            .padding([Spacing::SM + 2, Spacing::LG])
+            .on_press(Message::Editor(EditorMsg::Open))
+            .style(CustomButtonStyles::secondary_fn())
         };
 
         // Delete button - disabled when active or editor open
         let delete_button = if is_active || is_editor_open {
-            button_widget(text("Delete").color(ColorPalette::TEXT_MUTED).size(14))
-                .padding([6, 12])
-                .style(|_theme, _status| CustomButtonStyles::disabled())
+            button_widget(
+                text("Delete")
+                    .color(ColorPalette::TEXT_MUTED)
+                    .size(Typography::BODY),
+            )
+            .padding([Spacing::SM + 2, Spacing::LG])
+            .style(|_theme, _status| CustomButtonStyles::disabled())
         } else {
-            button_widget(text("Delete").color(ColorPalette::TEXT_PRIMARY).size(14))
-                .padding([6, 12])
-                .on_press(Message::Config(ConfigMsg::Delete))
-                .style(CustomButtonStyles::danger_fn())
+            button_widget(
+                text("Delete")
+                    .color(ColorPalette::TEXT_PRIMARY)
+                    .size(Typography::BODY),
+            )
+            .padding([Spacing::SM + 2, Spacing::LG])
+            .on_press(Message::Config(ConfigMsg::Delete))
+            .style(CustomButtonStyles::danger_fn())
         };
 
         row![connection_button, edit_button, delete_button]
-            .spacing(8)
+            .spacing(Spacing::MD)
             .width(Length::Fill)
             .into()
     }
@@ -678,13 +731,13 @@ impl QuincyGui {
     pub fn build_no_selection_content(&self) -> Element<'_, Message> {
         let mut contents: Vec<Element<'_, Message>> = vec![
             text("No configuration selected")
-                .size(24)
+                .size(Typography::TITLE_LARGE)
                 .color(ColorPalette::TEXT_SECONDARY)
                 .align_x(Horizontal::Center)
                 .width(Length::Fill)
                 .into(),
             text("Select a configuration from the left panel or create a new one")
-                .size(14)
+                .size(Typography::BODY)
                 .color(ColorPalette::TEXT_MUTED)
                 .align_x(Horizontal::Center)
                 .width(Length::Fill)
@@ -694,7 +747,7 @@ impl QuincyGui {
         if !self.load_errors.is_empty() {
             contents.push(
                 text("Configuration load errors")
-                    .size(16)
+                    .size(Typography::HEADING)
                     .color(ColorPalette::ERROR)
                     .align_x(Horizontal::Center)
                     .width(Length::Fill)
@@ -704,7 +757,7 @@ impl QuincyGui {
             for err in &self.load_errors {
                 contents.push(
                     text(err)
-                        .size(13)
+                        .size(Typography::SMALL)
                         .color(ColorPalette::ERROR)
                         .align_x(Horizontal::Center)
                         .width(Length::Fill)
@@ -715,7 +768,7 @@ impl QuincyGui {
 
         container_widget(
             column(contents)
-                .spacing(8)
+                .spacing(Spacing::MD)
                 .width(Length::Fill)
                 .align_x(Horizontal::Center),
         )
