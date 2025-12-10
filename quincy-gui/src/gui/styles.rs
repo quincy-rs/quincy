@@ -3,6 +3,70 @@ use iced::widget::container;
 use iced::widget::text_input::{self, Style as TextInputStyle};
 use iced::{border, Background, Border, Color, Shadow, Theme, Vector};
 
+/// Typography scale for consistent font sizes across the application.
+pub struct Typography;
+
+impl Typography {
+    /// Large title text (empty state headings)
+    pub const TITLE_LARGE: f32 = 24.0;
+    /// Icon/button text that needs emphasis
+    pub const ICON_LARGE: f32 = 20.0;
+    /// Modal and section titles
+    pub const TITLE: f32 = 18.0;
+    /// Section headers
+    pub const HEADING: f32 = 16.0;
+    /// Default body text, buttons, inputs
+    pub const BODY: f32 = 14.0;
+    /// Error details text
+    pub const SMALL: f32 = 13.0;
+    /// Secondary labels, captions
+    pub const CAPTION: f32 = 12.0;
+}
+
+/// Spacing scale for consistent padding and margins.
+pub struct Spacing;
+
+impl Spacing {
+    /// Extra small spacing (2px) - tight label/value pairs
+    pub const XS: u16 = 2;
+    /// Small spacing (4px) - within columns, tight groups
+    pub const SM: u16 = 4;
+    /// Medium spacing (8px) - button groups, modal sections, standard padding
+    pub const MD: u16 = 8;
+    /// Large spacing (12px) - section spacing, button padding horizontal
+    pub const LG: u16 = 12;
+    /// Extra large spacing (16px) - modal content padding
+    pub const XL: u16 = 16;
+    /// 2x extra large spacing (20px) - main layout padding
+    pub const XXL: u16 = 20;
+    /// 3x extra large spacing (24px) - large column gaps
+    pub const XXXL: u16 = 24;
+}
+
+/// Layout dimensions for windows and modals.
+pub struct Layout;
+
+impl Layout {
+    /// Main window width
+    pub const WINDOW_WIDTH: f32 = 800.0;
+    /// Main window height
+    pub const WINDOW_HEIGHT: f32 = 610.0;
+    /// Editor modal width
+    pub const EDITOR_WIDTH: f32 = 700.0;
+    /// Editor modal height
+    pub const EDITOR_HEIGHT: f32 = 500.0;
+}
+
+/// Border radius values for consistent rounded corners.
+pub struct BorderRadius;
+
+impl BorderRadius {
+    /// Standard radius for buttons, inputs
+    pub const STANDARD: f32 = 6.0;
+    /// Larger radius for panels, modals
+    pub const LARGE: f32 = 8.0;
+}
+
 /// Custom color palette for the modern dark theme.
 pub struct ColorPalette;
 
@@ -27,6 +91,14 @@ impl ColorPalette {
     pub const WARNING: Color = Color::from_rgb(0.9, 0.7, 0.2); // #E6B333
     pub const ERROR: Color = Color::from_rgb(0.8, 0.3, 0.3); // #CC4D4D
 
+    /// Danger button color variants (derived from ERROR)
+    pub const DANGER_HOVER: Color = Color::from_rgb(0.9, 0.2, 0.2);
+    pub const DANGER_BORDER: Color = Color::from_rgb(0.7, 0.2, 0.2);
+    pub const DANGER_BORDER_HOVER: Color = Color::from_rgb(0.6, 0.15, 0.15);
+
+    /// Modal backdrop overlay
+    pub const BACKDROP_OVERLAY: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.6);
+
     /// Border and shadow colors
     pub const BORDER_LIGHT: Color = Color::from_rgb(0.35, 0.35, 0.35); // #595959
     pub const BORDER_DARK: Color = Color::from_rgb(0.25, 0.25, 0.25); // #404040
@@ -44,7 +116,7 @@ impl CustomButtonStyles {
             border: Border {
                 color: ColorPalette::ACCENT_SECONDARY,
                 width: 1.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             shadow: Shadow {
                 color: Color::TRANSPARENT,
@@ -62,7 +134,7 @@ impl CustomButtonStyles {
             border: Border {
                 color: ColorPalette::ACCENT_TERTIARY,
                 width: 1.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             shadow: Shadow {
                 color: Color::from_rgba(0.27, 0.58, 0.92, 0.3),
@@ -80,7 +152,7 @@ impl CustomButtonStyles {
             border: Border {
                 color: ColorPalette::ACCENT_TERTIARY,
                 width: 1.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             shadow: Shadow {
                 color: Color::TRANSPARENT,
@@ -98,7 +170,7 @@ impl CustomButtonStyles {
             border: Border {
                 color: ColorPalette::BORDER_LIGHT,
                 width: 1.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             shadow: Shadow {
                 color: Color::TRANSPARENT,
@@ -116,7 +188,7 @@ impl CustomButtonStyles {
             border: Border {
                 color: ColorPalette::ACCENT_SECONDARY,
                 width: 1.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             shadow: Shadow {
                 color: Color::from_rgba(0.27, 0.58, 0.92, 0.2),
@@ -134,7 +206,7 @@ impl CustomButtonStyles {
             border: Border {
                 color: ColorPalette::ACCENT_TERTIARY,
                 width: 1.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             shadow: Shadow {
                 color: Color::TRANSPARENT,
@@ -152,7 +224,7 @@ impl CustomButtonStyles {
             border: Border {
                 color: ColorPalette::ACCENT_SECONDARY,
                 width: 2.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             shadow: Shadow {
                 color: Color::from_rgba(0.27, 0.58, 0.92, 0.4),
@@ -168,9 +240,9 @@ impl CustomButtonStyles {
             background: Some(Background::Color(ColorPalette::ERROR)),
             text_color: ColorPalette::TEXT_PRIMARY,
             border: Border {
-                color: Color::from_rgb(0.7, 0.2, 0.2),
+                color: ColorPalette::DANGER_BORDER,
                 width: 1.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             shadow: Shadow {
                 color: Color::TRANSPARENT,
@@ -183,12 +255,12 @@ impl CustomButtonStyles {
     /// Danger button hover state
     pub fn danger_hovered() -> button::Style {
         button::Style {
-            background: Some(Background::Color(Color::from_rgb(0.9, 0.2, 0.2))),
+            background: Some(Background::Color(ColorPalette::DANGER_HOVER)),
             text_color: ColorPalette::TEXT_PRIMARY,
             border: Border {
-                color: Color::from_rgb(0.6, 0.15, 0.15),
+                color: ColorPalette::DANGER_BORDER_HOVER,
                 width: 1.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             shadow: Shadow {
                 color: Color::from_rgba(0.8, 0.3, 0.3, 0.3),
@@ -206,7 +278,7 @@ impl CustomButtonStyles {
             border: Border {
                 color: ColorPalette::BORDER_DARK,
                 width: 1.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             shadow: Shadow {
                 color: Color::TRANSPARENT,
@@ -228,7 +300,7 @@ impl CustomContainerStyles {
             border: Border {
                 color: ColorPalette::BORDER_LIGHT,
                 width: 1.0,
-                radius: border::Radius::from(8.0),
+                radius: border::Radius::from(BorderRadius::LARGE),
             },
             shadow: Shadow {
                 color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
@@ -246,7 +318,7 @@ impl CustomContainerStyles {
             border: Border {
                 color: ColorPalette::BORDER_LIGHT,
                 width: 1.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             shadow: Shadow {
                 color: Color::from_rgba(0.0, 0.0, 0.0, 0.2),
@@ -264,7 +336,7 @@ impl CustomContainerStyles {
             border: Border {
                 color: ColorPalette::SUCCESS,
                 width: 2.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             shadow: Shadow {
                 color: Color::from_rgba(0.2, 0.8, 0.4, 0.2),
@@ -282,7 +354,7 @@ impl CustomContainerStyles {
             border: Border {
                 color: ColorPalette::ERROR,
                 width: 2.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             shadow: Shadow {
                 color: Color::from_rgba(0.8, 0.3, 0.3, 0.2),
@@ -305,7 +377,7 @@ impl CustomTextInputStyle {
             border: Border {
                 color: ColorPalette::BORDER_LIGHT,
                 width: 1.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             icon: ColorPalette::TEXT_SECONDARY,
             placeholder: ColorPalette::TEXT_MUTED,
@@ -321,7 +393,7 @@ impl CustomTextInputStyle {
             border: Border {
                 color: ColorPalette::ACCENT_PRIMARY,
                 width: 2.0,
-                radius: border::Radius::from(6.0),
+                radius: border::Radius::from(BorderRadius::STANDARD),
             },
             icon: ColorPalette::ACCENT_PRIMARY,
             placeholder: ColorPalette::TEXT_MUTED,
