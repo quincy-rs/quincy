@@ -12,7 +12,10 @@ use std::result::Result as StdResult;
 use std::time::Duration;
 use tracing::error;
 
-use super::types::{ConfigMsg, ConfigState, EditorMsg, EditorState, InstanceMsg, SystemMsg};
+use super::types::{
+    ConfigMsg, ConfigState, ConfirmMsg, ConfirmationState, EditorMsg, EditorState, InstanceMsg,
+    SystemMsg,
+};
 use super::types::{Message, QuincyConfig, SelectedConfig};
 use crate::validation;
 
@@ -34,6 +37,8 @@ pub struct QuincyGui {
     pub(crate) selected_config: Option<SelectedConfig>,
     /// Editor modal state (Some when editor is open, None when closed)
     pub(crate) editor_state: Option<EditorState>,
+    /// Confirmation modal state (Some when confirmation is open, None when closed)
+    pub(crate) confirmation_state: Option<ConfirmationState>,
     /// Main window ID
     pub(crate) main_window_id: Option<window::Id>,
 }
@@ -91,6 +96,7 @@ impl QuincyGui {
                 config_states,
                 selected_config: None,
                 editor_state: None,
+                confirmation_state: None,
                 main_window_id: Some(main_window_id),
             },
             // Only open the main window; periodic updates are driven by Subscription
@@ -156,6 +162,11 @@ impl QuincyGui {
                 SystemMsg::WindowClosed(window_id) => self.handle_window_closed(window_id),
                 SystemMsg::Noop => Task::none(),
             },
+            Message::Confirm(msg) => match msg {
+                ConfirmMsg::Show(state) => self.handle_show_confirmation(state),
+                ConfirmMsg::Confirm => self.handle_confirm(),
+                ConfirmMsg::Cancel => self.handle_cancel_confirmation(),
+            },
         }
     }
 
@@ -177,24 +188,42 @@ impl QuincyGui {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        // If editor modal is open, use stack to overlay the editor
-        if self.editor_state.is_some() {
-            let backdrop = container_widget(text(""))
+        // Build stack layers based on which modals are open
+        let has_editor = self.editor_state.is_some();
+        let has_confirmation = self.confirmation_state.is_some();
+
+        if !has_editor && !has_confirmation {
+            return main_content.into();
+        }
+
+        let backdrop = container_widget(text(""))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(|_theme| ContainerStyle {
+                background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.6))),
+                ..ContainerStyle::default()
+            });
+
+        // Editor modal with optional confirmation on top
+        if has_editor && has_confirmation {
+            let editor_modal = self.build_editor_modal();
+            let confirmation_modal = self.build_confirmation_modal();
+            stack![main_content, backdrop, editor_modal, confirmation_modal]
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(|_theme| ContainerStyle {
-                    background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.6))),
-                    ..ContainerStyle::default()
-                });
-
+                .into()
+        } else if has_editor {
             let editor_modal = self.build_editor_modal();
-
             stack![main_content, backdrop, editor_modal]
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
         } else {
-            main_content.into()
+            let confirmation_modal = self.build_confirmation_modal();
+            stack![main_content, backdrop, confirmation_modal]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
         }
     }
 

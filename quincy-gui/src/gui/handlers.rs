@@ -10,7 +10,8 @@ use tracing::{debug, error, info, warn};
 
 use super::app::QuincyGui;
 use super::types::{
-    ConfigState, EditorState, InstanceMsg, Message, QuincyConfig, QuincyInstance, SelectedConfig,
+    ConfigState, ConfirmAction, ConfirmMsg, ConfirmationState, EditorState, InstanceMsg, Message,
+    QuincyConfig, QuincyInstance, SelectedConfig,
 };
 use crate::ipc::{ConnectionMetrics, ConnectionStatus, IpcMessage};
 use crate::validation;
@@ -187,12 +188,13 @@ impl QuincyGui {
     }
 
     /// Handles deletion of the current configuration.
+    /// Shows a confirmation modal instead of deleting immediately.
     pub fn handle_config_delete(&mut self) -> Task<Message> {
-        if self.editor_state.is_some() {
+        if self.editor_state.is_some() || self.confirmation_state.is_some() {
             return Task::none();
         }
 
-        let selected_config = match self.selected_config.take() {
+        let selected_config = match self.selected_config.as_ref() {
             Some(config) => config,
             None => {
                 error!("No configuration selected");
@@ -200,22 +202,15 @@ impl QuincyGui {
             }
         };
 
-        match fs::remove_file(&selected_config.quincy_config.path) {
-            Ok(_) => {
-                info!(
-                    "Config file deleted: {}",
-                    selected_config.quincy_config.path.display()
-                );
-            }
-            Err(e) => {
-                error!("Failed to delete config file: {}", e);
-            }
-        }
+        let config_name = selected_config.quincy_config.name.clone();
 
-        let name = &selected_config.quincy_config.name;
-        self.configs.remove(name);
-        self.config_states.remove(name);
-        Task::none()
+        let confirmation_state = ConfirmationState {
+            title: "Delete Configuration".to_string(),
+            message: format!("Are you sure you want to delete '{}'?", config_name),
+            confirm_action: ConfirmAction::DeleteConfig(config_name),
+        };
+
+        Task::done(Message::Confirm(ConfirmMsg::Show(confirmation_state)))
     }
 
     /// Handles creation of a new configuration.
@@ -323,9 +318,39 @@ impl QuincyGui {
 
     /// Closes the editor modal without saving.
     pub fn handle_close_editor(&mut self) -> Task<Message> {
+        let editor_state = match self.editor_state.as_ref() {
+            Some(state) => state,
+            None => return Task::none(),
+        };
+
+        // Get the original content from selected_config
+        let original_content = match self.selected_config.as_ref() {
+            Some(config) => config.editable_content.text(),
+            None => {
+                error!("No configuration selected");
+                self.editor_state = None;
+                return Task::none();
+            }
+        };
+
+        let current_content = editor_state.content.text();
+
+        // Check if there are unsaved changes
+        if original_content != current_content {
+            // Show confirmation dialog
+            let confirmation_state = ConfirmationState {
+                title: "Unsaved Changes".to_string(),
+                message: "You have unsaved changes. Are you sure you want to discard them?"
+                    .to_string(),
+                confirm_action: ConfirmAction::DiscardEditorChanges,
+            };
+            return Task::done(Message::Confirm(ConfirmMsg::Show(confirmation_state)));
+        }
+
+        // No changes, close immediately
         if let Some(editor_state) = self.editor_state.take() {
             info!(
-                "Editor closed without saving for config: {}",
+                "Editor closed without changes for config: {}",
                 editor_state.config_name
             );
         }
@@ -788,6 +813,86 @@ impl QuincyGui {
         }
 
         Task::batch(shutdown_tasks).chain(Task::future(exit()))
+    }
+
+    // ========== Confirmation Modal Handlers ==========
+
+    /// Shows a confirmation modal with the given state.
+    pub fn handle_show_confirmation(&mut self, state: ConfirmationState) -> Task<Message> {
+        info!(
+            "Showing confirmation modal: {} - {}",
+            state.title, state.message
+        );
+        self.confirmation_state = Some(state);
+        Task::none()
+    }
+
+    /// Handles confirmation action (user clicked Confirm).
+    pub fn handle_confirm(&mut self) -> Task<Message> {
+        let confirmation_state = match self.confirmation_state.take() {
+            Some(state) => state,
+            None => {
+                error!("No confirmation state to confirm");
+                return Task::none();
+            }
+        };
+
+        match confirmation_state.confirm_action {
+            ConfirmAction::DeleteConfig(config_name) => self.perform_delete_config(config_name),
+            ConfirmAction::DiscardEditorChanges => {
+                // Close the editor and discard changes
+                if let Some(editor_state) = self.editor_state.take() {
+                    info!(
+                        "Editor closed, changes discarded for config: {}",
+                        editor_state.config_name
+                    );
+                }
+                Task::none()
+            }
+        }
+    }
+
+    /// Handles cancel action (user clicked Cancel).
+    pub fn handle_cancel_confirmation(&mut self) -> Task<Message> {
+        if let Some(confirmation_state) = self.confirmation_state.take() {
+            info!(
+                "Confirmation cancelled: {} - {}",
+                confirmation_state.title, confirmation_state.message
+            );
+        }
+        Task::none()
+    }
+
+    /// Performs the actual deletion of a configuration.
+    fn perform_delete_config(&mut self, config_name: String) -> Task<Message> {
+        let config = match self.configs.get(&config_name) {
+            Some(config) => config.clone(),
+            None => {
+                error!("Configuration not found: {}", config_name);
+                return Task::none();
+            }
+        };
+
+        match fs::remove_file(&config.path) {
+            Ok(_) => {
+                info!("Config file deleted: {}", config.path.display());
+            }
+            Err(e) => {
+                error!("Failed to delete config file: {}", e);
+            }
+        }
+
+        self.configs.remove(&config_name);
+        self.config_states.remove(&config_name);
+
+        // If this was the selected config, clear the selection
+        if let Some(selected) = &self.selected_config {
+            if selected.quincy_config.name == config_name {
+                self.selected_config = None;
+            }
+        }
+
+        Task::none()
     }
 }
 

@@ -4,14 +4,14 @@ use iced::widget::container::Style as ContainerStyle;
 use iced::widget::{
     button as button_widget, container as container_widget, text_input as text_input_widget,
 };
-use iced::widget::{column, row, scrollable, text, text_editor};
-use iced::{border, Alignment, Background, Border, Element, Font, Length};
+use iced::widget::{column, opaque, row, scrollable, stack, text, text_editor};
+use iced::{border, Alignment, Background, Border, Color, Element, Font, Length};
 
 use super::app::QuincyGui;
 use super::styles::{
     ColorPalette, CustomButtonStyles, CustomContainerStyles, CustomTextInputStyle,
 };
-use super::types::{ConfigMsg, ConfigState, EditorMsg, InstanceMsg};
+use super::types::{ConfigMsg, ConfigState, ConfirmMsg, EditorMsg, InstanceMsg};
 use super::types::{Message, SelectedConfig};
 use super::utils::{format_bytes, format_duration};
 use crate::ipc::ConnectionMetrics;
@@ -20,6 +20,93 @@ impl QuincyGui {
     /// Returns true if the editor modal is currently open.
     fn is_editor_open(&self) -> bool {
         self.editor_state.is_some()
+    }
+
+    /// Builds the confirmation modal overlay.
+    ///
+    /// This creates a centered modal dialog with a title, message, and Confirm/Cancel buttons.
+    pub fn build_confirmation_modal(&self) -> Element<'_, Message> {
+        let confirmation_state = match self.confirmation_state.as_ref() {
+            Some(state) => state,
+            None => {
+                return container_widget(text(""))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into();
+            }
+        };
+
+        // Title
+        let title = text(&confirmation_state.title)
+            .size(18)
+            .color(ColorPalette::TEXT_PRIMARY);
+
+        // Message
+        let message = text(&confirmation_state.message)
+            .size(14)
+            .color(ColorPalette::TEXT_SECONDARY);
+
+        // Action buttons
+        let confirm_button =
+            button_widget(text("Confirm").color(ColorPalette::TEXT_PRIMARY).size(14))
+                .padding([6, 12])
+                .on_press(Message::Confirm(ConfirmMsg::Confirm))
+                .style(CustomButtonStyles::danger_fn());
+
+        let cancel_button =
+            button_widget(text("Cancel").color(ColorPalette::TEXT_PRIMARY).size(14))
+                .padding([6, 12])
+                .on_press(Message::Confirm(ConfirmMsg::Cancel))
+                .style(CustomButtonStyles::secondary_fn());
+
+        let button_row = row![cancel_button, confirm_button]
+            .spacing(8)
+            .align_y(Alignment::Center);
+
+        // Modal content
+        let modal_content = column![title, message, button_row]
+            .spacing(16)
+            .width(Length::Shrink)
+            .height(Length::Shrink)
+            .align_x(Alignment::Center);
+
+        // Modal container with styling - smaller than editor modal
+        let modal_box = container_widget(modal_content)
+            .padding(16)
+            .width(Length::Shrink)
+            .height(Length::Shrink)
+            .style(|_theme| ContainerStyle {
+                background: Some(Background::Color(ColorPalette::BACKGROUND_PRIMARY)),
+                border: Border {
+                    color: ColorPalette::BORDER_LIGHT,
+                    width: 1.0,
+                    radius: border::Radius::from(8.0),
+                },
+                ..ContainerStyle::default()
+            });
+
+        // Backdrop to block interaction with content behind
+        let backdrop = opaque(
+            container_widget(text(""))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_theme| ContainerStyle {
+                    background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.6))),
+                    ..ContainerStyle::default()
+                }),
+        );
+
+        // Center the modal
+        let centered_modal = container_widget(modal_box)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill);
+
+        stack![backdrop, centered_modal]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 
     /// Builds the editor modal overlay.

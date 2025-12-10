@@ -160,6 +160,20 @@ pub struct EditorState {
     pub content: text_editor::Content,
 }
 
+/// State for confirmation dialogs
+#[derive(Debug, Clone)]
+pub struct ConfirmationState {
+    pub title: String,
+    pub message: String,
+    pub confirm_action: ConfirmAction,
+}
+
+#[derive(Debug, Clone)]
+pub enum ConfirmAction {
+    DeleteConfig(String), // config name to delete
+    DiscardEditorChanges,
+}
+
 /// Domain-specific message groups to improve clarity.
 #[derive(Debug, Clone)]
 pub enum ConfigMsg {
@@ -168,6 +182,13 @@ pub enum ConfigMsg {
     NameSaved,
     Delete,
     New,
+}
+
+#[derive(Debug, Clone)]
+pub enum ConfirmMsg {
+    Show(ConfirmationState),
+    Confirm,
+    Cancel,
 }
 
 #[derive(Debug, Clone)]
@@ -218,4 +239,5 @@ pub enum Message {
     Editor(EditorMsg),
     Instance(InstanceMsg),
     System(SystemMsg),
+    Confirm(ConfirmMsg),
 }
