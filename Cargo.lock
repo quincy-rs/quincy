@@ -3024,7 +3024,7 @@ dependencies = [
 
 [[package]]
 name = "quincy"
-version = "1.0.0-beta.2"
+version = "1.0.0-beta.3"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3050,7 +3050,7 @@ dependencies = [
 
 [[package]]
 name = "quincy-client"
-version = "1.0.0-beta.2"
+version = "1.0.0-beta.3"
 dependencies = [
  "async-trait",
  "clap",
@@ -3066,7 +3066,7 @@ dependencies = [
 
 [[package]]
 name = "quincy-gui"
-version = "1.0.0-beta.2"
+version = "1.0.0-beta.3"
 dependencies = [
  "clap",
  "dashmap",
@@ -3086,7 +3086,7 @@ dependencies = [
 
 [[package]]
 name = "quincy-server"
-version = "1.0.0-beta.2"
+version = "1.0.0-beta.3"
 dependencies = [
  "argon2",
  "async-trait",
@@ -3107,7 +3107,7 @@ dependencies = [
 
 [[package]]
 name = "quincy-tests"
-version = "1.0.0-beta.2"
+version = "1.0.0-beta.3"
 dependencies = [
  "bytes",
  "etherparse",
