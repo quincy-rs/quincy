@@ -193,7 +193,7 @@ impl QuincyGui {
             new_config_name = format!("client_config_{config_idx}");
         }
 
-        let template_content = include_str!("../../../resources/common/client.toml");
+        let template_content = include_str!("../../resources/client.toml");
         let config_path = self.config_dir.join(format!("{}.toml", new_config_name));
 
         // Save to disk

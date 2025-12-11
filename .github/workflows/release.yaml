@@ -24,12 +24,10 @@ jobs:
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
         name: Authenticate to crates.io (trusted publishing)
-      - name: Publish crates with cargo
-        run: |
-          cargo publish --locked -p quincy
-          cargo publish --locked -p quincy-client
-          cargo publish --locked -p quincy-server
-          cargo publish --locked -p quincy-gui
+      - name: Verify all crates can be published (dry-run)
+        run: cargo publish --locked --workspace --exclude quincy-tests --dry-run
+      - name: Publish crates to crates.io
+        run: cargo publish --locked --workspace --exclude quincy-tests
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
   
