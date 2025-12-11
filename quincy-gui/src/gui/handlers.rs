@@ -1,7 +1,6 @@
 use iced::widget::text_editor;
 use iced::Task;
 use quincy::config::{ClientConfig, FromPath};
-use quincy::Result;
 use std::fs;
 use std::path::Path;
 use std::process;
@@ -11,8 +10,8 @@ use tracing::{debug, error, info, warn};
 use super::app::QuincyGui;
 use super::error::GuiError;
 use super::types::{
-    ConfigState, ConfirmAction, ConfirmMsg, ConfirmationState, EditorState, InstanceMsg, Message,
-    QuincyConfig, QuincyInstance, SelectedConfig, SystemMsg,
+    ConfigEntry, ConfigState, ConfirmAction, ConfirmMsg, ConfirmationState, EditorState,
+    InstanceMsg, Message, QuincyConfig, QuincyInstance, SystemMsg,
 };
 use crate::ipc::{ConnectionMetrics, ConnectionStatus, IpcMessage};
 use crate::validation;
@@ -44,57 +43,46 @@ impl QuincyGui {
         // Don't allow selection changes while any config is in an active state
         // (Connecting, Connected, or Disconnecting) to avoid confusion about which config is running
         if self
-            .config_states
+            .configs
             .values()
-            .any(|state| state.has_active_instance())
+            .any(|entry| entry.state.has_active_instance())
         {
             return Task::none();
         }
 
-        let Some(config) = self.configs.get(&name) else {
+        let Some(entry) = self.configs.get_mut(&name) else {
             error!("Configuration not found: {name}");
             return Task::none();
         };
 
-        match self.load_config_content(config) {
-            Ok(selected_config) => {
-                self.selected_config = Some(selected_config);
-                info!("Config selected: {name}");
-            }
-            Err(e) => {
-                error!("Failed to read config file: {}", e);
-            }
+        // Parse the config if not already parsed
+        if entry.parsed.is_none() && entry.parse_error.is_none() {
+            let (parsed, parse_error) = try_parse_config(&entry.config.path, &entry.config.name);
+            entry.parsed = parsed;
+            entry.parse_error = parse_error;
         }
+
+        self.selected_config = Some(name.clone());
+        info!("Config selected: {name}");
         Task::none()
-    }
-
-    /// Loads the content of a configuration file.
-    pub fn load_config_content(&self, config: &QuincyConfig) -> Result<SelectedConfig> {
-        let config_content = fs::read_to_string(&config.path)?;
-        let editable_content = text_editor::Content::with_text(&config_content);
-
-        let (parsed_config, parse_error) = try_parse_config(&config.path, &config.name);
-
-        Ok(SelectedConfig {
-            quincy_config: config.clone(),
-            editable_content,
-            parsed_config,
-            parse_error,
-        })
     }
 
     // ========== Configuration Editing Handlers ==========
 
     /// Handles changes to the configuration name.
+    /// Note: This updates the name in-place; the actual rename happens on NameSaved.
     pub fn handle_config_name_changed(&mut self, new_name: String) -> Task<Message> {
         if self.editor_state.is_some() {
             return Task::none();
         }
 
-        if let Some(selected_config) = self.selected_config.as_mut() {
-            selected_config.quincy_config.name = new_name;
-        } else {
+        let Some(ref selected_key) = self.selected_config else {
             error!("No configuration selected");
+            return Task::none();
+        };
+
+        if let Some(entry) = self.configs.get_mut(selected_key) {
+            entry.config.name = new_name;
         }
         Task::none()
     }
@@ -105,62 +93,55 @@ impl QuincyGui {
             return Task::none();
         }
 
-        let old_config_name = {
-            let Some(ref selected_config) = self.selected_config else {
-                error!("No configuration selected");
-                return Task::none();
-            };
-
-            // Extract old config name from file path
-            let file_name = match selected_config.quincy_config.path.file_name() {
-                Some(name) => name.to_string_lossy().to_string(),
-                None => return Task::none(),
-            };
-
-            file_name
-                .to_lowercase()
-                .strip_suffix(".toml")
-                .unwrap_or(&file_name)
-                .to_string()
-        };
-
-        let Some(mut selected_config) = self.selected_config.take() else {
+        let Some(old_key) = self.selected_config.take() else {
+            error!("No configuration selected");
             return Task::none();
         };
 
-        // Validate the new name
-        if let Err(e) = validation::validate_config_name(&selected_config.quincy_config.name) {
-            self.config_states.insert(
-                selected_config.quincy_config.name.clone(),
-                ConfigState::Error { error: e.into() },
-            );
-            self.selected_config = Some(selected_config);
+        let Some(mut entry) = self.configs.remove(&old_key) else {
+            error!("Configuration not found: {}", old_key);
+            return Task::none();
+        };
+
+        let new_name = entry.config.name.clone();
+
+        // If name hasn't changed, just put it back
+        if new_name == old_key {
+            self.configs.insert(old_key.clone(), entry);
+            self.selected_config = Some(old_key);
             return Task::none();
         }
 
-        self.rename_config_file(&mut selected_config, &old_config_name);
-        self.selected_config = Some(selected_config);
-        Task::none()
-    }
+        // Validate the new name
+        if let Err(e) = validation::validate_config_name(&new_name) {
+            entry.state = ConfigState::Error { error: e.into() };
+            self.configs.insert(old_key.clone(), entry);
+            self.selected_config = Some(old_key);
+            return Task::none();
+        }
 
-    /// Renames a configuration file and updates internal state.
-    pub fn rename_config_file(
-        &mut self,
-        selected_config: &mut SelectedConfig,
-        old_config_name: &str,
-    ) {
-        self.configs.remove(old_config_name);
-        let old_state = self
-            .config_states
-            .remove(old_config_name)
-            .unwrap_or_default();
+        // Perform the file rename
+        let old_path = entry.config.path.clone();
+        let new_path = self.config_dir.join(format!("{}.toml", new_name));
 
-        let old_path = selected_config.quincy_config.path.clone();
-        let new_path = self
-            .config_dir
-            .join(format!("{}.toml", selected_config.quincy_config.name));
-
-        self.save_config_to_new_path(selected_config, &new_path);
+        // Read current content and write to new path
+        match fs::read_to_string(&old_path) {
+            Ok(content) => {
+                if let Err(e) = fs::write(&new_path, &content) {
+                    error!("Failed to save config file: {}", e);
+                    self.configs.insert(old_key.clone(), entry);
+                    self.selected_config = Some(old_key);
+                    return Task::none();
+                }
+                info!("Config file saved: {}", new_path.display());
+            }
+            Err(e) => {
+                error!("Failed to read config file: {}", e);
+                self.configs.insert(old_key.clone(), entry);
+                self.selected_config = Some(old_key);
+                return Task::none();
+            }
+        }
 
         // Remove old config file
         match fs::remove_file(&old_path) {
@@ -168,27 +149,13 @@ impl QuincyGui {
             Err(e) => error!("Failed to remove old config file: {}", e),
         }
 
-        let new_name = selected_config.quincy_config.name.clone();
-        self.configs
-            .insert(new_name.clone(), selected_config.quincy_config.clone());
-        self.config_states.insert(new_name, old_state);
-    }
+        // Update the entry with new path
+        entry.config.path = new_path;
 
-    /// Saves configuration content to a new file path.
-    pub fn save_config_to_new_path(
-        &mut self,
-        selected_config: &mut SelectedConfig,
-        new_path: &Path,
-    ) {
-        match fs::write(new_path, selected_config.editable_content.text()) {
-            Ok(_) => {
-                info!("Config file saved: {}", new_path.display());
-                selected_config.quincy_config.path = new_path.to_path_buf();
-            }
-            Err(e) => {
-                error!("Failed to save config file: {}", e);
-            }
-        }
+        // Insert under new key
+        self.configs.insert(new_name.clone(), entry);
+        self.selected_config = Some(new_name);
+        Task::none()
     }
 
     /// Handles deletion of the current configuration.
@@ -198,20 +165,15 @@ impl QuincyGui {
             return Task::none();
         }
 
-        let selected_config = match self.selected_config.as_ref() {
-            Some(config) => config,
-            None => {
-                error!("No configuration selected");
-                return Task::none();
-            }
+        let Some(ref config_name) = self.selected_config else {
+            error!("No configuration selected");
+            return Task::none();
         };
-
-        let config_name = selected_config.quincy_config.name.clone();
 
         let confirmation_state = ConfirmationState {
             title: "Delete Configuration".to_string(),
             message: format!("Are you sure you want to delete '{}'?", config_name),
-            confirm_action: ConfirmAction::DeleteConfig(config_name),
+            confirm_action: ConfirmAction::DeleteConfig(config_name.clone()),
         };
 
         Task::done(Message::Confirm(ConfirmMsg::Show(confirmation_state)))
@@ -231,42 +193,35 @@ impl QuincyGui {
             new_config_name = format!("client_config_{config_idx}");
         }
 
-        // Create new config
-        let new_config = QuincyConfig {
-            name: new_config_name.clone(),
-            path: self.config_dir.join(format!("{}.toml", new_config_name)),
-        };
-
-        // Create selected config with template
-        let selected_config = SelectedConfig {
-            quincy_config: new_config.clone(),
-            editable_content: text_editor::Content::with_text(include_str!(
-                "../../../resources/common/client.toml"
-            )),
-            parsed_config: None,
-            parse_error: None,
-        };
+        let template_content = include_str!("../../../resources/common/client.toml");
+        let config_path = self.config_dir.join(format!("{}.toml", new_config_name));
 
         // Save to disk
-        match fs::write(
-            &selected_config.quincy_config.path,
-            selected_config.editable_content.text(),
-        ) {
+        match fs::write(&config_path, template_content) {
             Ok(_) => {
-                info!(
-                    "Config file saved: {}",
-                    selected_config.quincy_config.path.display()
-                );
+                info!("Config file saved: {}", config_path.display());
             }
             Err(e) => {
                 error!("Failed to save config file: {}", e);
+                return Task::none();
             }
         }
 
-        self.selected_config = Some(selected_config);
-        self.configs.insert(new_config_name.clone(), new_config);
-        self.config_states
-            .insert(new_config_name, ConfigState::default());
+        // Create new config entry
+        let config = QuincyConfig {
+            name: new_config_name.clone(),
+            path: config_path,
+        };
+
+        let entry = ConfigEntry {
+            config,
+            state: ConfigState::default(),
+            parsed: None,
+            parse_error: None,
+        };
+
+        self.configs.insert(new_config_name.clone(), entry);
+        self.selected_config = Some(new_config_name);
 
         Task::none()
     }
@@ -274,17 +229,26 @@ impl QuincyGui {
     // ========== Editor Modal Handlers ==========
 
     /// Opens the editor modal with the current configuration content.
+    /// Reads the file fresh from disk to create the editor buffer.
     pub fn handle_open_editor(&mut self) -> Task<Message> {
-        let selected_config = match self.selected_config.as_ref() {
-            Some(config) => config,
-            None => {
-                error!("No configuration selected");
+        let Some(ref config_name) = self.selected_config else {
+            error!("No configuration selected");
+            return Task::none();
+        };
+
+        let Some(entry) = self.configs.get(config_name) else {
+            error!("Configuration not found: {}", config_name);
+            return Task::none();
+        };
+
+        // Read file content fresh from disk
+        let config_content = match fs::read_to_string(&entry.config.path) {
+            Ok(content) => content,
+            Err(e) => {
+                error!("Failed to read config file: {}", e);
                 return Task::none();
             }
         };
-
-        let config_name = selected_config.quincy_config.name.clone();
-        let config_content = selected_config.editable_content.text();
 
         self.editor_state = Some(EditorState {
             config_name: config_name.clone(),
@@ -311,11 +275,23 @@ impl QuincyGui {
             None => return Task::none(),
         };
 
-        // Get the original content from selected_config
-        let original_content = match self.selected_config.as_ref() {
-            Some(config) => config.editable_content.text(),
-            None => {
-                error!("No configuration selected");
+        let Some(ref config_name) = self.selected_config else {
+            error!("No configuration selected");
+            self.editor_state = None;
+            return Task::none();
+        };
+
+        let Some(entry) = self.configs.get(config_name) else {
+            error!("Configuration not found: {}", config_name);
+            self.editor_state = None;
+            return Task::none();
+        };
+
+        // Read original content from disk to compare
+        let original_content = match fs::read_to_string(&entry.config.path) {
+            Ok(content) => content,
+            Err(e) => {
+                error!("Failed to read config file: {}", e);
                 self.editor_state = None;
                 return Task::none();
             }
@@ -355,40 +331,28 @@ impl QuincyGui {
             }
         };
 
-        let selected_config = match self.selected_config.as_mut() {
-            Some(config) => config,
-            None => {
-                error!("No configuration selected");
-                return Task::none();
-            }
+        let Some(ref config_name) = self.selected_config else {
+            error!("No configuration selected");
+            return Task::none();
+        };
+
+        let Some(entry) = self.configs.get_mut(config_name) else {
+            error!("Configuration not found: {}", config_name);
+            return Task::none();
         };
 
         let config_content = editor_state.content.text();
 
-        // Update the selected config's editable content
-        selected_config.editable_content = text_editor::Content::with_text(&config_content);
-
         // Save to disk
-        match fs::write(&selected_config.quincy_config.path, &config_content) {
+        match fs::write(&entry.config.path, &config_content) {
             Ok(_) => {
-                info!(
-                    "Config file saved: {}",
-                    selected_config.quincy_config.path.display()
-                );
+                info!("Config file saved: {}", entry.config.path.display());
 
                 // Re-parse the configuration
-                let (parsed_config, parse_error) = try_parse_config(
-                    &selected_config.quincy_config.path,
-                    &selected_config.quincy_config.name,
-                );
-                selected_config.parsed_config = parsed_config;
-                selected_config.parse_error = parse_error;
-
-                // Update configs map
-                self.configs.insert(
-                    selected_config.quincy_config.name.clone(),
-                    selected_config.quincy_config.clone(),
-                );
+                let (parsed, parse_error) =
+                    try_parse_config(&entry.config.path, &entry.config.name);
+                entry.parsed = parsed;
+                entry.parse_error = parse_error;
             }
             Err(e) => {
                 error!("Failed to save config file: {}", e);
@@ -407,44 +371,37 @@ impl QuincyGui {
             return Task::none();
         }
 
-        let (config_name, config_path) = match self.selected_config.as_ref() {
-            Some(config) => (
-                config.quincy_config.name.clone(),
-                config.quincy_config.path.clone(),
-            ),
-            None => {
-                error!("No configuration selected");
-                return Task::none();
-            }
+        let Some(ref config_name) = self.selected_config else {
+            error!("No configuration selected");
+            return Task::none();
         };
 
-        let current_state = self
-            .config_states
-            .get(&config_name)
-            .cloned()
-            .unwrap_or_default();
+        let Some(entry) = self.configs.get_mut(config_name) else {
+            error!("Configuration not found: {}", config_name);
+            return Task::none();
+        };
 
-        if current_state.has_active_instance() {
+        if entry.state.has_active_instance() {
             warn!(
-                "Config {config_name} is already connecting/connected; ignoring duplicate request"
+                "Config {} is already connecting/connected; ignoring duplicate request",
+                config_name
             );
             return Task::none();
         }
 
-        if let Err(e) = validation::validate_config_name(&config_name) {
-            self.config_states
-                .insert(config_name, ConfigState::Error { error: e.into() });
+        if let Err(e) = validation::validate_config_name(config_name) {
+            entry.state = ConfigState::Error { error: e.into() };
             return Task::none();
         }
 
+        let config_name = config_name.clone();
+        let config_path = entry.config.path.clone();
+
         // Set state to Connecting immediately (instance will be set when IPC connects)
-        self.config_states.insert(
-            config_name.clone(),
-            ConfigState::Connecting {
-                started_at: Instant::now(),
-                instance: None,
-            },
-        );
+        entry.state = ConfigState::Connecting {
+            started_at: Instant::now(),
+            instance: None,
+        };
 
         Task::future(async move {
             info!("Connecting to instance: {}", config_name);
@@ -472,30 +429,27 @@ impl QuincyGui {
             return Task::none();
         }
 
-        let config_name = match &self.selected_config {
-            Some(config) => config.quincy_config.name.clone(),
-            None => {
-                error!("No configuration selected");
-                return Task::none();
-            }
+        let Some(ref config_name) = self.selected_config else {
+            error!("No configuration selected");
+            return Task::none();
         };
 
-        let current_state = self.config_states.remove(&config_name);
-        let mut instance = match current_state {
-            Some(ConfigState::Connected { instance, .. }) => instance,
-            Some(other) => {
-                self.config_states.insert(config_name.clone(), other);
+        let Some(entry) = self.configs.get_mut(config_name) else {
+            error!("Configuration not found: {}", config_name);
+            return Task::none();
+        };
+
+        let mut instance = match std::mem::take(&mut entry.state) {
+            ConfigState::Connected { instance, .. } => instance,
+            other => {
+                entry.state = other;
                 error!("Cannot disconnect: not in Connected state");
                 return Task::none();
             }
-            None => {
-                error!("No state found for configuration: {}", config_name);
-                return Task::none();
-            }
         };
 
-        self.config_states
-            .insert(config_name.clone(), ConfigState::Disconnecting);
+        entry.state = ConfigState::Disconnecting;
+        let config_name = config_name.clone();
 
         info!("Disconnecting instance: {}", config_name);
 
@@ -512,23 +466,25 @@ impl QuincyGui {
     /// Handles cancellation of an in-progress connection.
     /// Transitions: Connecting -> Idle
     pub fn handle_cancel_connect(&mut self) -> Task<Message> {
-        let config_name = match &self.selected_config {
-            Some(config) => config.quincy_config.name.clone(),
-            None => {
-                error!("No configuration selected");
-                return Task::none();
-            }
+        let Some(ref config_name) = self.selected_config else {
+            error!("No configuration selected");
+            return Task::none();
+        };
+
+        let Some(entry) = self.configs.get_mut(config_name) else {
+            error!("Configuration not found: {}", config_name);
+            return Task::none();
         };
 
         // Get the current state and extract instance if in Connecting state
-        let current_state = self.config_states.remove(&config_name);
-        match current_state {
-            Some(ConfigState::Connecting { instance, .. }) => {
+        match std::mem::take(&mut entry.state) {
+            ConfigState::Connecting { instance, .. } => {
                 info!("Cancelling connection for: {}", config_name);
 
                 // Transition to Idle immediately
-                self.config_states
-                    .insert(config_name.clone(), ConfigState::Idle);
+                entry.state = ConfigState::Idle;
+
+                let config_name = config_name.clone();
 
                 // Send shutdown to daemon via IPC if we have an instance
                 if let Some(inst) = instance {
@@ -551,14 +507,10 @@ impl QuincyGui {
                     Task::none()
                 }
             }
-            Some(other) => {
+            other => {
                 // Not in Connecting state, put it back
-                self.config_states.insert(config_name, other);
+                entry.state = other;
                 warn!("Cannot cancel: not in Connecting state");
-                Task::none()
-            }
-            None => {
-                warn!("Cannot cancel: no state found");
                 Task::none()
             }
         }
@@ -568,10 +520,10 @@ impl QuincyGui {
     /// Also polls instances in `Connecting` state to detect when they become `Connected`.
     pub fn handle_update_metrics(&self) -> Task<Message> {
         let tasks: Vec<Task<Message>> = self
-            .config_states
+            .configs
             .iter()
-            .filter_map(|(name, state)| {
-                let instance = match state {
+            .filter_map(|(name, entry)| {
+                let instance = match &entry.state {
                     ConfigState::Connected { instance, .. } => instance,
                     ConfigState::Connecting {
                         instance: Some(instance),
@@ -638,8 +590,9 @@ impl QuincyGui {
         error: GuiError,
     ) -> Task<Message> {
         info!("Config {} disconnected with error: {}", name, error);
-        self.config_states
-            .insert(name, ConfigState::Error { error });
+        if let Some(entry) = self.configs.get_mut(&name) {
+            entry.state = ConfigState::Error { error };
+        }
         Task::none()
     }
 
@@ -653,26 +606,27 @@ impl QuincyGui {
     ) -> Task<Message> {
         let name = instance.name.clone();
 
+        let Some(entry) = self.configs.get_mut(&name) else {
+            warn!("Config {} not found for connected instance", name);
+            return Task::none();
+        };
+
         // If we have metrics, go straight to Connected
         // Otherwise, update Connecting state with the instance
         if metrics.is_some() {
             info!("Instance {} fully connected", name);
-            self.config_states
-                .insert(name, ConfigState::Connected { instance, metrics });
+            entry.state = ConfigState::Connected { instance, metrics };
         } else {
             info!("Instance {} daemon started, VPN connecting", name);
             // Preserve the original started_at if we're already in Connecting state
-            let started_at = match self.config_states.get(&name) {
-                Some(ConfigState::Connecting { started_at, .. }) => *started_at,
+            let started_at = match &entry.state {
+                ConfigState::Connecting { started_at, .. } => *started_at,
                 _ => Instant::now(),
             };
-            self.config_states.insert(
-                name,
-                ConfigState::Connecting {
-                    started_at,
-                    instance: Some(instance),
-                },
-            );
+            entry.state = ConfigState::Connecting {
+                started_at,
+                instance: Some(instance),
+            };
         }
 
         Task::none()
@@ -685,39 +639,35 @@ impl QuincyGui {
         name: String,
         metrics: Option<ConnectionMetrics>,
     ) -> Task<Message> {
-        let current_state = self.config_states.remove(&name);
+        let Some(entry) = self.configs.get_mut(&name) else {
+            return Task::none();
+        };
 
-        match current_state {
-            Some(ConfigState::Connecting {
+        match std::mem::take(&mut entry.state) {
+            ConfigState::Connecting {
                 instance: Some(instance),
                 ..
-            }) => {
+            } => {
                 // VPN is now connected
                 info!("Instance {} VPN connected", name);
-                self.config_states
-                    .insert(name, ConfigState::Connected { instance, metrics });
+                entry.state = ConfigState::Connected { instance, metrics };
             }
-            Some(ConfigState::Connecting { instance: None, .. }) => {
+            ConfigState::Connecting { instance: None, .. } => {
                 // No instance yet, can't transition - put state back
                 warn!("Status update for {} but no instance yet", name);
-                self.config_states.insert(
-                    name,
-                    ConfigState::Connecting {
-                        started_at: Instant::now(),
-                        instance: None,
-                    },
-                );
+                entry.state = ConfigState::Connecting {
+                    started_at: Instant::now(),
+                    instance: None,
+                };
             }
-            Some(ConfigState::Connected { instance, .. }) => {
+            ConfigState::Connected { instance, .. } => {
                 // Update metrics
-                self.config_states
-                    .insert(name, ConfigState::Connected { instance, metrics });
+                entry.state = ConfigState::Connected { instance, metrics };
             }
-            Some(other) => {
+            other => {
                 // Put it back unchanged
-                self.config_states.insert(name, other);
+                entry.state = other;
             }
-            None => {}
         }
 
         Task::none()
@@ -726,25 +676,26 @@ impl QuincyGui {
     /// Handles successful disconnection.
     /// Transitions: Disconnecting -> Idle
     pub fn handle_disconnected(&mut self) -> Task<Message> {
-        let config_name = match &self.selected_config {
-            Some(config) => config.quincy_config.name.clone(),
-            None => {
-                error!("No configuration selected");
-                return Task::none();
-            }
+        let Some(ref config_name) = self.selected_config else {
+            error!("No configuration selected");
+            return Task::none();
         };
 
-        let current_state = self.config_states.get(&config_name);
-        if !matches!(current_state, Some(ConfigState::Disconnecting)) {
+        let Some(entry) = self.configs.get_mut(config_name) else {
+            error!("Configuration not found: {}", config_name);
+            return Task::none();
+        };
+
+        if !matches!(entry.state, ConfigState::Disconnecting) {
             debug!(
                 "Ignoring Disconnected message for {} in state {:?}",
-                config_name, current_state
+                config_name, entry.state
             );
             return Task::none();
         }
 
         info!("Instance {} disconnected successfully", config_name);
-        self.config_states.insert(config_name, ConfigState::Idle);
+        entry.state = ConfigState::Idle;
         Task::none()
     }
 
@@ -757,8 +708,9 @@ impl QuincyGui {
     /// Transitions: Connecting -> Error
     pub fn handle_connect_failed(&mut self, config_name: String, error: GuiError) -> Task<Message> {
         info!("Connection failed for {}: {}", config_name, error);
-        self.config_states
-            .insert(config_name, ConfigState::Error { error });
+        if let Some(entry) = self.configs.get_mut(&config_name) {
+            entry.state = ConfigState::Error { error };
+        }
         Task::none()
     }
 
@@ -769,10 +721,10 @@ impl QuincyGui {
         info!("Window closed, shutting down application");
 
         let shutdown_tasks: Vec<Task<Message>> = self
-            .config_states
+            .configs
             .iter_mut()
-            .filter_map(|(name, state)| {
-                if let ConfigState::Connected { instance, .. } = state {
+            .filter_map(|(name, entry)| {
+                if let ConfigState::Connected { instance, .. } = &entry.state {
                     let name = name.clone();
                     let mut instance = instance.clone();
                     Some(Task::future(async move {
@@ -787,8 +739,8 @@ impl QuincyGui {
             })
             .collect();
 
-        for state in self.config_states.values_mut() {
-            *state = ConfigState::Idle;
+        for entry in self.configs.values_mut() {
+            entry.state = ConfigState::Idle;
         }
 
         Task::batch(shutdown_tasks).chain(Task::future(exit()))
@@ -844,17 +796,14 @@ impl QuincyGui {
 
     /// Performs the actual deletion of a configuration.
     fn perform_delete_config(&mut self, config_name: String) -> Task<Message> {
-        let config = match self.configs.get(&config_name) {
-            Some(config) => config.clone(),
-            None => {
-                error!("Configuration not found: {}", config_name);
-                return Task::none();
-            }
+        let Some(entry) = self.configs.get(&config_name) else {
+            error!("Configuration not found: {}", config_name);
+            return Task::none();
         };
 
-        match fs::remove_file(&config.path) {
+        match fs::remove_file(&entry.config.path) {
             Ok(_) => {
-                info!("Config file deleted: {}", config.path.display());
+                info!("Config file deleted: {}", entry.config.path.display());
             }
             Err(e) => {
                 error!("Failed to delete config file: {}", e);
@@ -862,13 +811,10 @@ impl QuincyGui {
         }
 
         self.configs.remove(&config_name);
-        self.config_states.remove(&config_name);
 
         // If this was the selected config, clear the selection
-        if let Some(selected) = &self.selected_config {
-            if selected.quincy_config.name == config_name {
-                self.selected_config = None;
-            }
+        if self.selected_config.as_ref() == Some(&config_name) {
+            self.selected_config = None;
         }
 
         Task::none()

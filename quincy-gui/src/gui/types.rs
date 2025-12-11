@@ -142,14 +142,14 @@ pub struct QuincyConfig {
     pub path: PathBuf,
 }
 
-/// Container for a selected configuration and its editable content.
-pub struct SelectedConfig {
-    /// The configuration metadata
-    pub quincy_config: QuincyConfig,
-    /// The text editor content for the configuration file
-    pub editable_content: text_editor::Content,
+/// A configuration entry combining file info, runtime state, and parsed data.
+pub struct ConfigEntry {
+    /// Configuration file metadata
+    pub config: QuincyConfig,
+    /// Connection state machine
+    pub state: ConfigState,
     /// Parsed configuration for display (None if parsing failed)
-    pub parsed_config: Option<ClientConfig>,
+    pub parsed: Option<ClientConfig>,
     /// Parse error message if configuration failed to parse
     pub parse_error: Option<String>,
 }

@@ -15,10 +15,9 @@ use std::time::Duration;
 use tracing::error;
 
 use super::types::{
-    ConfigMsg, ConfigState, ConfirmMsg, ConfirmationState, EditorMsg, EditorState, InstanceMsg,
-    SystemMsg,
+    ConfigEntry, ConfigMsg, ConfigState, ConfirmMsg, ConfirmationState, EditorMsg, EditorState,
+    InstanceMsg, Message, QuincyConfig, SystemMsg,
 };
-use super::types::{Message, QuincyConfig, SelectedConfig};
 use crate::validation;
 
 /// Main GUI application state for the Quincy VPN client.
@@ -29,14 +28,12 @@ use crate::validation;
 pub struct QuincyGui {
     /// Directory containing configuration files
     pub(crate) config_dir: PathBuf,
-    /// Available VPN configurations indexed by name (kept sorted by key)
-    pub(crate) configs: BTreeMap<String, QuincyConfig>,
+    /// All configurations with their runtime state, indexed by name (sorted)
+    pub(crate) configs: BTreeMap<String, ConfigEntry>,
     /// Errors encountered while loading configurations from disk
     pub(crate) load_errors: Vec<String>,
-    /// Connection state for each configuration (state machine approach)
-    pub(crate) config_states: BTreeMap<String, ConfigState>,
-    /// Currently selected configuration for editing
-    pub(crate) selected_config: Option<SelectedConfig>,
+    /// Name of the currently selected configuration (just a key into configs)
+    pub(crate) selected_config: Option<String>,
     /// Editor modal state (Some when editor is open, None when closed)
     pub(crate) editor_state: Option<EditorState>,
     /// Confirmation modal state (Some when confirmation is open, None when closed)
@@ -82,18 +79,11 @@ impl QuincyGui {
         };
         let (_main_window_id, open_main_window) = window::open(window_settings);
 
-        // Initialize config states for all loaded configurations
-        let config_states: BTreeMap<String, ConfigState> = configs
-            .keys()
-            .map(|name| (name.clone(), ConfigState::default()))
-            .collect();
-
         (
             Self {
                 config_dir,
                 configs,
                 load_errors,
-                config_states,
                 selected_config: None,
                 editor_state: None,
                 confirmation_state: None,
@@ -294,7 +284,7 @@ impl QuincyGui {
     /// * `config_dir` - Path to the configuration directory
     ///
     /// # Returns
-    /// * `Ok((HashMap, Vec<String>))` of configuration name to QuincyConfig and list of load error messages
+    /// * `Ok((BTreeMap, Vec<String>))` of configuration name to ConfigEntry and list of load error messages
     /// * `Err` if the config directory cannot be read
     ///
     /// # Errors
@@ -302,8 +292,8 @@ impl QuincyGui {
     /// permissions or I/O issues
     fn load_configurations(
         config_dir: &Path,
-    ) -> Result<(BTreeMap<String, QuincyConfig>, Vec<String>)> {
-        let mut configs: BTreeMap<String, QuincyConfig> = BTreeMap::new();
+    ) -> Result<(BTreeMap<String, ConfigEntry>, Vec<String>)> {
+        let mut configs: BTreeMap<String, ConfigEntry> = BTreeMap::new();
         let mut errors: Vec<String> = Vec::new();
 
         let read_dir = fs::read_dir(config_dir).map_err(|e| {
@@ -316,8 +306,8 @@ impl QuincyGui {
 
         for entry_res in read_dir {
             match Self::process_config_entry(entry_res) {
-                Some(Ok((name, cfg))) => {
-                    configs.insert(name, cfg);
+                Some(Ok((name, entry))) => {
+                    configs.insert(name, entry);
                 }
                 Some(Err(err_msg)) => {
                     errors.push(err_msg);
@@ -335,10 +325,10 @@ impl QuincyGui {
     /// * `entry` - Directory entry result
     ///
     /// # Returns
-    /// Optional tuple of (config_name, QuincyConfig)
+    /// Optional tuple of (config_name, ConfigEntry)
     fn process_config_entry(
         entry: StdResult<fs::DirEntry, io::Error>,
-    ) -> Option<StdResult<(String, QuincyConfig), String>> {
+    ) -> Option<StdResult<(String, ConfigEntry), String>> {
         let config_path = match entry {
             Ok(e) => e.path(),
             Err(e) => return Some(Err(format!("Failed to read a config entry: {}", e))),
@@ -362,11 +352,18 @@ impl QuincyGui {
             return Some(Err(format!("{} (file '{}')", e, config_file_name)));
         }
 
-        let loaded_config = QuincyConfig {
+        let config = QuincyConfig {
             name: config_name.clone(),
             path: config_path,
         };
 
-        Some(Ok((config_name, loaded_config)))
+        let entry = ConfigEntry {
+            config,
+            state: ConfigState::default(),
+            parsed: None,
+            parse_error: None,
+        };
+
+        Some(Ok((config_name, entry)))
     }
 }

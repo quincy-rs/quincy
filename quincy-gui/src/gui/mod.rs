@@ -23,5 +23,5 @@ mod utils;
 // Re-export the main application struct and types
 pub use app::QuincyGui;
 pub use error::GuiError;
-pub use types::{EditorState, Message, QuincyConfig, SelectedConfig};
+pub use types::{ConfigEntry, EditorState, Message, QuincyConfig};
 pub use utils::{expand_path, format_bytes, format_duration};
