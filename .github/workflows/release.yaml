@@ -61,7 +61,7 @@ jobs:
           tar zcf quincy-${{ github.ref_name }}-linux-x86_64.tar.gz -C release .
       - name: Inject version into packager config
         run: |
-          VERSION=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name=="quincy-gui") | .version')
+          VERSION=$(cargo metadata --format-version 1 --no-deps | python3 -c "import sys, json; pkgs = json.load(sys.stdin)['packages']; print(next(p['version'] for p in pkgs if p['name'] == 'quincy-gui'))")
           sed -i "s/version = \"0.0.0\"/version = \"$VERSION\"/" packager.linux.toml
       - name: Package Linux installers
         run: cargo packager --release -c packager.linux.toml
