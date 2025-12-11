@@ -54,5 +54,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 # Utils
-regex = { workspace =true }
+regex = { workspace = true }
 thiserror = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+iced = { workspace = true, features = ["image"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
