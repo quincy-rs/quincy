@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, ReadHalf, WriteHalf};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, info};
 
 use crate::gui::GuiError;
@@ -14,6 +14,9 @@ use std::fs;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+
+#[cfg(unix)]
+use tokio::io::{ReadHalf, WriteHalf};
 
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
@@ -171,10 +174,19 @@ pub struct IpcConnection {
 
 #[cfg(windows)]
 pub struct IpcConnection {
-    // Windows uses different stream types, simplified for now
-    reader: BufReader<tokio::io::ReadHalf<NamedPipeServer>>,
-    writer: tokio::io::WriteHalf<NamedPipeServer>,
-    is_client: bool,
+    inner: WindowsPipeConnection,
+}
+
+#[cfg(windows)]
+enum WindowsPipeConnection {
+    Server {
+        reader: BufReader<tokio::io::ReadHalf<NamedPipeServer>>,
+        writer: tokio::io::WriteHalf<NamedPipeServer>,
+    },
+    Client {
+        reader: BufReader<tokio::io::ReadHalf<NamedPipeClient>>,
+        writer: tokio::io::WriteHalf<NamedPipeClient>,
+    },
 }
 
 impl IpcConnection {
@@ -200,22 +212,22 @@ impl IpcConnection {
     pub fn new_windows_server(stream: NamedPipeServer) -> Self {
         let (read_half, write_half) = tokio::io::split(stream);
         Self {
-            reader: BufReader::new(read_half),
-            writer: write_half,
-            is_client: false,
+            inner: WindowsPipeConnection::Server {
+                reader: BufReader::new(read_half),
+                writer: write_half,
+            },
         }
     }
 
     /// Creates a new IPC connection from a Windows named pipe client.
     #[cfg(windows)]
     pub fn new_windows_client(stream: NamedPipeClient) -> Self {
-        // For Windows client, we need a different approach
-        // This is a simplified version - may need refinement
         let (read_half, write_half) = tokio::io::split(stream);
         Self {
-            reader: BufReader::new(read_half),
-            writer: write_half,
-            is_client: true,
+            inner: WindowsPipeConnection::Client {
+                reader: BufReader::new(read_half),
+                writer: write_half,
+            },
         }
     }
 
@@ -227,6 +239,7 @@ impl IpcConnection {
         Ok(Self::new_windows_client(client))
     }
 
+    #[cfg(unix)]
     pub async fn send(&mut self, message: &IpcMessage) -> Result<()> {
         let json = serde_json::to_string(message)?;
         debug!("Sending IPC message: {}", json);
@@ -238,9 +251,53 @@ impl IpcConnection {
         Ok(())
     }
 
+    #[cfg(windows)]
+    pub async fn send(&mut self, message: &IpcMessage) -> Result<()> {
+        let json = serde_json::to_string(message)?;
+        debug!("Sending IPC message: {}", json);
+
+        match &mut self.inner {
+            WindowsPipeConnection::Server { writer, .. } => {
+                writer.write_all(json.as_bytes()).await?;
+                writer.write_all(b"\n").await?;
+                writer.flush().await?;
+            }
+            WindowsPipeConnection::Client { writer, .. } => {
+                writer.write_all(json.as_bytes()).await?;
+                writer.write_all(b"\n").await?;
+                writer.flush().await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
     pub async fn recv(&mut self) -> Result<IpcMessage> {
         let mut line = String::new();
         self.reader.read_line(&mut line).await?;
+
+        if line.is_empty() {
+            return Err(QuincyError::system("Connection closed"));
+        }
+
+        debug!("Received IPC message: {}", line.trim());
+        let message: IpcMessage = serde_json::from_str(line.trim())?;
+        Ok(message)
+    }
+
+    #[cfg(windows)]
+    pub async fn recv(&mut self) -> Result<IpcMessage> {
+        let mut line = String::new();
+
+        match &mut self.inner {
+            WindowsPipeConnection::Server { reader, .. } => {
+                reader.read_line(&mut line).await?;
+            }
+            WindowsPipeConnection::Client { reader, .. } => {
+                reader.read_line(&mut line).await?;
+            }
+        }
 
         if line.is_empty() {
             return Err(QuincyError::system("Connection closed"));
