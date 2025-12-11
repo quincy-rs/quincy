@@ -3,6 +3,10 @@ use iced::widget::container::Style as ContainerStyle;
 use iced::widget::{row, stack, text};
 use iced::{time, window, Background, Element, Length, Size, Subscription, Task, Theme};
 
+/// Application icon embedded at compile time (Windows only)
+#[cfg(target_os = "windows")]
+const APP_ICON: &[u8] = include_bytes!("../../resources/icon.ico");
+
 use super::styles::{ColorPalette, Layout, Spacing};
 use quincy::{QuincyError, Result};
 use std::collections::BTreeMap;
@@ -68,17 +72,6 @@ impl QuincyGui {
             }
         };
 
-        let window_size = Size::new(Layout::WINDOW_WIDTH, Layout::WINDOW_HEIGHT);
-
-        // Create the main window
-        let window_settings = window::Settings {
-            min_size: Some(window_size),
-            max_size: Some(window_size),
-            size: window_size,
-            ..window::Settings::default()
-        };
-        let (_main_window_id, open_main_window) = window::open(window_settings);
-
         (
             Self {
                 config_dir,
@@ -88,16 +81,42 @@ impl QuincyGui {
                 editor_state: None,
                 confirmation_state: None,
             },
-            // Only open the main window; periodic updates are driven by Subscription
-            open_main_window.map(|_| Message::System(SystemMsg::Noop)),
+            Task::none(),
         )
+    }
+
+    /// Returns the window settings for the application.
+    ///
+    /// # Returns
+    /// Window settings with fixed size constraints and application icon (Windows only)
+    pub fn window_settings() -> window::Settings {
+        let window_size = Size::new(Layout::WINDOW_WIDTH, Layout::WINDOW_HEIGHT);
+
+        #[cfg(target_os = "windows")]
+        let icon = match window::icon::from_file_data(APP_ICON, None) {
+            Ok(icon) => Some(icon),
+            Err(e) => {
+                error!("Failed to load application icon: {:?}", e);
+                None
+            }
+        };
+        #[cfg(not(target_os = "windows"))]
+        let icon = None;
+
+        window::Settings {
+            min_size: Some(window_size),
+            max_size: Some(window_size),
+            size: window_size,
+            icon,
+            ..window::Settings::default()
+        }
     }
 
     /// Returns the theme to use for the application.
     ///
     /// # Returns
     /// Currently always returns Dark theme
-    pub fn theme(&self, _window_id: window::Id) -> Theme {
+    pub fn theme(&self) -> Theme {
         // TODO: theme selector
         Theme::Dark
     }
@@ -167,7 +186,7 @@ impl QuincyGui {
     ///
     /// # Returns
     /// Complete UI element tree for the application
-    pub fn view(&self, _window_id: window::Id) -> Element<'_, Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let left_panel = self.build_config_selection_panel();
         let right_panel = self.build_config_details_panel();
 
@@ -220,14 +239,11 @@ impl QuincyGui {
         }
     }
 
-    /// Returns the window title for a given window.
-    ///
-    /// # Arguments
-    /// * `_window_id` - ID of the window (unused, only one window now)
+    /// Returns the window title for the application.
     ///
     /// # Returns
     /// Window title string
-    pub fn title(&self, _window_id: window::Id) -> String {
+    pub fn title(&self) -> String {
         "Quincy VPN Client".to_string()
     }
 
