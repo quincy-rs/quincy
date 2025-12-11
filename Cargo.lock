@@ -1763,9 +1763,9 @@ dependencies = [
 
 [[package]]
 name = "iced_widget"
-version = "0.14.1"
+version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f86f6948998a5e031849afae1bb852f3b100c71572befa0be70b19075dcb2163"
+checksum = "b1596afa0d3109c2618e8bc12bae6c11d3064df8f95c42dfce570397dbe957ab"
 dependencies = [
  "iced_highlighter",
  "iced_renderer",
@@ -3024,7 +3024,7 @@ dependencies = [
 
 [[package]]
 name = "quincy"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.4"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3050,7 +3050,7 @@ dependencies = [
 
 [[package]]
 name = "quincy-client"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.4"
 dependencies = [
  "async-trait",
  "clap",
@@ -3066,7 +3066,7 @@ dependencies = [
 
 [[package]]
 name = "quincy-gui"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.4"
 dependencies = [
  "clap",
  "dashmap",
@@ -3086,7 +3086,7 @@ dependencies = [
 
 [[package]]
 name = "quincy-server"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.4"
 dependencies = [
  "argon2",
  "async-trait",
@@ -3107,7 +3107,7 @@ dependencies = [
 
 [[package]]
 name = "quincy-tests"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.4"
 dependencies = [
  "bytes",
  "etherparse",
