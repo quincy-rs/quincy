@@ -750,10 +750,6 @@ impl QuincyGui {
 
     /// Shows a confirmation modal with the given state.
     pub fn handle_show_confirmation(&mut self, state: ConfirmationState) -> Task<Message> {
-        info!(
-            "Showing confirmation modal: {} - {}",
-            state.title, state.message
-        );
         self.confirmation_state = Some(state);
         Task::none()
     }
@@ -771,13 +767,7 @@ impl QuincyGui {
         match confirmation_state.confirm_action {
             ConfirmAction::DeleteConfig(config_name) => self.perform_delete_config(config_name),
             ConfirmAction::DiscardEditorChanges => {
-                // Close the editor and discard changes
-                if let Some(editor_state) = self.editor_state.take() {
-                    info!(
-                        "Editor closed, changes discarded for config: {}",
-                        editor_state.config_name
-                    );
-                }
+                self.editor_state = None;
                 Task::none()
             }
         }
@@ -785,12 +775,7 @@ impl QuincyGui {
 
     /// Handles cancel action (user clicked Cancel).
     pub fn handle_cancel_confirmation(&mut self) -> Task<Message> {
-        if let Some(confirmation_state) = self.confirmation_state.take() {
-            info!(
-                "Confirmation cancelled: {} - {}",
-                confirmation_state.title, confirmation_state.message
-            );
-        }
+        self.confirmation_state = None;
         Task::none()
     }
 
