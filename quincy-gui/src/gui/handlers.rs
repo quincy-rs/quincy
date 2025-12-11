@@ -764,17 +764,9 @@ impl QuincyGui {
 
     // ========== Window Lifecycle Handlers ==========
 
-    /// Handles window closed event.
-    pub fn handle_window_closed(&mut self, window_id: iced::window::Id) -> Task<Message> {
-        if Some(window_id) == self.main_window_id {
-            return self.handle_main_window_closed();
-        }
-        Task::none()
-    }
-
-    /// Handles main window closed event - shuts down all connections and exits.
-    pub fn handle_main_window_closed(&mut self) -> Task<Message> {
-        info!("Main window closed, shutting down application");
+    /// Handles window closed event - shuts down all connections and exits.
+    pub fn handle_window_closed(&mut self, _window_id: iced::window::Id) -> Task<Message> {
+        info!("Window closed, shutting down application");
 
         let shutdown_tasks: Vec<Task<Message>> = self
             .config_states
