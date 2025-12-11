@@ -364,12 +364,16 @@ impl QuincyGui {
     /// Builds the configuration name input field.
     pub fn build_config_name_input(&self, entry: &ConfigEntry) -> Element<'_, Message> {
         let is_editor_open = self.is_editor_open();
+        let has_active_instance = self
+            .configs
+            .values()
+            .any(|entry| entry.state.has_active_instance());
 
         let mut input = text_input_widget("Configuration name", &entry.config.name)
             .padding([Spacing::BUTTON_V, Spacing::MD])
             .size(Typography::BODY);
 
-        if !is_editor_open {
+        if !is_editor_open && !has_active_instance {
             input = input
                 .on_input(|s| Message::Config(ConfigMsg::NameChanged(s)))
                 .on_submit(Message::Config(ConfigMsg::NameSaved));
