@@ -14,6 +14,7 @@ Quincy is a VPN client and server implementation using the [QUIC](https://en.wik
 - [Installation](#installation)
   - [Cargo](#cargo)
   - [Docker](#docker)
+  - [Installers](#installers)
 - [Building from sources](#building-from-sources)
   - [Requirements](#requirements)
   - [Build features](#build-features)
@@ -34,7 +35,7 @@ Quincy is a VPN client and server implementation using the [QUIC](https://en.wik
 - [X] MacOS (aarch64)
 
 ## Installation
-Binaries are currently available for Windows, Linux (x86_64) and macOS (aarch64) for every official release.
+Binaries and installers are available for Windows, Linux (x86_64) and macOS (aarch64) for every official release.
 
 ### Cargo
 Using cargo, installation of any published version can be done with a simple command:
@@ -78,6 +79,12 @@ docker run
   quincy-users --add /etc/quincy/users
   # quincy-users --delete /etc/quincy/users
 ```
+
+### Installers
+Platform-specific installers for the GUI client are available for download from the [GitHub releases](https://github.com/quincy-rs/quincy/releases):
+- **Windows**: NSIS installer (`.exe`)
+- **macOS**: DMG disk image (`.dmg`)
+- **Linux**: Debian package (`.deb`) and AppImage (`.AppImage`)
 
 ## Building from sources
 As Quincy does not rely upon any non-Rust libraries, the build process is incredibly simple:
