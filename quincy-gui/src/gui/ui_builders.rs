@@ -12,8 +12,8 @@ use super::styles::{
     BorderRadius, ColorPalette, CustomButtonStyles, CustomContainerStyles, CustomTextInputStyle,
     Layout, Spacing, Typography,
 };
-use super::types::{ConfigEntry, ConfigMsg, ConfigState, ConfirmMsg, EditorMsg, InstanceMsg};
 use super::types::Message;
+use super::types::{ConfigEntry, ConfigMsg, ConfigState, ConfirmMsg, EditorMsg, InstanceMsg};
 use super::utils::{format_bytes, format_duration};
 use crate::ipc::ConnectionMetrics;
 

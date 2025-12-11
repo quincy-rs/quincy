@@ -1,7 +1,7 @@
 #![windows_subsystem = "windows"]
 
 use clap::Parser;
-use iced::daemon;
+use iced::application;
 use quincy::{QuincyError, Result};
 use quincy_gui::gui::{expand_path, QuincyGui};
 use std::path::PathBuf;
@@ -65,14 +65,12 @@ fn main() -> Result<()> {
 
     let config_dir = expand_path(&args.config_dir);
 
-    daemon(
-        {
-            let config_dir = config_dir.clone();
-            move || QuincyGui::new(config_dir.clone())
-        },
+    application(
+        move || QuincyGui::new(config_dir.clone()),
         QuincyGui::update,
         QuincyGui::view,
     )
+    .window(QuincyGui::window_settings())
     .title(QuincyGui::title)
     .theme(QuincyGui::theme)
     .subscription(QuincyGui::subscription)
