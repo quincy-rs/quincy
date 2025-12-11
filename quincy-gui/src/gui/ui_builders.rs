@@ -12,8 +12,8 @@ use super::styles::{
     BorderRadius, ColorPalette, CustomButtonStyles, CustomContainerStyles, CustomTextInputStyle,
     Layout, Spacing, Typography,
 };
-use super::types::{ConfigMsg, ConfigState, ConfirmMsg, EditorMsg, InstanceMsg};
-use super::types::{Message, SelectedConfig};
+use super::types::{ConfigEntry, ConfigMsg, ConfigState, ConfirmMsg, EditorMsg, InstanceMsg};
+use super::types::Message;
 use super::utils::{format_bytes, format_duration};
 use crate::ipc::ConnectionMetrics;
 
@@ -258,9 +258,9 @@ impl QuincyGui {
 
         // Check if any config has an active instance
         let has_active_instance = self
-            .config_states
+            .configs
             .values()
-            .any(|state| state.has_active_instance());
+            .any(|entry| entry.state.has_active_instance());
 
         let mut btn = button_widget(
             text(name)
@@ -275,10 +275,7 @@ impl QuincyGui {
             btn = btn.on_press(Message::Config(ConfigMsg::Selected(name.to_string())));
         }
 
-        let is_selected = self
-            .selected_config
-            .as_ref()
-            .is_some_and(|config| config.quincy_config.name == name);
+        let is_selected = self.selected_config.as_ref() == Some(&name.to_string());
 
         // Style based on selection state, but show disabled for non-selected when locked
         if is_selected {
@@ -320,10 +317,15 @@ impl QuincyGui {
 
     /// Builds the right panel containing configuration details and controls.
     pub fn build_config_details_panel(&self) -> Element<'_, Message> {
-        let content = if let Some(selected_config) = self.selected_config.as_ref() {
-            self.build_selected_config_content(selected_config)
-        } else {
-            self.build_no_selection_content()
+        let content = match self.selected_config.as_ref() {
+            Some(config_name) => {
+                if let Some(entry) = self.configs.get(config_name) {
+                    self.build_selected_config_content(entry)
+                } else {
+                    self.build_no_selection_content()
+                }
+            }
+            None => self.build_no_selection_content(),
         };
 
         container_widget(content)
@@ -337,19 +339,12 @@ impl QuincyGui {
     /// Builds the content for when a configuration is selected.
     pub fn build_selected_config_content<'a>(
         &'a self,
-        selected_config: &'a SelectedConfig,
+        entry: &'a ConfigEntry,
     ) -> Element<'a, Message> {
-        let config_name = &selected_config.quincy_config.name;
-        let config_state = self
-            .config_states
-            .get(config_name)
-            .cloned()
-            .unwrap_or_default();
-
-        let name_input = self.build_config_name_input(selected_config);
-        let config_view = self.build_config_view_section(selected_config);
-        let monitoring_section = self.build_monitoring_section_from_state(&config_state);
-        let action_buttons = self.build_action_buttons_from_state(&config_state);
+        let name_input = self.build_config_name_input(entry);
+        let config_view = self.build_config_view_section(entry);
+        let monitoring_section = self.build_monitoring_section_from_state(&entry.state);
+        let action_buttons = self.build_action_buttons_from_state(&entry.state);
 
         column![
             container_widget(name_input).height(Length::Shrink),
@@ -363,16 +358,12 @@ impl QuincyGui {
     }
 
     /// Builds the configuration name input field.
-    pub fn build_config_name_input(
-        &self,
-        selected_config: &SelectedConfig,
-    ) -> Element<'_, Message> {
+    pub fn build_config_name_input(&self, entry: &ConfigEntry) -> Element<'_, Message> {
         let is_editor_open = self.is_editor_open();
 
-        let mut input =
-            text_input_widget("Configuration name", &selected_config.quincy_config.name)
-                .padding([Spacing::BUTTON_V, Spacing::MD])
-                .size(Typography::BODY);
+        let mut input = text_input_widget("Configuration name", &entry.config.name)
+            .padding([Spacing::BUTTON_V, Spacing::MD])
+            .size(Typography::BODY);
 
         if !is_editor_open {
             input = input
@@ -384,11 +375,8 @@ impl QuincyGui {
     }
 
     /// Builds the configuration view section with read-only fields.
-    pub fn build_config_view_section(
-        &self,
-        selected_config: &SelectedConfig,
-    ) -> Element<'_, Message> {
-        let config_info = if let Some(ref config) = selected_config.parsed_config {
+    pub fn build_config_view_section(&self, entry: &ConfigEntry) -> Element<'_, Message> {
+        let config_info = if let Some(ref config) = entry.parsed {
             let routes_display = if config.network.routes.is_empty() {
                 "None".to_string()
             } else {
@@ -437,7 +425,7 @@ impl QuincyGui {
             ]
             .spacing(Spacing::MD)
         } else {
-            let error_msg = selected_config
+            let error_msg = entry
                 .parse_error
                 .clone()
                 .unwrap_or_else(|| "Unknown error".to_string());
