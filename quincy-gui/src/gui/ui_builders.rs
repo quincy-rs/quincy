@@ -292,6 +292,10 @@ impl QuincyGui {
     /// Builds the "New Configuration" button.
     pub fn build_new_config_button(&self) -> Element<'_, Message> {
         let is_editor_open = self.is_editor_open();
+        let has_active_instance = self
+            .configs
+            .values()
+            .any(|entry| entry.state.has_active_instance());
 
         let mut btn = button_widget(
             text("+")
@@ -303,11 +307,11 @@ impl QuincyGui {
         .width(Length::Fill)
         .padding([Spacing::BUTTON_V, Spacing::MD]);
 
-        if !is_editor_open {
+        if !is_editor_open && !has_active_instance {
             btn = btn.on_press(Message::Config(ConfigMsg::New));
         }
 
-        if is_editor_open {
+        if is_editor_open || has_active_instance {
             btn.style(|_theme, _status| CustomButtonStyles::disabled())
         } else {
             btn.style(CustomButtonStyles::secondary_fn())
