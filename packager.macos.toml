@@ -1,4 +1,4 @@
-name = "windows"
+name = "macos"
 product_name = "Quincy"
 version = "0.0.0"
 identifier = "rs.quincy.quincy"
@@ -8,20 +8,21 @@ homepage = "https://github.com/quincy-rs/quincy"
 authors = ["Quincy Contributors"]
 publisher = "quincy-rs"
 copyright = "Licensed under AGPL-3.0. See LICENCE file."
+category = "public.app-category.utilities"
 license_file = "LICENCE"
-before_packaging_command = "PowerShell -NoProfile -ExecutionPolicy Bypass -File resources/scripts/package_windows.ps1"
-icons = ["resources/common/icon.ico"]
+before_packaging_command = "resources/scripts/package_unix.sh"
+icons = ["resources/common/icon.png", "resources/common/icon@2x.png"]
 binaries = [
     { path = "quincy-client-gui", main = true },
     { path = "quincy-client-daemon", main = false }
 ]
-resources = ["target/release/wintun.dll"]
 out_dir = "target/release"
-formats = ["nsis"]
+formats = ["app", "dmg"]
 
-[windows]
-allow_downgrades = false
+[macos]
+minimum_system_version = "10.13"
 
-[nsis]
-install_mode = "PerMachine"
-installer_icon = "resources/common/icon.ico"
+[dmg]
+window_size = { width = 660, height = 400 }
+app_position = { x = 180, y = 170 }
+application_folder_position = { x = 480, y = 170 }
