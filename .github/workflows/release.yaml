@@ -63,6 +63,44 @@ jobs:
           files: |
             quincy-${{ github.ref_name }}-linux-x86_64.tar.gz
 
+  package-linux:
+    name: Package Linux installers
+
+    runs-on: ubuntu-22.04
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        name: Checkout repository
+      - uses: dtolnay/rust-toolchain@nightly
+        name: Set up toolchain
+      - uses: Swatinem/rust-cache@v2
+        name: Cache toolchain and dependencies
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
+      - name: Inject version into packager config
+        run: |
+          VERSION=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name=="quincy-gui") | .version')
+          sed -i "s/version = \"0.0.0\"/version = \"$VERSION\"/" packager.linux.toml
+      - name: Package Linux installers
+        run: cargo packager --release -c packager.linux.toml
+      - name: Rename packages
+        run: |
+          mkdir -p packages
+          mv target/release/*.deb packages/quincy-${{ github.ref_name }}-linux-x86_64.deb || true
+          mv target/release/*.AppImage packages/quincy-${{ github.ref_name }}-linux-x86_64.AppImage || true
+      - uses: softprops/action-gh-release@v1
+        name: Add packages to release
+        with:
+          files: |
+            packages/*
+
   build-macos-binaries:
     name: Build arm64 macOS binaries
 
@@ -93,6 +131,39 @@ jobs:
         with:
           files: |
             quincy-${{ github.ref_name }}-macos-arm64.tar.gz
+
+  package-macos:
+    name: Package macOS installers
+
+    runs-on: macos-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        name: Checkout repository
+      - uses: dtolnay/rust-toolchain@nightly
+        name: Set up toolchain
+      - uses: Swatinem/rust-cache@v2
+        name: Cache toolchain and dependencies
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
+      - name: Inject version into packager config
+        run: |
+          VERSION=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name=="quincy-gui") | .version')
+          sed -i '' "s/version = \"0.0.0\"/version = \"$VERSION\"/" packager.macos.toml
+      - name: Package macOS installers
+        run: cargo packager --release -c packager.macos.toml
+      - name: Rename packages
+        run: |
+          mkdir -p packages
+          mv target/release/*.dmg packages/quincy-${{ github.ref_name }}-macos-arm64.dmg || true
+      - uses: softprops/action-gh-release@v1
+        name: Add packages to release
+        with:
+          files: |
+            packages/*
 
   build-windows-binaries:
     name: Build x86_64 Windows binaries
@@ -129,6 +200,41 @@ jobs:
         with:
           files: |
             quincy-${{ github.ref_name }}-windows-x86_64.zip
+
+  package-windows:
+    name: Package Windows installer
+
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        name: Checkout repository
+      - uses: dtolnay/rust-toolchain@nightly
+        name: Set up toolchain
+      - uses: Swatinem/rust-cache@v2
+        name: Cache toolchain and dependencies
+      - uses: ilammy/setup-nasm@v1
+        name: Install NASM
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
+      - name: Inject version into packager config
+        run: |
+          $VERSION = (cargo metadata --format-version 1 --no-deps | ConvertFrom-Json).packages | Where-Object { $_.name -eq "quincy-gui" } | Select-Object -ExpandProperty version
+          (Get-Content packager.windows.toml) -replace 'version = "0.0.0"', "version = `"$VERSION`"" | Set-Content packager.windows.toml
+      - name: Package Windows installer
+        run: cargo packager --release -c packager.windows.toml
+      - name: Rename packages
+        run: |
+          mkdir packages
+          Move-Item target/release/*.exe packages/quincy-${{ github.ref_name }}-windows-x86_64-setup.exe
+      - uses: softprops/action-gh-release@v1
+        name: Add packages to release
+        with:
+          files: |
+            packages/*
 
   build-docker-image:
     name: Build Docker image
