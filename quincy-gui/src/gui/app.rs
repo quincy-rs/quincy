@@ -41,8 +41,6 @@ pub struct QuincyGui {
     pub(crate) editor_state: Option<EditorState>,
     /// Confirmation modal state (Some when confirmation is open, None when closed)
     pub(crate) confirmation_state: Option<ConfirmationState>,
-    /// Main window ID
-    pub(crate) main_window_id: Option<window::Id>,
 }
 
 impl QuincyGui {
@@ -82,7 +80,7 @@ impl QuincyGui {
             size: window_size,
             ..window::Settings::default()
         };
-        let (main_window_id, open_main_window) = window::open(window_settings);
+        let (_main_window_id, open_main_window) = window::open(window_settings);
 
         // Initialize config states for all loaded configurations
         let config_states: BTreeMap<String, ConfigState> = configs
@@ -99,7 +97,6 @@ impl QuincyGui {
                 selected_config: None,
                 editor_state: None,
                 confirmation_state: None,
-                main_window_id: Some(main_window_id),
             },
             // Only open the main window; periodic updates are driven by Subscription
             open_main_window.map(|_| Message::System(SystemMsg::Noop)),
