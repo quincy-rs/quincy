@@ -8,7 +8,7 @@ homepage = "https://github.com/quincy-rs/quincy"
 authors = ["Quincy Contributors"]
 publisher = "quincy-rs"
 copyright = "Licensed under AGPL-3.0. See LICENCE file."
-category = "Network"
+category = "public.app-category.utilities"
 license_file = "LICENCE"
 before_packaging_command = "resources/scripts/package_unix.sh"
 icons = ["resources/common/icon.png", "resources/common/icon@2x.png"]
@@ -28,4 +28,4 @@ priority = "optional"
 
 [appimage]
 # Exclude common system libraries that cause compatibility issues
-excluded_libs = ["libnss*", "libfreetype*"]
+excluded_libraries = ["libnss*", "libfreetype*"]

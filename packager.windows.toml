@@ -23,5 +23,5 @@ formats = ["nsis"]
 allow_downgrades = false
 
 [nsis]
-install_mode = "PerMachine"
+installer_mode = "perMachine"
 installer_icon = "resources/common/icon.ico"
