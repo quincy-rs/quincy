@@ -125,7 +125,9 @@ It provides a simple interface for managing and (dis)connecting multiple client 
 
 All configuration files are stored either in `~/.config/quincy` (Linux, macOS) or `%APPDATA%\quincy` (Windows).
 
-The GUI runs in unprivileged mode and uses a separate executable (`quincy-client-daemon`) to handle privileged operations such as creating the TUN interface and setting up routes. *The current way this is done is using rather primitive privilege escallation commands, which do not have the best user experience. This is subject to change and will be improved upon before a proper 1.0.0 is released.*
+The GUI runs in unprivileged mode and uses a separate executable (`quincy-client-daemon`) to handle privileged operations such as creating the TUN interface and setting up routes. 
+
+_The current way this is done is using rather primitive privilege escallation commands, which do not have the best user experience. This is subject to change and will be improved upon in the future_.
 
 ### Server
 The Quincy server requires a separate configuration file, an example of which can be found in [`examples/server.toml`](examples/server.toml).
