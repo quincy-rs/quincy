@@ -47,6 +47,8 @@ jobs:
         name: Set up toolchain
       - uses: Swatinem/rust-cache@v2
         name: Cache toolchain and dependencies
+      - name: Install AppImage dependencies
+        run: yum install -y file patchelf
       - name: Install cargo-packager
         run: cargo install cargo-packager --locked
       - name: Build x86_64 Linux binaries
