@@ -4,9 +4,6 @@ use crate::Result;
 use ipnet::IpNet;
 use std::net::IpAddr;
 
-const NETSH_ROUTE_ADD_COMMAND: &str =
-    "netsh interface ip add route {network} \"{interface_name}\" {gateway} store=active";
-
 /// Adds a list of routes to the routing table.
 ///
 /// ### Arguments
@@ -28,17 +25,20 @@ pub fn add_routes(networks: &[IpNet], gateway: &IpAddr, interface_name: &str) ->
 /// - `gateway` - the gateway to be used for the route
 /// - `interface_name` - the name of the interface to add the route to
 fn add_route(network: &IpNet, gateway: &IpAddr, interface_name: &str) -> Result<()> {
-    let route_add_command = NETSH_ROUTE_ADD_COMMAND
-        .replace("{network}", &network.to_string())
-        .replace("{interface_name}", interface_name)
-        .replace("{gateway}", &gateway.to_string());
+    let network_str = network.to_string();
+    let gateway_str = gateway.to_string();
+    let route_args = vec![
+        "interface",
+        "ip",
+        "add",
+        "route",
+        &network_str,
+        interface_name,
+        &gateway_str,
+        "store=active",
+    ];
 
-    let route_command_split = route_add_command.split(" ").collect::<Vec<_>>();
-
-    let route_program = route_command_split[0];
-    let route_args = &route_command_split[1..];
-
-    let output = run_command(route_program, route_args)
+    let output = run_command("netsh", &route_args)
         .map_err(|e| RouteError::PlatformError {
             message: format!("failed to execute command: {e}"),
         })?

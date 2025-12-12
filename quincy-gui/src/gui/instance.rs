@@ -1,15 +1,18 @@
 use quincy::{QuincyError, Result};
 use std::env;
 use std::path::{Path, PathBuf};
+use std::process::Child;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use tokio::task::spawn_blocking;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use super::types::QuincyInstance;
-use crate::ipc::{get_ipc_socket_path, ConnectionMetrics, ConnectionStatus, IpcMessage, IpcServer};
+use crate::ipc::{
+    get_ipc_socket_path, get_log_file_path, ConnectionMetrics, ConnectionStatus, IpcMessage,
+    IpcServer,
+};
 use crate::privilege::run_elevated;
 use crate::validation;
 
@@ -45,10 +48,17 @@ impl QuincyInstance {
         info!("Starting client daemon process for: {}", name);
 
         let socket_path = get_ipc_socket_path(&name);
+        let log_path = get_log_file_path(&name);
         let ipc_server = IpcServer::new(&socket_path)?;
 
         let daemon_binary = Self::get_daemon_binary_path()?;
-        Self::spawn_daemon_process(&daemon_binary, &config_path, &name).await?;
+        let mut child = Self::spawn_daemon_process(
+            &daemon_binary,
+            &name,
+            &config_path,
+            &socket_path,
+            &log_path,
+        )?;
 
         let connection = match timeout(Self::DAEMON_START_TIMEOUT, ipc_server.accept()).await {
             Ok(Ok(conn)) => conn,
@@ -58,9 +68,7 @@ impl QuincyInstance {
                     "Timed out after {:?} while waiting for daemon IPC connection",
                     Self::DAEMON_START_TIMEOUT
                 );
-                return Err(QuincyError::system(
-                    "Timed out waiting for daemon IPC connection",
-                ));
+                return Err(QuincyError::system(Self::get_spawn_error(&mut child)));
             }
         };
 
@@ -83,52 +91,61 @@ impl QuincyInstance {
     }
 
     /// Spawns the daemon process with elevated privileges.
-    async fn spawn_daemon_process(
+    /// Returns the child process handle for error reporting if IPC connection fails.
+    fn spawn_daemon_process(
         daemon_binary: &Path,
-        config_path: &Path,
         name: &str,
-    ) -> Result<()> {
-        let quoted_binary = Self::quote_for_cmdline(&daemon_binary.to_string_lossy());
-        let quoted_config = Self::quote_for_cmdline(&config_path.to_string_lossy());
-        let quoted_name = Self::quote_for_cmdline(name);
+        config_path: &Path,
+        socket_path: &Path,
+        log_path: &Path,
+    ) -> Result<Child> {
+        // Convert paths to strings - no manual quoting needed since we pass args directly
+        let binary_str = daemon_binary.to_string_lossy();
+        let config_str = config_path.to_string_lossy();
+        let socket_str = socket_path.to_string_lossy();
+        let log_str = log_path.to_string_lossy();
 
-        let args: [&str; 4] = [
-            "--config-path",
-            quoted_config.as_str(),
+        // Build argument list to pass directly to privilege escalation tools
+        // Arguments are passed as-is without shell interpretation
+        let args: [&str; 8] = [
             "--instance-name",
-            quoted_name.as_str(),
+            name,
+            "--config-path",
+            &config_str,
+            "--socket-path",
+            &socket_str,
+            "--log-path",
+            &log_str,
         ];
 
-        let child = run_elevated(
-            &quoted_binary,
+        run_elevated(
+            &binary_str,
             &args,
             "Quincy VPN Client",
             "Quincy needs administrator privileges to create network interfaces.",
-        )?;
-
-        let elevation_result = spawn_blocking(move || child.wait_with_output()).await??;
-
-        if !elevation_result.status.success() || !elevation_result.stderr.is_empty() {
-            return Err(QuincyError::system("Failed to spawn daemon process"));
-        }
-
-        Ok(())
+        )
     }
 
-    /// Wraps an argument in double quotes and escapes any embedded double quotes.
-    fn quote_for_cmdline(arg: &str) -> String {
-        let mut out = String::with_capacity(arg.len() + 2);
-        out.push('"');
-        for ch in arg.chars() {
-            if ch == '"' {
-                out.push('\\');
-                out.push('"');
-            } else {
-                out.push(ch);
-            }
+    /// Extracts error information from a failed daemon spawn attempt.
+    fn get_spawn_error(child: &mut Child) -> String {
+        let Ok(Some(status)) = child.try_wait() else {
+            return "Timed out waiting for daemon IPC connection".to_string();
+        };
+
+        if status.success() {
+            return "Timed out waiting for daemon IPC connection".to_string();
         }
-        out.push('"');
-        out
+
+        let Some(mut stderr) = child.stderr.take() else {
+            return format!("Daemon process exited with status: {status}");
+        };
+
+        let mut buf = String::new();
+        if std::io::Read::read_to_string(&mut stderr, &mut buf).is_ok() && !buf.is_empty() {
+            format!("Daemon process failed: {}", buf.trim())
+        } else {
+            format!("Daemon process exited with status: {status}")
+        }
     }
 
     /// Sends the start command to the daemon.
