@@ -116,6 +116,8 @@ impl IpcServer {
         {
             let server = ServerOptions::new()
                 .first_pipe_instance(true)
+                .access_inbound(true)
+                .reject_remote_clients(true)
                 .create(&self.pipe_path)?;
             server.connect().await?;
             Ok(IpcConnection::new_windows_server(server))
