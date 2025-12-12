@@ -73,6 +73,11 @@ jobs:
         name: Checkout repository
       - uses: dtolnay/rust-toolchain@nightly
         name: Set up toolchain
+      - uses: Swatinem/rust-cache@v2
+        name: Cache cargo-packager
+        with:
+          cache-targets: false
+          cache-directories: ~/.cargo/bin
       - uses: actions/download-artifact@v4
         name: Download build artifacts
         with:
@@ -109,9 +114,37 @@ jobs:
           files: artifacts/*
 
   build-macos:
-    name: Build and package macOS
+    name: Build macOS
 
     runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        name: Checkout repository
+      - uses: dtolnay/rust-toolchain@nightly
+        name: Set up toolchain
+      - uses: Swatinem/rust-cache@v2
+        name: Cache toolchain and dependencies
+      - name: Build arm64 macOS binaries
+        run: |
+          cargo build --release --workspace --features jemalloc
+          mkdir -p release
+          cp target/release/quincy-client release/
+          cp target/release/quincy-server release/
+          cp target/release/quincy-users release/
+          cp target/release/quincy-client-gui release/
+          cp target/release/quincy-client-daemon release/
+      - uses: actions/upload-artifact@v4
+        name: Upload build artifacts
+        with:
+          name: macos-binaries
+          path: release/
+
+  package-macos:
+    name: Package macOS
+
+    runs-on: macos-latest
+    needs: build-macos
 
     permissions:
       contents: write
@@ -122,25 +155,32 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         name: Set up toolchain
       - uses: Swatinem/rust-cache@v2
-        name: Cache toolchain and dependencies
+        name: Cache cargo-packager
+        with:
+          cache-targets: false
+          cache-directories: ~/.cargo/bin
+      - uses: actions/download-artifact@v4
+        name: Download build artifacts
+        with:
+          name: macos-binaries
+          path: target/release/
+      - name: Make binaries executable
+        run: chmod +x target/release/*
+      - name: Create tarball
+        run: |
+          mkdir -p release
+          cp target/release/* release/
+          tar zcf quincy-${{ github.ref_name }}-macos-arm64.tar.gz -C release .
       - name: Install cargo-packager
         run: cargo install cargo-packager --locked
-      - name: Build arm64 macOS binaries
-        run: |
-          cargo build --release --workspace --features jemalloc
-          mkdir -p release
-          cp target/release/quincy-client release/
-          cp target/release/quincy-server release/
-          cp target/release/quincy-users release/
-          cp target/release/quincy-client-gui release/
-          cp target/release/quincy-client-daemon release/
-          tar zcf quincy-${{ github.ref_name }}-macos-arm64.tar.gz -C release .
       - name: Inject version into packager config
         run: |
           VERSION=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name=="quincy-gui") | .version')
           sed -i '' "s/version = \"0.0.0\"/version = \"$VERSION\"/" packager.macos.toml
       - name: Package macOS installer
         run: cargo packager --release -c packager.macos.toml
+        env:
+          SKIP_BUILD: "1"
       - name: Collect artifacts
         run: |
           mkdir -p artifacts
@@ -152,12 +192,9 @@ jobs:
           files: artifacts/*
 
   build-windows:
-    name: Build and package Windows
+    name: Build Windows
 
     runs-on: windows-latest
-
-    permissions:
-      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -168,27 +205,66 @@ jobs:
         name: Cache toolchain and dependencies
       - uses: ilammy/setup-nasm@v1
         name: Install NASM
-      - name: Install cargo-packager
-        run: cargo install cargo-packager --locked
       - name: Build x86_64 Windows binaries
         run: |
           cargo build --release --workspace
-          Invoke-WebRequest https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile $env:TEMP\wintun.zip
-          Expand-Archive $env:TEMP\wintun.zip -DestinationPath $env:TEMP\wintun -Force
           mkdir ./release
-          cp $env:TEMP\wintun\wintun\bin\amd64\wintun.dll release/
           cp target/release/quincy-client.exe release/
           cp target/release/quincy-server.exe release/
           cp target/release/quincy-users.exe release/
           cp target/release/quincy-client-gui.exe release/
           cp target/release/quincy-client-daemon.exe release/
+      - uses: actions/upload-artifact@v4
+        name: Upload build artifacts
+        with:
+          name: windows-binaries
+          path: release/
+
+  package-windows:
+    name: Package Windows
+
+    runs-on: windows-latest
+    needs: build-windows
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        name: Checkout repository
+      - uses: dtolnay/rust-toolchain@nightly
+        name: Set up toolchain
+      - uses: Swatinem/rust-cache@v2
+        name: Cache cargo-packager
+        with:
+          cache-targets: false
+          cache-directories: ~/.cargo/bin
+      - uses: actions/download-artifact@v4
+        name: Download build artifacts
+        with:
+          name: windows-binaries
+          path: target/release/
+      - name: Download wintun
+        run: |
+          Invoke-WebRequest https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile $env:TEMP\wintun.zip
+          Expand-Archive $env:TEMP\wintun.zip -DestinationPath $env:TEMP\wintun -Force
+          cp $env:TEMP\wintun\wintun\bin\amd64\wintun.dll target/release/
+      - name: Create zip archive
+        run: |
+          mkdir ./release
+          cp target/release/* release/
           Compress-Archive -Path release/* -DestinationPath quincy-${{ github.ref_name }}-windows-x86_64.zip
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
       - name: Inject version into packager config
         run: |
           $VERSION = (cargo metadata --format-version 1 --no-deps | ConvertFrom-Json).packages | Where-Object { $_.name -eq "quincy-gui" } | Select-Object -ExpandProperty version
           (Get-Content packager.windows.toml) -replace 'version = "0.0.0"', "version = `"$VERSION`"" | Set-Content packager.windows.toml
       - name: Package Windows installer
         run: cargo packager --release -c packager.windows.toml
+        env:
+          SKIP_BUILD: "1"
+          SKIP_WINTUN: "1"
       - name: Collect artifacts
         run: |
           mkdir artifacts
