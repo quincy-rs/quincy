@@ -1,0 +1,64 @@
+[package]
+name = "quincy-gui"
+description = "QUIC-based VPN - GUI client and daemon"
+readme = "../README.md"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "quincy-client-gui"
+path = "src/bin/client_gui.rs"
+
+[[bin]]
+name = "quincy-client-daemon"
+path = "src/bin/client_daemon.rs"
+
+[features]
+default = ["offload", "jemalloc"]
+offload = ["quincy/offload"]
+jemalloc = ["quincy/jemalloc"]
+
+[dependencies]
+quincy = { workspace = true }
+quincy-client = { workspace = true }
+
+# Configuration
+clap = { workspace = true }
+
+# GUI
+iced = { workspace = true }
+
+# Networking
+ipnet = { workspace = true }
+
+# Utils
+dashmap = { workspace = true }
+
+# Tokio
+tokio = { workspace = true }
+
+# Tracing/Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+nu-ansi-term = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Utils
+regex = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+iced = { workspace = true, features = ["image"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
