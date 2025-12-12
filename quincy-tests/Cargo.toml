@@ -1,0 +1,28 @@
+[package]
+name = "quincy-tests"
+description = "Integration tests for Quincy VPN"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+quincy = { workspace = true }
+quincy-client = { workspace = true }
+quincy-server = { workspace = true }
+
+tokio = { workspace = true }
+tracing = { workspace = true }
+ipnet = { workspace = true }
+bytes = { workspace = true }
+
+rstest = "^0.25.0"
+etherparse = "^0.18.0"
+tracing-test = { version = "^0.2.4", features = ["no-env-filter"] }

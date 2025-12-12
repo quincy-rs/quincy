@@ -1,13 +1,13 @@
 # The address and port the Quincy server is available at
-connection_string = "quincy:55555"
+connection_string = "<your_server>:55555"
 
 [authentication]
 # The username used for authentication
-username = "test"
+username = "some_user"
 # The password used for authentication
-password = "test"
+password = "some_password"
 # A list of trusted certificate file paths the server can use or have its certificate signed by
-trusted_certificate_paths = ["examples/cert/server_cert.pem"]
+trusted_certificate_paths = ["some/cert/path/server_cert.pem"]
 # A list of trusted certificates as PEM strings
 # trusted_certificates = [
 #   "-----BEGIN CERTIFICATE-----\nMIIBkjCB...\n-----END CERTIFICATE-----"
