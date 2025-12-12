@@ -2,7 +2,7 @@ name: Publish release
 
 on:
   release:
-    types: [ created ]
+    types: [created]
 
 jobs:
   publish-crate:
@@ -30,7 +30,7 @@ jobs:
         run: cargo publish --locked --workspace --exclude quincy-tests
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-  
+
   build-linux:
     name: Build Linux
 
@@ -40,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         name: Checkout repository
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@stable
         name: Set up toolchain
       - uses: Swatinem/rust-cache@v2
         name: Cache toolchain and dependencies
@@ -71,7 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         name: Checkout repository
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@stable
         name: Set up toolchain
       - uses: Swatinem/rust-cache@v2
         name: Cache cargo-packager
@@ -121,7 +121,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         name: Checkout repository
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@stable
         name: Set up toolchain
       - uses: Swatinem/rust-cache@v2
         name: Cache toolchain and dependencies
@@ -152,7 +152,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         name: Checkout repository
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@stable
         name: Set up toolchain
       - uses: Swatinem/rust-cache@v2
         name: Cache cargo-packager
@@ -199,7 +199,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         name: Checkout repository
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@stable
         name: Set up toolchain
       - uses: Swatinem/rust-cache@v2
         name: Cache toolchain and dependencies
@@ -232,7 +232,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         name: Checkout repository
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@stable
         name: Set up toolchain
       - uses: Swatinem/rust-cache@v2
         name: Cache cargo-packager
