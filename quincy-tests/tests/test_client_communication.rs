@@ -48,16 +48,16 @@ interface_impl!(
 async fn test_client_communication(client_config: ClientConfig, mut server_config: ServerConfig) {
     server_config.isolate_clients = false;
 
-    let mut client_a: QuincyClient<ClientAInterface> = QuincyClient::new(client_config.clone());
-    let mut client_b: QuincyClient<ClientBInterface> = QuincyClient::new(client_config);
+    let mut client_a = QuincyClient::new(client_config.clone());
+    let mut client_b = QuincyClient::new(client_config);
     let server = QuincyServer::new(server_config).unwrap();
 
     let ip_client_a = Ipv4Addr::new(10, 0, 0, 2);
     let ip_client_b = Ipv4Addr::new(10, 0, 0, 3);
 
     tokio::spawn(async move { server.run::<ServerInterface>().await.unwrap() });
-    client_a.start().await.unwrap();
-    client_b.start().await.unwrap();
+    client_a.start::<ClientAInterface>().await.unwrap();
+    client_b.start::<ClientBInterface>().await.unwrap();
 
     // Test client A -> client B
     let test_packet = dummy_packet(ip_client_a, ip_client_b);

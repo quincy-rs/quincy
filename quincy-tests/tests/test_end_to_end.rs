@@ -37,14 +37,14 @@ interface_impl!(
 #[rstest]
 #[tokio::test]
 async fn test_end_to_end_communication(client_config: ClientConfig, server_config: ServerConfig) {
-    let mut client: QuincyClient<ClientInterface> = QuincyClient::new(client_config);
+    let mut client = QuincyClient::new(client_config);
     let server = QuincyServer::new(server_config).unwrap();
 
     let ip_server = Ipv4Addr::new(10, 0, 0, 1);
     let ip_client = Ipv4Addr::new(10, 0, 0, 2);
 
     tokio::spawn(async move { server.run::<ServerInterface>().await.unwrap() });
-    client.start().await.unwrap();
+    client.start::<ClientInterface>().await.unwrap();
 
     // Test client -> server
     let test_packet = dummy_packet(ip_client, ip_server);

@@ -19,22 +19,19 @@ pub struct TunRsInterface {
     inner: Arc<AsyncDevice>,
     reader_channel: Mutex<Receiver<Packet>>,
     writer_channel: Sender<Packet>,
-    #[allow(unused)]
     reader_task: JoinHandle<Result<()>>,
-    #[allow(unused)]
     writer_task: JoinHandle<Result<()>>,
     mtu: u16,
     gateway: Option<IpAddr>,
 }
 
 impl InterfaceIO for TunRsInterface {
-    #[allow(unused)]
     fn create_interface(
         interface_address: IpNet,
         mtu: u16,
         tunnel_gateway: Option<IpAddr>,
-        routes: Option<&[IpNet]>,
-        dns_servers: Option<&[IpAddr]>,
+        _routes: Option<&[IpNet]>,
+        _dns_servers: Option<&[IpAddr]>,
     ) -> Result<Self>
     where
         Self: Sized,
@@ -52,17 +49,13 @@ impl InterfaceIO for TunRsInterface {
                     None
                 };
 
-                builder.ipv4(
-                    interface_address.addr(),
-                    interface_address.netmask(),
-                    destination,
-                )
+                builder.ipv4(addr, netmask, destination)
             }
             IpNet::V6(interface_address) => {
                 let addr = interface_address.addr();
                 let netmask = interface_address.netmask();
 
-                builder.ipv6(interface_address.addr(), interface_address.netmask())
+                builder.ipv6(addr, netmask)
             }
         };
 
@@ -74,7 +67,7 @@ impl InterfaceIO for TunRsInterface {
 
         let interface = builder
             .build_async()
-            .map_err(|e| InterfaceError::CreationFailed)?;
+            .map_err(|_| InterfaceError::CreationFailed)?;
         let interface = Arc::new(interface);
 
         info!(
@@ -150,6 +143,9 @@ impl InterfaceIO for TunRsInterface {
     }
 
     fn down(&self) -> Result<()> {
+        self.reader_task.abort();
+        self.writer_task.abort();
+
         self.inner
             .enabled(false)
             .map_err(|e| InterfaceError::ConfigurationFailed {
@@ -278,6 +274,10 @@ fn reader_task(
 
             let packet = packet_buf.split_to(size).into();
 
+            if reader_channel_tx.is_closed() {
+                break;
+            }
+
             reader_channel_tx
                 .send(packet)
                 .await
@@ -286,6 +286,9 @@ fn reader_task(
                 })
                 .inspect_err(|e| error!("{e}"))?;
         }
+
+        info!("reader task exiting - channel closed");
+        Ok(())
     })
 }
 
@@ -297,19 +300,23 @@ fn writer_task(
 ) -> JoinHandle<Result<()>> {
     tokio::spawn(async move {
         loop {
-            let packet = writer_channel_rx
-                .recv()
-                .await
-                .ok_or_else(|| InterfaceError::IoError {
-                    operation: "failed to receive packet from writer channel".to_string(),
-                })
-                .inspect_err(|e| error!("{e}"))?;
+            if writer_channel_rx.is_closed() {
+                break;
+            }
+
+            let packet = match writer_channel_rx.recv().await {
+                Some(packet) => packet,
+                None => break,
+            };
 
             interface
                 .send(&packet)
                 .await
                 .inspect_err(|e| error!("failed to send packet: {}", e))?;
         }
+
+        info!("writer task exiting - channel closed");
+        Ok(())
     })
 }
 
@@ -348,6 +355,10 @@ fn reader_task(
             }
             .inspect_err(|e| error!("failed to receive packets from interface: {e}"))?;
 
+            if writer_channel_rx.is_closed() {
+                break;
+            }
+
             for idx in 0..num_packets {
                 let size = sizes[idx];
                 let packet = bufs[idx].split_to(size).into();
@@ -356,10 +367,13 @@ fn reader_task(
 
                 if send_res.is_err() {
                     // Receiver has been dropped, exit the task
-                    return Ok(());
+                    break;
                 }
             }
         }
+
+        info!("reader task exiting - channel closed");
+        Ok(())
     })
 }
 
@@ -387,7 +401,7 @@ fn writer_task(
                 .await;
 
             if num_packets == 0 || writer_channel_rx.is_closed() {
-                return Ok(());
+                break;
             }
 
             let mut send_bufs = packet_buf
@@ -404,6 +418,9 @@ fn writer_task(
                 .await
                 .inspect_err(|e| error!("failed to send packet to interface: {e}"))?;
         }
+
+        info!("writer task exiting - channel closed");
+        Ok(())
     })
 }
 

@@ -39,7 +39,7 @@ async fn run_client() -> Result<()> {
     // Enable tracing with the log level from the configuration.
     tracing::subscriber::set_global_default(log_subscriber(&config.log.level))?;
 
-    let mut client: QuincyClient<TunRsInterface> = QuincyClient::new(config);
-    client.start().await?;
+    let mut client = QuincyClient::new(config);
+    client.start::<TunRsInterface>().await?;
     client.wait_for_shutdown().await
 }

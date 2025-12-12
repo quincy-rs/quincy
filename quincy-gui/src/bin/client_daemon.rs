@@ -42,7 +42,7 @@ pub struct Args {
 /// monitoring for connection health.
 struct ClientDaemon {
     /// The underlying Quincy VPN client instance
-    client: Arc<Mutex<Option<QuincyClient<TunRsInterface>>>>,
+    client: Arc<Mutex<Option<QuincyClient>>>,
     /// Timestamp when the current connection was established
     connection_start_time: Arc<Mutex<Option<Instant>>>,
     /// Unique identifier for this daemon instance
@@ -81,7 +81,7 @@ impl ClientDaemon {
         let mut client = QuincyClient::new(config);
 
         // Start the client in a separate task so we can listen for cancellation
-        let start_future = client.start();
+        let start_future = client.start::<TunRsInterface>();
 
         tokio::select! {
             result = start_future => {
@@ -135,10 +135,7 @@ impl ClientDaemon {
     }
 
     /// Determines the current connection status based on client state.
-    fn determine_connection_status(
-        &self,
-        client: &QuincyClient<TunRsInterface>,
-    ) -> ConnectionStatus {
+    fn determine_connection_status(&self, client: &QuincyClient) -> ConnectionStatus {
         if client.is_running() {
             if let Some(relayer) = client.relayer() {
                 match relayer.connection().close_reason() {
@@ -156,10 +153,7 @@ impl ClientDaemon {
     }
 
     /// Extracts connection metrics from the client if available.
-    async fn extract_connection_metrics(
-        &self,
-        client: &QuincyClient<TunRsInterface>,
-    ) -> Option<ConnectionMetrics> {
+    async fn extract_connection_metrics(&self, client: &QuincyClient) -> Option<ConnectionMetrics> {
         if let Some(relayer) = client.relayer() {
             let stats = relayer.connection().stats();
             let connection_duration = self

@@ -10,18 +10,16 @@ use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tracing::{debug, info};
 
-pub struct ClientRelayer<I: InterfaceIO> {
-    #[allow(unused)]
-    interface: Arc<Interface<I>>,
+pub struct ClientRelayer {
     connection: Connection,
     relayer_task: JoinHandle<Result<()>>,
     shutdown_tx: broadcast::Sender<()>,
 }
 
-impl<I: InterfaceIO> ClientRelayer<I> {
+impl ClientRelayer {
     /// Creates a new instance of the client relayer and starts relaying packets between
     /// the TUN interface and the QUIC connection.
-    pub fn start(interface: Interface<I>, connection: Connection) -> Result<Self> {
+    pub fn start(interface: Interface<impl InterfaceIO>, connection: Connection) -> Result<Self> {
         let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
         let interface = Arc::new(interface);
 
@@ -32,7 +30,6 @@ impl<I: InterfaceIO> ClientRelayer<I> {
         ));
 
         Ok(Self {
-            interface,
             connection,
             relayer_task,
             shutdown_tx,
@@ -67,7 +64,7 @@ impl<I: InterfaceIO> ClientRelayer<I> {
     /// - `connection` - a Quinn connection representing the connection to the Quincy server
     /// - `interface` - the TUN interface
     async fn relay_packets(
-        interface: Arc<Interface<I>>,
+        interface: Arc<Interface<impl InterfaceIO>>,
         connection: Connection,
         mut shutdown_rx: broadcast::Receiver<()>,
     ) -> Result<()> {
@@ -114,7 +111,7 @@ impl<I: InterfaceIO> ClientRelayer<I> {
     /// - `interface` - TUN interface
     async fn process_outgoing_traffic(
         connection: Connection,
-        interface: Arc<Interface<I>>,
+        interface: Arc<Interface<impl InterfaceIO>>,
     ) -> Result<()> {
         debug!("Started outgoing traffic task (interface -> QUIC tunnel)");
 
@@ -136,7 +133,7 @@ impl<I: InterfaceIO> ClientRelayer<I> {
     /// - `interface` - TUN interface
     async fn process_inbound_traffic(
         connection: Connection,
-        interface: Arc<Interface<I>>,
+        interface: Arc<Interface<impl InterfaceIO>>,
     ) -> Result<()> {
         debug!("Started inbound traffic task (QUIC tunnel -> interface)");
 

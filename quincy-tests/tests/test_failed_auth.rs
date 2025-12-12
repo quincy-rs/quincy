@@ -38,11 +38,11 @@ interface_impl!(
 #[traced_test]
 async fn test_failed_auth(mut client_config: ClientConfig, server_config: ServerConfig) {
     client_config.authentication.password = "wrong_password".to_string();
-    let mut client: QuincyClient<ClientInterface> = QuincyClient::new(client_config);
+    let mut client = QuincyClient::new(client_config);
     let server = QuincyServer::new(server_config).unwrap();
 
     tokio::spawn(async move { server.run::<ServerInterface>().await });
-    assert!(client.start().await.is_err());
+    assert!(client.start::<ClientInterface>().await.is_err());
 
     assert!(logs_contain("Failed to authenticate client"));
 }

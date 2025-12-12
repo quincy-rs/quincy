@@ -2,7 +2,6 @@ mod relayer;
 
 use crate::auth::AuthClient;
 use crate::users_file_auth::UsersFileClientAuthenticator;
-use std::fmt::Debug;
 
 use quincy::config::ClientConfig;
 use quincy::constants::QUINN_RUNTIME;
@@ -18,14 +17,14 @@ use quincy::network::interface::{Interface, InterfaceIO};
 use tracing::{debug, info};
 
 /// Represents a Quincy client that connects to a server and relays packets between the server and a TUN interface.
-pub struct QuincyClient<I: InterfaceIO> {
+pub struct QuincyClient {
     config: ClientConfig,
-    relayer: Option<ClientRelayer<I>>,
+    relayer: Option<ClientRelayer>,
     client_address: Option<IpNet>,
     server_address: Option<IpNet>,
 }
 
-impl<I: InterfaceIO> QuincyClient<I> {
+impl QuincyClient {
     /// Creates a new instance of a Quincy client.
     ///
     /// ### Arguments
@@ -40,7 +39,7 @@ impl<I: InterfaceIO> QuincyClient<I> {
     }
 
     /// Connects to the Quincy server and starts the workers for this instance of the Quincy client.
-    pub async fn start(&mut self) -> Result<()> {
+    pub async fn start<I: InterfaceIO>(&mut self) -> Result<()> {
         if self.relayer.is_some() {
             return Err(QuincyError::system("Client is already started"));
         }
@@ -61,7 +60,7 @@ impl<I: InterfaceIO> QuincyClient<I> {
         self.client_address = Some(client_address);
         self.server_address = Some(server_address);
 
-        let interface = Interface::create(
+        let interface: Interface<I> = Interface::create(
             client_address,
             self.config.connection.mtu,
             Some(server_address.addr()),
@@ -103,7 +102,7 @@ impl<I: InterfaceIO> QuincyClient<I> {
         Ok(())
     }
 
-    pub fn relayer(&self) -> Option<&ClientRelayer<I>> {
+    pub fn relayer(&self) -> Option<&ClientRelayer> {
         self.relayer.as_ref()
     }
 
@@ -188,12 +187,5 @@ impl<I: InterfaceIO> QuincyClient<I> {
         let endpoint = Endpoint::new(endpoint_config, None, socket, QUINN_RUNTIME.clone())?;
 
         Ok(endpoint)
-    }
-}
-
-impl<I: InterfaceIO> Debug for QuincyClient<I> {
-    // TODO: Implement a more detailed display format if needed
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "QuincyClient ({})", self.config.connection_string)
     }
 }
