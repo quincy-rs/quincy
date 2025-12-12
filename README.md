@@ -86,6 +86,11 @@ Platform-specific installers for the GUI client are available for download from 
 - **macOS**: DMG disk image (`.dmg`)
 - **Linux**: Debian package (`.deb`) and AppImage (`.AppImage`)
 
+**Note for macOS users**: After installing, you may need to remove the quarantine attribute before the app can be launched:
+```bash
+xattr -d com.apple.quarantine /Applications/Quincy.app
+```
+
 ## Building from sources
 As Quincy does not rely upon any non-Rust libraries, the build process is incredibly simple:
 ```bash
