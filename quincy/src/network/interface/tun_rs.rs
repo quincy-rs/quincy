@@ -355,7 +355,7 @@ fn reader_task(
             }
             .inspect_err(|e| error!("failed to receive packets from interface: {e}"))?;
 
-            if writer_channel_rx.is_closed() {
+            if reader_channel_rx.is_closed() {
                 break;
             }
 
