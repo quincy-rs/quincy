@@ -388,31 +388,25 @@ impl QuincyGui {
             let routes_display = if config.network.routes.is_empty() {
                 "None".to_string()
             } else {
-                format!(
-                    "Routes: {}",
-                    config
-                        .network
-                        .routes
-                        .iter()
-                        .map(|route| route.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
+                config
+                    .network
+                    .routes
+                    .iter()
+                    .map(|route| route.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             };
 
             let dns_servers_display = if config.network.dns_servers.is_empty() {
                 "None".to_string()
             } else {
-                format!(
-                    "DNS servers: {}",
-                    config
-                        .network
-                        .dns_servers
-                        .iter()
-                        .map(|dns| dns.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
+                config
+                    .network
+                    .dns_servers
+                    .iter()
+                    .map(|dns| dns.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             };
 
             column![
