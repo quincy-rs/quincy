@@ -6,7 +6,7 @@ use std::fmt::Debug;
 
 use quincy::config::ClientConfig;
 use quincy::constants::QUINN_RUNTIME;
-use quincy::socket::bind_socket;
+use quincy::network::socket::bind_socket;
 use quincy::{QuincyError, Result};
 use quinn::{Connection, Endpoint};
 

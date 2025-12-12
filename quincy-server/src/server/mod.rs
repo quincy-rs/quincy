@@ -12,7 +12,7 @@ use dashmap::DashMap;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use quincy::config::ServerConfig;
-use quincy::socket::bind_socket;
+use quincy::network::socket::bind_socket;
 use quincy::Result;
 use quinn::{Endpoint, VarInt};
 use tokio::signal;
