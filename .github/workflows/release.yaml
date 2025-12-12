@@ -32,13 +32,10 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
   
   build-linux:
-    name: Build and package Linux
+    name: Build Linux
 
     runs-on: ubuntu-latest
     container: quay.io/pypa/manylinux_2_28_x86_64
-
-    permissions:
-      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -47,10 +44,6 @@ jobs:
         name: Set up toolchain
       - uses: Swatinem/rust-cache@v2
         name: Cache toolchain and dependencies
-      - name: Install AppImage dependencies
-        run: yum install -y file patchelf
-      - name: Install cargo-packager
-        run: cargo install cargo-packager --locked
       - name: Build x86_64 Linux binaries
         run: |
           cargo build --release --workspace --features jemalloc
@@ -60,13 +53,50 @@ jobs:
           cp target/release/quincy-users release/
           cp target/release/quincy-client-gui release/
           cp target/release/quincy-client-daemon release/
+      - uses: actions/upload-artifact@v4
+        name: Upload build artifacts
+        with:
+          name: linux-binaries
+          path: release/
+
+  package-linux:
+    name: Package Linux
+
+    runs-on: ubuntu-latest
+    needs: build-linux
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        name: Checkout repository
+      - uses: dtolnay/rust-toolchain@nightly
+        name: Set up toolchain
+      - uses: actions/download-artifact@v4
+        name: Download build artifacts
+        with:
+          name: linux-binaries
+          path: target/release/
+      - name: Make binaries executable
+        run: chmod +x target/release/*
+      - name: Create tarball
+        run: |
+          mkdir -p release
+          cp target/release/* release/
           tar zcf quincy-${{ github.ref_name }}-linux-x86_64.tar.gz -C release .
+      - name: Install AppImage dependencies
+        run: sudo apt-get update && sudo apt-get install -y libfuse2
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
       - name: Inject version into packager config
         run: |
-          VERSION=$(cargo metadata --format-version 1 --no-deps | python3 -c "import sys, json; pkgs = json.load(sys.stdin)['packages']; print(next(p['version'] for p in pkgs if p['name'] == 'quincy-gui'))")
+          VERSION=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name=="quincy-gui") | .version')
           sed -i "s/version = \"0.0.0\"/version = \"$VERSION\"/" packager.linux.toml
       - name: Package Linux installers
         run: cargo packager --release -c packager.linux.toml
+        env:
+          SKIP_BUILD: "1"
       - name: Collect artifacts
         run: |
           mkdir -p artifacts
