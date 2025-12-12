@@ -6,9 +6,7 @@ use quincy::network::interface::tun_rs::TunRsInterface;
 use quincy::{QuincyError, Result};
 use quincy_client::client::QuincyClient;
 use quincy_gui::gui::GuiError;
-use quincy_gui::ipc::{
-    get_ipc_socket_path, ClientStatus, ConnectionMetrics, ConnectionStatus, IpcClient, IpcMessage,
-};
+use quincy_gui::ipc::{ClientStatus, ConnectionMetrics, ConnectionStatus, IpcClient, IpcMessage};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -21,12 +19,18 @@ use tracing_subscriber::EnvFilter;
 #[derive(Parser)]
 #[command(name = "quincy-client-daemon")]
 pub struct Args {
-    /// Path to the configuration file
-    #[arg(long)]
-    pub config_path: PathBuf,
     /// Name of the client instance
     #[arg(long)]
     pub instance_name: String,
+    /// Path to the configuration file
+    #[arg(long)]
+    pub config_path: PathBuf,
+    /// Path to the IPC socket to connect to
+    #[arg(long)]
+    pub socket_path: PathBuf,
+    /// Path to the log file
+    #[arg(long)]
+    pub log_path: PathBuf,
     /// Environment variable prefix for configuration
     #[arg(long, default_value = "QUINCY_")]
     pub env_prefix: String,
@@ -437,7 +441,7 @@ impl Clone for ClientDaemon {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    initialize_logging(&args.log_level);
+    initialize_logging(&args.log_level, &args.log_path);
 
     // Validate instance name defensively to prevent unsafe IPC names
     use quincy_gui::validation;
@@ -446,10 +450,9 @@ async fn main() -> Result<()> {
     info!("Starting Quincy client daemon: {}", args.instance_name);
 
     let daemon = ClientDaemon::new(args.instance_name.clone());
-    let socket_path = get_ipc_socket_path(&args.instance_name);
 
     daemon
-        .run_ipc_client(&socket_path, &args.config_path)
+        .run_ipc_client(&args.socket_path, &args.config_path)
         .await?;
 
     info!("Daemon shutdown complete");
@@ -458,17 +461,23 @@ async fn main() -> Result<()> {
 
 /// Initializes the logging system for the daemon.
 /// Prefers RUST_LOG environment variable, falls back to log_level argument.
-fn initialize_logging(log_level: &str) {
+/// Logs to a file for later retrieval by the GUI.
+fn initialize_logging(log_level: &str, log_path: &Path) {
+    use std::fs::OpenOptions;
+
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
 
-    // Enable ANSI color support on Windows
-    #[cfg(windows)]
-    let with_ansi = nu_ansi_term::enable_ansi_support().is_ok();
-    #[cfg(not(windows))]
-    let with_ansi = true;
-
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_ansi(with_ansi)
-        .init();
+    if let Ok(log_file) = OpenOptions::new().create(true).append(true).open(log_path) {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_ansi(false)
+            .with_writer(log_file)
+            .init();
+    } else {
+        // Fall back to stdout if file creation fails
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_ansi(false)
+            .init();
+    }
 }

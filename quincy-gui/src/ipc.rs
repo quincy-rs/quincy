@@ -330,3 +330,28 @@ pub fn get_ipc_socket_path(instance_name: &str) -> PathBuf {
         env::temp_dir().join(format!("quincy-{instance_name}.sock"))
     }
 }
+
+pub fn get_log_file_path(instance_name: &str) -> PathBuf {
+    #[cfg(unix)]
+    {
+        // Use XDG_STATE_HOME (~/.local/state) for logs, or fall back to XDG_RUNTIME_DIR
+        if let Ok(state_dir) = env::var("XDG_STATE_HOME") {
+            let state_path = PathBuf::from(&state_dir);
+            if state_path.exists() && state_path.is_dir() {
+                return state_path.join(format!("quincy-{instance_name}.log"));
+            }
+        }
+        if let Ok(runtime_dir) = env::var("XDG_RUNTIME_DIR") {
+            let runtime_path = PathBuf::from(&runtime_dir);
+            if runtime_path.exists() && runtime_path.is_dir() {
+                return runtime_path.join(format!("quincy-{instance_name}.log"));
+            }
+        }
+        env::temp_dir().join(format!("quincy-{instance_name}.log"))
+    }
+
+    #[cfg(not(unix))]
+    {
+        env::temp_dir().join(format!("quincy-{instance_name}.log"))
+    }
+}
