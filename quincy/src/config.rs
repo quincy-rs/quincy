@@ -117,12 +117,15 @@ pub struct ConnectionConfig {
     /// The MTU to use for connections and the TUN interface (default = 1400)
     #[serde(default = "default_mtu")]
     pub mtu: u16,
-    /// The time after which a connection is considered timed out (default = 30s)
-    #[serde(default = "default_timeout")]
-    pub connection_timeout: Duration,
-    /// Keep alive interval for connections (default = 25s)
-    #[serde(default = "default_keep_alive_interval")]
-    pub keep_alive_interval: Duration,
+    /// The congestion control algorithm to use (default = Cubic)
+    #[serde(default = "default_congestion_controller")]
+    pub congestion_controller: CongestionController,
+    /// The time after which a connection is considered timed out in seconds (default = 30)
+    #[serde(default = "default_timeout_s")]
+    pub connection_timeout_s: u64,
+    /// Keep alive interval for connections in seconds (default = 25)
+    #[serde(default = "default_keep_alive_interval_s")]
+    pub keep_alive_interval_s: u64,
     /// The size of the send buffer of the socket and Quinn endpoint (default = 2097152)
     #[serde(default = "default_buffer_size")]
     pub send_buffer_size: u64,
@@ -134,6 +137,7 @@ pub struct ConnectionConfig {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct CryptoConfig {
     /// The key exchange algorithm to use (default = Hybrid)
+    #[serde(default = "default_key_exchange")]
     pub key_exchange: KeyExchange,
 }
 
@@ -173,14 +177,36 @@ pub struct LogConfig {
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub enum AuthType {
+    /// File-based user authentication with username/password
+    #[serde(alias = "users_file")]
     UsersFile,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub enum KeyExchange {
+    /// ECDH
+    #[serde(alias = "standard")]
     Standard,
+    /// X25519 + MLKEM
+    #[serde(alias = "hybrid")]
     Hybrid,
+    /// MLKEM
+    #[serde(alias = "post_quantum")]
     PostQuantum,
+}
+
+/// Congestion control algorithm to use for QUIC connections
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub enum CongestionController {
+    /// CUBIC congestion control (RFC 8312) - widely deployed, loss-based
+    #[serde(alias = "cubic")]
+    Cubic,
+    /// BBR congestion control - latency-based, experimental in Quinn
+    #[serde(alias = "bbr", alias = "BBR")]
+    Bbr,
+    /// New Reno congestion control - simple, traditional TCP-style
+    #[serde(alias = "new_reno")]
+    NewReno,
 }
 
 pub trait ConfigInit<T: DeserializeOwned> {
@@ -225,18 +251,11 @@ impl Default for ConnectionConfig {
     fn default() -> Self {
         Self {
             mtu: default_mtu(),
-            connection_timeout: default_timeout(),
-            keep_alive_interval: default_keep_alive_interval(),
+            congestion_controller: default_congestion_controller(),
+            connection_timeout_s: default_timeout_s(),
+            keep_alive_interval_s: default_keep_alive_interval_s(),
             send_buffer_size: default_buffer_size(),
             recv_buffer_size: default_buffer_size(),
-        }
-    }
-}
-
-impl Default for CryptoConfig {
-    fn default() -> Self {
-        Self {
-            key_exchange: KeyExchange::Hybrid,
         }
     }
 }
@@ -246,6 +265,14 @@ impl Default for NetworkConfig {
         Self {
             routes: default_routes(),
             dns_servers: default_dns_servers(),
+        }
+    }
+}
+
+impl Default for CryptoConfig {
+    fn default() -> Self {
+        Self {
+            key_exchange: default_key_exchange(),
         }
     }
 }
@@ -270,12 +297,16 @@ fn default_mtu() -> u16 {
     1400
 }
 
-fn default_timeout() -> Duration {
-    Duration::from_secs(30)
+fn default_congestion_controller() -> CongestionController {
+    CongestionController::Cubic
 }
 
-fn default_keep_alive_interval() -> Duration {
-    Duration::from_secs(25)
+fn default_timeout_s() -> u64 {
+    30
+}
+
+fn default_keep_alive_interval_s() -> u64 {
+    25
 }
 
 fn default_auth_type() -> AuthType {
@@ -304,6 +335,10 @@ fn default_trusted_certificate_paths() -> Vec<PathBuf> {
 
 fn default_trusted_certificates() -> Vec<String> {
     Vec::new()
+}
+
+fn default_key_exchange() -> KeyExchange {
+    KeyExchange::Hybrid
 }
 
 impl ClientConfig {
@@ -352,16 +387,20 @@ impl ClientConfig {
         let mut transport_config = TransportConfig::default();
 
         transport_config.max_idle_timeout(Some(
-            self.connection.connection_timeout.try_into().map_err(|e| {
-                ConfigError::InvalidValue {
-                    field: "connection_timeout".to_string(),
+            Duration::from_secs(self.connection.connection_timeout_s)
+                .try_into()
+                .map_err(|e| ConfigError::InvalidValue {
+                    field: "connection_timeout_s".to_string(),
                     reason: format!("timeout value out of bounds: {e}"),
-                }
-            })?,
+                })?,
         ));
-        transport_config.keep_alive_interval(Some(self.connection.keep_alive_interval));
+        transport_config.keep_alive_interval(Some(Duration::from_secs(
+            self.connection.keep_alive_interval_s,
+        )));
         transport_config.initial_mtu(self.connection.mtu_with_overhead());
         transport_config.min_mtu(self.connection.mtu_with_overhead());
+        transport_config
+            .congestion_controller_factory(self.connection.congestion_controller_factory());
 
         quinn_config.transport_config(Arc::new(transport_config));
 
@@ -410,15 +449,17 @@ impl ServerConfig {
         let mut transport_config = TransportConfig::default();
 
         transport_config.max_idle_timeout(Some(
-            self.connection.connection_timeout.try_into().map_err(|e| {
-                ConfigError::InvalidValue {
-                    field: "connection_timeout".to_string(),
+            Duration::from_secs(self.connection.connection_timeout_s)
+                .try_into()
+                .map_err(|e| ConfigError::InvalidValue {
+                    field: "connection_timeout_s".to_string(),
                     reason: format!("timeout value out of bounds: {e}"),
-                }
-            })?,
+                })?,
         ));
         transport_config.initial_mtu(self.connection.mtu_with_overhead());
         transport_config.min_mtu(self.connection.mtu_with_overhead());
+        transport_config
+            .congestion_controller_factory(self.connection.congestion_controller_factory());
 
         quinn_config.transport_config(Arc::new(transport_config));
 
@@ -441,6 +482,20 @@ impl ConnectionConfig {
 
     pub fn mtu_with_overhead(&self) -> u16 {
         self.mtu + QUIC_MTU_OVERHEAD
+    }
+
+    pub fn congestion_controller_factory(
+        &self,
+    ) -> Arc<dyn quinn::congestion::ControllerFactory + Send + Sync> {
+        let config: Box<dyn quinn::congestion::ControllerFactory + Send + Sync> = match self
+            .congestion_controller
+        {
+            CongestionController::Cubic => Box::new(quinn::congestion::CubicConfig::default()),
+            CongestionController::Bbr => Box::new(quinn::congestion::BbrConfig::default()),
+            CongestionController::NewReno => Box::new(quinn::congestion::NewRenoConfig::default()),
+        };
+
+        Arc::from(config)
     }
 }
 
@@ -466,5 +521,160 @@ impl CryptoConfig {
                 ..custom_provider
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use figment::providers::{Format, Toml};
+
+    #[test]
+    fn parse_server_config_full() {
+        let toml = r#"
+            name = "quincy-server"
+            certificate_file = "/path/to/cert.pem"
+            certificate_key_file = "/path/to/key.pem"
+            bind_address = "192.168.1.1"
+            bind_port = 12345
+            reuse_socket = true
+            tunnel_network = "10.0.0.1/24"
+            isolate_clients = false
+
+            [authentication]
+            auth_type = "UsersFile"
+            users_file = "/path/to/users"
+
+            [connection]
+            mtu = 1500
+            congestion_controller = "Bbr"
+            connection_timeout_s = 45
+            keep_alive_interval_s = 20
+            send_buffer_size = 4194304
+            recv_buffer_size = 4194304
+
+            [crypto]
+            key_exchange = "PostQuantum"
+
+            [log]
+            level = "debug"
+        "#;
+
+        let config: ServerConfig = Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("Failed to parse server config");
+
+        assert_eq!(config.name, "quincy-server");
+        assert_eq!(config.certificate_file, PathBuf::from("/path/to/cert.pem"));
+        assert_eq!(
+            config.certificate_key_file,
+            PathBuf::from("/path/to/key.pem")
+        );
+        assert_eq!(
+            config.bind_address,
+            "192.168.1.1".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(config.bind_port, 12345);
+        assert!(config.reuse_socket);
+        assert_eq!(
+            config.tunnel_network,
+            "10.0.0.1/24".parse::<IpNet>().unwrap()
+        );
+        assert!(!config.isolate_clients);
+        assert_eq!(config.authentication.auth_type, AuthType::UsersFile);
+        assert_eq!(
+            config.authentication.users_file,
+            PathBuf::from("/path/to/users")
+        );
+        assert_eq!(config.connection.mtu, 1500);
+        assert_eq!(
+            config.connection.congestion_controller,
+            CongestionController::Bbr
+        );
+        assert_eq!(config.connection.connection_timeout_s, 45);
+        assert_eq!(config.connection.keep_alive_interval_s, 20);
+        assert_eq!(config.connection.send_buffer_size, 4194304);
+        assert_eq!(config.connection.recv_buffer_size, 4194304);
+        assert_eq!(config.crypto.key_exchange, KeyExchange::PostQuantum);
+        assert_eq!(config.log.level, "debug");
+    }
+
+    #[test]
+    fn parse_client_config_full() {
+        let toml = r#"
+            connection_string = "example.com:55555"
+
+            [authentication]
+            auth_type = "UsersFile"
+            username = "testuser"
+            password = "testpass"
+            trusted_certificate_paths = ["/path/to/cert1.pem", "/path/to/cert2.pem"]
+            trusted_certificates = ["-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----"]
+
+            [connection]
+            mtu = 1500
+            congestion_controller = "NewReno"
+            connection_timeout_s = 45
+            keep_alive_interval_s = 20
+            send_buffer_size = 1048576
+            recv_buffer_size = 1048576
+
+            [network]
+            routes = ["10.0.1.0/24", "192.168.0.0/16"]
+            dns_servers = ["8.8.8.8", "8.8.4.4"]
+
+            [crypto]
+            key_exchange = "Standard"
+
+            [log]
+            level = "trace"
+        "#;
+
+        let config: ClientConfig = Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("Failed to parse client config");
+
+        assert_eq!(config.connection_string, "example.com:55555");
+        assert_eq!(config.authentication.auth_type, AuthType::UsersFile);
+        assert_eq!(config.authentication.username, "testuser");
+        assert_eq!(config.authentication.password, "testpass");
+        assert_eq!(
+            config.authentication.trusted_certificate_paths,
+            vec![
+                PathBuf::from("/path/to/cert1.pem"),
+                PathBuf::from("/path/to/cert2.pem")
+            ]
+        );
+        assert_eq!(
+            config.authentication.trusted_certificates,
+            vec!["-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----"]
+        );
+        assert_eq!(config.connection.mtu, 1500);
+        assert_eq!(
+            config.connection.congestion_controller,
+            CongestionController::NewReno
+        );
+        assert_eq!(config.connection.connection_timeout_s, 45);
+        assert_eq!(config.connection.keep_alive_interval_s, 20);
+        assert_eq!(config.connection.send_buffer_size, 1048576);
+        assert_eq!(config.connection.recv_buffer_size, 1048576);
+        assert_eq!(
+            config.network.routes,
+            vec![
+                "10.0.1.0/24".parse::<IpNet>().unwrap(),
+                "192.168.0.0/16".parse::<IpNet>().unwrap()
+            ]
+        );
+        assert_eq!(
+            config.network.dns_servers,
+            vec![
+                "8.8.8.8".parse::<IpAddr>().unwrap(),
+                "8.8.4.4".parse::<IpAddr>().unwrap()
+            ]
+        );
+        assert_eq!(config.crypto.key_exchange, KeyExchange::Standard);
+        assert_eq!(config.log.level, "trace");
     }
 }
