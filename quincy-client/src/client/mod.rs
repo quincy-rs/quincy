@@ -11,6 +11,7 @@ use quinn::{Connection, Endpoint};
 
 use ipnet::IpNet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+use std::time::Duration;
 
 use crate::client::relayer::ClientRelayer;
 use quincy::network::interface::{Interface, InterfaceIO};
@@ -48,7 +49,10 @@ impl QuincyClient {
         let authenticator = Box::new(UsersFileClientAuthenticator::new(
             &self.config.authentication,
         ));
-        let auth_client = AuthClient::new(authenticator, self.config.connection.connection_timeout);
+        let auth_client = AuthClient::new(
+            authenticator,
+            Duration::from_secs(self.config.connection.connection_timeout_s),
+        );
 
         let (client_address, server_address) = auth_client.authenticate(&connection).await?;
 

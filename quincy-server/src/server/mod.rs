@@ -3,6 +3,7 @@ mod connection;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::auth::AuthServer;
 use crate::server::connection::QuincyConnection;
@@ -67,7 +68,7 @@ impl QuincyServer {
         let auth_server = AuthServer::new(
             authenticator,
             self.config.tunnel_network,
-            self.config.connection.connection_timeout,
+            Duration::from_secs(self.config.connection.connection_timeout_s),
         );
 
         let (sender, receiver) = channel(PACKET_CHANNEL_SIZE);
