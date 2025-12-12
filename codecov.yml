@@ -6,5 +6,7 @@ ignore:
   - "quincy/src/network"
   # Ignore GUI code because it cannot be unit/integration tested in CI
   - "quincy-gui"
+  # Error code is mostly utilised by GUI
+  - "quincy/src/error.rs"
   # Command utilities
   - "quincy/src/utils"
