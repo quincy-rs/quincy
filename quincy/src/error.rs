@@ -359,8 +359,11 @@ pub enum DnsError {
 #[derive(Error, Debug)]
 pub enum RouteError {
     /// Route addition failed
-    #[error("Route addition failed: {destination}")]
-    AddFailed { destination: String },
+    #[error("Failed to add route '{destination}': {message}")]
+    AddFailed {
+        destination: String,
+        message: String,
+    },
 
     /// Route removal failed
     #[error("Route removal failed: {destination}")]
