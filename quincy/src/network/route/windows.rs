@@ -48,8 +48,10 @@ fn add_route(network: &IpNet, gateway: &IpAddr, interface_name: &str) -> Result<
         })?;
 
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(RouteError::AddFailed {
             destination: network.to_string(),
+            message: stderr.trim().to_string(),
         }
         .into());
     }

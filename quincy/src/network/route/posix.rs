@@ -5,11 +5,18 @@ use ipnet::IpNet;
 use std::net::IpAddr;
 
 #[cfg(target_os = "linux")]
-const ROUTE_ADD_COMMAND: &str = "route add -net {network} netmask {netmask} gw {gateway}";
+const ROUTE_ADD_COMMAND_V4: &str = "route add -net {network} netmask {netmask} gw {gateway}";
 #[cfg(target_os = "macos")]
-const ROUTE_ADD_COMMAND: &str = "route -n add -net {network} -netmask {netmask} {gateway}";
+const ROUTE_ADD_COMMAND_V4: &str = "route -n add -net {network} -netmask {netmask} {gateway}";
 #[cfg(target_os = "freebsd")]
-const ROUTE_ADD_COMMAND: &str = "route add -net {network} -netmask {netmask} {gateway}";
+const ROUTE_ADD_COMMAND_V4: &str = "route add -net {network} -netmask {netmask} {gateway}";
+
+#[cfg(target_os = "linux")]
+const ROUTE_ADD_COMMAND_V6: &str = "route -A inet6 add {network}/{prefix} gw {gateway}";
+#[cfg(target_os = "macos")]
+const ROUTE_ADD_COMMAND_V6: &str = "route -n add -inet6 {network}/{prefix} {gateway}";
+#[cfg(target_os = "freebsd")]
+const ROUTE_ADD_COMMAND_V6: &str = "route add -inet6 {network}/{prefix} {gateway}";
 
 /// Adds a list of routes to the routing table.
 ///
@@ -31,10 +38,16 @@ pub fn add_routes(networks: &[IpNet], gateway: &IpAddr, _interface_name: &str) -
 /// - `network` - the network to be routed through the gateway
 /// - `gateway` - the gateway to be used for the route
 fn add_route(network: &IpNet, gateway: &IpAddr) -> Result<()> {
-    let route_add_command = ROUTE_ADD_COMMAND
-        .replace("{network}", &network.addr().to_string())
-        .replace("{netmask}", &network.netmask().to_string())
-        .replace("{gateway}", &gateway.to_string());
+    let route_add_command = match network {
+        IpNet::V4(_) => ROUTE_ADD_COMMAND_V4
+            .replace("{network}", &network.addr().to_string())
+            .replace("{netmask}", &network.netmask().to_string())
+            .replace("{gateway}", &gateway.to_string()),
+        IpNet::V6(_) => ROUTE_ADD_COMMAND_V6
+            .replace("{network}", &network.addr().to_string())
+            .replace("{prefix}", &network.prefix_len().to_string())
+            .replace("{gateway}", &gateway.to_string()),
+    };
 
     let route_command_split = route_add_command.split(" ").collect::<Vec<_>>();
 
@@ -51,8 +64,10 @@ fn add_route(network: &IpNet, gateway: &IpAddr) -> Result<()> {
         })?;
 
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(RouteError::AddFailed {
             destination: network.to_string(),
+            message: stderr.trim().to_string(),
         }
         .into());
     }
