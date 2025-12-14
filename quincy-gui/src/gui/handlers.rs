@@ -15,19 +15,19 @@ use super::types::{
 };
 use crate::ipc::{ConnectionMetrics, ConnectionStatus, IpcMessage};
 use crate::validation;
+use quincy::error::Result;
 
-/// Helper function to parse a config file and return the parsed config and any error.
+/// Helper function to parse and validate a config file.
 /// Returns a tuple of (Option<ClientConfig>, Option<String>) where:
 /// - The first element is Some(config) if parsing succeeded, None otherwise
-/// - The second element is Some(error_string) if parsing failed, None otherwise
-fn try_parse_config(path: &Path, name: &str) -> (Option<ClientConfig>, Option<String>) {
-    match ClientConfig::from_path(path, "QUINCY_") {
-        Ok(cfg) => (Some(cfg), None),
-        Err(e) => {
-            warn!("Failed to parse config {}: {}", name, e);
-            (None, Some(e.to_string()))
-        }
-    }
+/// - The second element is Some(error_string) if parsing or validation failed, None otherwise
+fn try_parse_config(path: &Path) -> Result<ClientConfig> {
+    // Parse the TOML configuration
+    let cfg = ClientConfig::from_path(path, "QUINCY_")?;
+    // Validate the config by building the quinn client config
+    let _ = cfg.quinn_client_config()?;
+
+    Ok(cfg)
 }
 
 impl QuincyGui {
@@ -57,9 +57,17 @@ impl QuincyGui {
 
         // Parse the config if not already parsed
         if entry.parsed.is_none() && entry.parse_error.is_none() {
-            let (parsed, parse_error) = try_parse_config(&entry.config.path, &entry.config.name);
-            entry.parsed = parsed;
-            entry.parse_error = parse_error;
+            match try_parse_config(&entry.config.path) {
+                Ok(cfg) => {
+                    entry.parsed = Some(cfg);
+                    entry.parse_error = None;
+                }
+                Err(e) => {
+                    error!("Failed to parse config file {}: {}", entry.config.name, e);
+                    entry.parsed = None;
+                    entry.parse_error = Some(e.to_string());
+                }
+            }
         }
 
         self.selected_config = Some(name.clone());
@@ -349,10 +357,17 @@ impl QuincyGui {
                 info!("Config file saved: {}", entry.config.path.display());
 
                 // Re-parse the configuration
-                let (parsed, parse_error) =
-                    try_parse_config(&entry.config.path, &entry.config.name);
-                entry.parsed = parsed;
-                entry.parse_error = parse_error;
+                match try_parse_config(&entry.config.path) {
+                    Ok(cfg) => {
+                        entry.parsed = Some(cfg);
+                        entry.parse_error = None;
+                    }
+                    Err(e) => {
+                        error!("Failed to parse config file {}: {}", entry.config.name, e);
+                        entry.parsed = None;
+                        entry.parse_error = Some(e.to_string());
+                    }
+                }
             }
             Err(e) => {
                 error!("Failed to save config file: {}", e);
