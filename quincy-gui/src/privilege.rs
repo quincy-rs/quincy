@@ -1,40 +1,48 @@
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-use quincy::QuincyError;
 use quincy::Result;
-use std::process::{Child, Command, Stdio};
-use tracing::info;
+use std::process::Child;
 
 /// Attempts to run a command with elevated privileges.
 /// This function will use the appropriate method for the current platform:
 /// - macOS: uses osascript with AppleScript to run the command with sudo
 /// - Linux: uses pkexec, gksudo, or similar tools
-/// - Windows: uses runas or PowerShell with elevated privileges
-pub fn run_elevated(program: &str, args: &[&str], title: &str, message: &str) -> Result<Child> {
+/// - Windows: uses ShellExecuteW with the "runas" verb to trigger UAC
+///
+/// Returns `Some(Child)` on Unix platforms for error diagnostics,
+/// `None` on Windows (ShellExecuteW doesn't provide a process handle).
+pub fn run_elevated(
+    program: &str,
+    args: &[&str],
+    title: &str,
+    message: &str,
+) -> Result<Option<Child>> {
     #[cfg(target_os = "macos")]
     {
-        run_elevated_macos(program, args, title, message)
+        run_elevated_macos(program, args, title, message).map(Some)
     }
 
     #[cfg(target_os = "linux")]
     {
-        run_elevated_linux(program, args, title, message)
+        run_elevated_linux(program, args, title, message).map(Some)
     }
 
     #[cfg(target_os = "windows")]
     {
-        run_elevated_windows(program, args, title, message)
+        run_elevated_windows(program, args, title, message).map(|()| None)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
-        return Err(QuincyError::system(
+        Err(quincy::QuincyError::system(
             "Elevated privileges are not supported on this platform",
-        ));
+        ))
     }
 }
 
 #[cfg(target_os = "macos")]
 fn run_elevated_macos(program: &str, args: &[&str], _title: &str, message: &str) -> Result<Child> {
+    use std::process::{Command, Stdio};
+    use tracing::info;
+
     // Properly escape all arguments for shell execution to prevent command injection.
     // We use single quotes around each argument and escape any embedded single quotes
     // by replacing ' with '\'' (end quote, escaped quote, start quote).
@@ -78,6 +86,8 @@ fn run_elevated_macos(program: &str, args: &[&str], _title: &str, message: &str)
 fn run_elevated_linux(program: &str, args: &[&str], _title: &str, message: &str) -> Result<Child> {
     use quincy::QuincyError;
     use std::path::Path;
+    use std::process::{Command, Stdio};
+    use tracing::info;
 
     info!("Running with elevated privileges on Linux: {}", program);
 
@@ -129,34 +139,44 @@ fn run_elevated_linux(program: &str, args: &[&str], _title: &str, message: &str)
 }
 
 #[cfg(target_os = "windows")]
-fn run_elevated_windows(
-    program: &str,
-    args: &[&str],
-    _title: &str,
-    _message: &str,
-) -> Result<Child> {
-    // On Windows, we'll use PowerShell's Start-Process with -Verb RunAs
-    // This will trigger the UAC prompt
-    let args_str = args.join(" ");
+fn run_elevated_windows(program: &str, args: &[&str], _title: &str, _message: &str) -> Result<()> {
+    use quincy::QuincyError;
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Shell::{ShellExecuteW, SE_ERR_ACCESSDENIED};
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-    info!(
-        "Running with elevated privileges on Windows: {} {}",
-        program, args_str
-    );
+    fn to_wide(s: &str) -> Vec<u16> {
+        OsStr::new(s).encode_wide().chain(Some(0)).collect()
+    }
 
-    let powershell_command = format!(
-        "Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs",
-        program,
-        args_str.replace("'", "''")
-    );
+    let verb = to_wide("runas");
+    let file = to_wide(program);
+    let params = to_wide(&args.join(" "));
 
-    let child = Command::new("powershell")
-        .arg("-Command")
-        .arg(powershell_command)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    // SAFETY: All pointers are valid null-terminated wide strings.
+    let result = unsafe {
+        ShellExecuteW(
+            Some(HWND::default()),
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(file.as_ptr()),
+            PCWSTR(params.as_ptr()),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
 
-    Ok(child)
+    if result.0 as usize <= 32 {
+        return Err(QuincyError::system(
+            if result.0 as usize == SE_ERR_ACCESSDENIED as usize {
+                "User declined UAC prompt"
+            } else {
+                "Failed to start elevated process"
+            },
+        ));
+    }
+
+    Ok(())
 }

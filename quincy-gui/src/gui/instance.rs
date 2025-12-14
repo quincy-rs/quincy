@@ -68,7 +68,7 @@ impl QuincyInstance {
                     "Timed out after {:?} while waiting for daemon IPC connection",
                     Self::DAEMON_START_TIMEOUT
                 );
-                return Err(QuincyError::system(Self::get_spawn_error(&mut child)));
+                return Err(QuincyError::system(Self::get_spawn_error(child.as_mut())));
             }
         };
 
@@ -91,14 +91,14 @@ impl QuincyInstance {
     }
 
     /// Spawns the daemon process with elevated privileges.
-    /// Returns the child process handle for error reporting if IPC connection fails.
+    /// Returns `Some(Child)` on Unix for error diagnostics, `None` on Windows.
     fn spawn_daemon_process(
         daemon_binary: &Path,
         name: &str,
         config_path: &Path,
         socket_path: &Path,
         log_path: &Path,
-    ) -> Result<Child> {
+    ) -> Result<Option<Child>> {
         // Convert paths to strings - no manual quoting needed since we pass args directly
         let binary_str = daemon_binary.to_string_lossy();
         let config_str = config_path.to_string_lossy();
@@ -127,7 +127,11 @@ impl QuincyInstance {
     }
 
     /// Extracts error information from a failed daemon spawn attempt.
-    fn get_spawn_error(child: &mut Child) -> String {
+    fn get_spawn_error(child: Option<&mut Child>) -> String {
+        let Some(child) = child else {
+            return "Timed out waiting for daemon IPC connection".to_string();
+        };
+
         let Ok(Some(status)) = child.try_wait() else {
             return "Timed out waiting for daemon IPC connection".to_string();
         };
