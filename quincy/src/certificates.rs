@@ -20,12 +20,18 @@ pub fn load_certificates_from_file(path: &Path) -> Result<Vec<CertificateDer<'st
     let certs: std::result::Result<Vec<CertificateDer>, _> =
         rustls_pemfile::certs(&mut reader).collect();
 
-    certs.map_err(|_| {
-        CertificateError::LoadFailed {
+    let certs = certs.map_err(|_| CertificateError::LoadFailed {
+        path: path.to_path_buf(),
+    })?;
+
+    if certs.is_empty() {
+        return Err(CertificateError::LoadFailed {
             path: path.to_path_buf(),
         }
-        .into()
-    })
+        .into());
+    }
+
+    Ok(certs)
 }
 
 /// Loads certificates from a PEM string.
@@ -40,7 +46,13 @@ pub fn load_certificates_from_pem(pem_data: &str) -> Result<Vec<CertificateDer<'
     let certs: std::result::Result<Vec<CertificateDer>, _> =
         rustls_pemfile::certs(&mut reader).collect();
 
-    certs.map_err(|_| CertificateError::UnsupportedFormat.into())
+    let certs = certs.map_err(|_| CertificateError::UnsupportedFormat)?;
+
+    if certs.is_empty() {
+        return Err(CertificateError::UnsupportedFormat.into());
+    }
+
+    Ok(certs)
 }
 
 /// Loads a private key from a file.
@@ -67,4 +79,133 @@ pub fn load_private_key_from_file(path: &Path) -> Result<PrivatePkcs8KeyDer<'sta
         .clone_key();
 
     Ok(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    const VALID_CERT_PEM: &str = include_str!("../../quincy-tests/tests/static/server_cert.pem");
+    const VALID_KEY_PEM: &str = include_str!("../../quincy-tests/tests/static/server_key.pem");
+
+    // ========== load_certificates_from_pem tests ==========
+
+    #[test]
+    fn load_certificates_from_pem_valid() {
+        let certs = load_certificates_from_pem(VALID_CERT_PEM).unwrap();
+        assert_eq!(certs.len(), 1);
+    }
+
+    #[test]
+    fn load_certificates_from_pem_empty_string() {
+        let result = load_certificates_from_pem("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_certificates_from_pem_path_string() {
+        let result = load_certificates_from_pem("/path/to/cert.pem");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_certificates_from_pem_invalid_pem() {
+        let result = load_certificates_from_pem("not a valid pem");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_certificates_from_pem_wrong_pem_type() {
+        // Private key PEM should not parse as certificate
+        let result = load_certificates_from_pem(VALID_KEY_PEM);
+        assert!(result.is_err());
+    }
+
+    // ========== load_certificates_from_file tests ==========
+
+    #[test]
+    fn load_certificates_from_file_valid() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(VALID_CERT_PEM.as_bytes()).unwrap();
+
+        let certs = load_certificates_from_file(file.path()).unwrap();
+        assert_eq!(certs.len(), 1);
+    }
+
+    #[test]
+    fn load_certificates_from_file_nonexistent() {
+        let result = load_certificates_from_file(Path::new("/nonexistent/path/cert.pem"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_certificates_from_file_empty() {
+        let file = NamedTempFile::new().unwrap();
+
+        let result = load_certificates_from_file(file.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_certificates_from_file_invalid_content() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"not a valid certificate").unwrap();
+
+        let result = load_certificates_from_file(file.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_certificates_from_file_wrong_pem_type() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(VALID_KEY_PEM.as_bytes()).unwrap();
+
+        let result = load_certificates_from_file(file.path());
+        assert!(result.is_err());
+    }
+
+    // ========== load_private_key_from_file tests ==========
+
+    #[test]
+    fn load_private_key_from_file_valid() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(VALID_KEY_PEM.as_bytes()).unwrap();
+
+        let result = load_private_key_from_file(file.path());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn load_private_key_from_file_nonexistent() {
+        let result = load_private_key_from_file(Path::new("/nonexistent/path/key.pem"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_private_key_from_file_empty() {
+        let file = NamedTempFile::new().unwrap();
+
+        let result = load_private_key_from_file(file.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_private_key_from_file_invalid_content() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"not a valid key").unwrap();
+
+        let result = load_private_key_from_file(file.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_private_key_from_file_wrong_pem_type() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(VALID_CERT_PEM.as_bytes()).unwrap();
+
+        let result = load_private_key_from_file(file.path());
+        assert!(result.is_err());
+    }
 }

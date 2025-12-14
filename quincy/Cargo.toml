@@ -62,3 +62,6 @@ jemallocator = { workspace = true, optional = true }
 # WinTun
 [target.'cfg(windows)'.dependencies]
 wintun-bindings = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
