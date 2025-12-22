@@ -7,9 +7,9 @@ fn main() {
         res.compile().unwrap();
 
         // Embed UAC manifest only for the daemon binary
-        embed_resource::compile_for(
+        let _ = embed_resource::compile_for(
             "resources/quincy-client-daemon.rc",
-            &["quincy-client-daemon"],
+            ["quincy-client-daemon"],
             embed_resource::NONE,
         );
     }
