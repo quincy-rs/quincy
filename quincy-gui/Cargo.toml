@@ -53,13 +53,15 @@ nu-ansi-term = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# Privilege escalation
+privesc = { workspace = true }
+
 # Utils
 regex = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 iced = { workspace = true, features = ["image"] }
-windows = { version = "0.62", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
