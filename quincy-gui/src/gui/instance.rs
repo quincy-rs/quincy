@@ -1,7 +1,7 @@
+use privesc::{PrivilegedChild, PrivilegedCommand};
 use quincy::{QuincyError, Result};
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::Child;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -13,7 +13,6 @@ use crate::ipc::{
     get_ipc_socket_path, get_log_file_path, ConnectionMetrics, ConnectionStatus, IpcMessage,
     IpcServer,
 };
-use crate::privilege::run_elevated;
 use crate::validation;
 
 impl QuincyInstance {
@@ -52,7 +51,7 @@ impl QuincyInstance {
         let ipc_server = IpcServer::new(&socket_path)?;
 
         let daemon_binary = Self::get_daemon_binary_path()?;
-        let mut child = Self::spawn_daemon_process(
+        let handle = Self::spawn_daemon_process(
             &daemon_binary,
             &name,
             &config_path,
@@ -68,7 +67,7 @@ impl QuincyInstance {
                     "Timed out after {:?} while waiting for daemon IPC connection",
                     Self::DAEMON_START_TIMEOUT
                 );
-                return Err(QuincyError::system(Self::get_spawn_error(&mut child)));
+                return Err(QuincyError::system(Self::get_spawn_error(handle)));
             }
         };
 
@@ -91,14 +90,14 @@ impl QuincyInstance {
     }
 
     /// Spawns the daemon process with elevated privileges.
-    /// Returns the child process handle for error reporting if IPC connection fails.
+    /// Returns PrivilegedChild for error diagnostics.
     fn spawn_daemon_process(
         daemon_binary: &Path,
         name: &str,
         config_path: &Path,
         socket_path: &Path,
         log_path: &Path,
-    ) -> Result<Child> {
+    ) -> Result<PrivilegedChild> {
         // Convert paths to strings - no manual quoting needed since we pass args directly
         let binary_str = daemon_binary.to_string_lossy();
         let config_str = config_path.to_string_lossy();
@@ -118,33 +117,35 @@ impl QuincyInstance {
             &log_str,
         ];
 
-        run_elevated(
-            &binary_str,
-            &args,
-            "Quincy VPN Client",
-            "Quincy needs administrator privileges to create network interfaces.",
-        )
+        PrivilegedCommand::new(binary_str)
+            .args(args)
+            .gui(true)
+            .prompt("Quincy needs administrator privileges to create network interfaces.")
+            .spawn()
+            .map_err(|err| QuincyError::system(format!("{err}")))
     }
 
     /// Extracts error information from a failed daemon spawn attempt.
-    fn get_spawn_error(child: &mut Child) -> String {
-        let Ok(Some(status)) = child.try_wait() else {
-            return "Timed out waiting for daemon IPC connection".to_string();
-        };
-
-        if status.success() {
+    fn get_spawn_error(mut handle: PrivilegedChild) -> String {
+        // If the child process has not exited yet
+        if handle.try_wait().ok().flatten().is_none() {
             return "Timed out waiting for daemon IPC connection".to_string();
         }
 
-        let Some(mut stderr) = child.stderr.take() else {
-            return format!("Daemon process exited with status: {status}");
+        // We know wait will not block because try_wait() returned Some(status)
+        let Some(output) = handle.wait().ok() else {
+            return "Timed out waiting for daemon IPC connection".to_string();
         };
 
-        let mut buf = String::new();
-        if std::io::Read::read_to_string(&mut stderr, &mut buf).is_ok() && !buf.is_empty() {
-            format!("Daemon process failed: {}", buf.trim())
-        } else {
-            format!("Daemon process exited with status: {status}")
+        if output.status.success() {
+            return "Timed out waiting for daemon IPC connection".to_string();
+        }
+
+        match output.stderr_str() {
+            Some(stderr) if !stderr.is_empty() => {
+                format!("Daemon process failed: {}", stderr.trim())
+            }
+            _ => format!("Daemon process exited with status: {}", output.status),
         }
     }
 
