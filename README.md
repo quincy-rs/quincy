@@ -9,6 +9,9 @@
 
 Quincy is a VPN client and server implementation using the [QUIC](https://en.wikipedia.org/wiki/QUIC) protocol with support for pre-quantum, hybrid and post-quantum cryptography.
 
+<img src="docs/gui.png" alt="GUI" width="800">
+<img src="docs/quincy-client-cap.gif" alt="CLI", width="800">
+
 ## Table of contents
 - [Supported platforms](#supported-platforms)
 - [Installation](#installation)
