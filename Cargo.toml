@@ -69,7 +69,7 @@ tracing-subscriber = { version = "^0.3.20", features = ["env-filter", "ansi"] }
 nu-ansi-term = "^0.50.0"
 
 # Privilege escalation
-privesc = "^1.1.2"
+privesc = "^1.2.0"
 
 # Utils
 thiserror = "^2.0"

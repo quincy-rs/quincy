@@ -3421,9 +3421,9 @@ checksum = "e8cf8e6a8aa66ce33f63993ffc4ea4271eb5b0530a9002db8455ea6050c77bfa"
 
 [[package]]
 name = "privesc"
-version = "1.1.2"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b37823c1df4598129bc533337915eeda602f9cf44a05daf38b87b20226b414cb"
+checksum = "be4ba7d6241edab38818c6de5a80b3342dc7cdf23b643aa80f57b075accb237b"
 dependencies = [
  "thiserror 2.0.17",
  "which",

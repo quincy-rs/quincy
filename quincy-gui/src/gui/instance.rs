@@ -99,26 +99,19 @@ impl QuincyInstance {
         log_path: &Path,
     ) -> Result<PrivilegedChild> {
         // Convert paths to strings - no manual quoting needed since we pass args directly
-        let binary_str = daemon_binary.to_string_lossy();
         let config_str = config_path.to_string_lossy();
         let socket_str = socket_path.to_string_lossy();
         let log_str = log_path.to_string_lossy();
 
-        // Build argument list to pass directly to privilege escalation tools
-        // Arguments are passed as-is without shell interpretation
-        let args: [&str; 8] = [
-            "--instance-name",
-            name,
-            "--config-path",
-            &config_str,
-            "--socket-path",
-            &socket_str,
-            "--log-path",
-            &log_str,
-        ];
-
-        PrivilegedCommand::new(binary_str)
-            .args(args)
+        PrivilegedCommand::new(daemon_binary)
+            .arg("--instance-name")
+            .arg(name)
+            .arg("--config-path")
+            .arg(config_str)
+            .arg("--socket-path")
+            .arg(socket_str)
+            .arg("--log-path")
+            .arg(log_str)
             .gui(true)
             .prompt("Quincy needs administrator privileges to create network interfaces.")
             .spawn()
