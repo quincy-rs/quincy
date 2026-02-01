@@ -30,13 +30,17 @@ impl InterfaceIO for TunRsInterface {
         interface_address: IpNet,
         mtu: u16,
         tunnel_gateway: Option<IpAddr>,
+        interface_name: Option<&str>,
         _routes: Option<&[IpNet]>,
         _dns_servers: Option<&[IpAddr]>,
     ) -> Result<Self>
     where
         Self: Sized,
     {
-        let builder = DeviceBuilder::new().enable(true).mtu(mtu);
+        let mut builder = DeviceBuilder::new().enable(true).mtu(mtu);
+        if let Some(interface_name) = interface_name {
+            builder = builder.name(interface_name);
+        }
 
         let builder = match interface_address {
             IpNet::V4(interface_address) => {

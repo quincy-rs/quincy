@@ -29,6 +29,8 @@ use std::time::Duration;
 pub struct ServerConfig {
     /// The name of the tunnel
     pub name: String,
+    /// Optional interface name to request for the tunnel device
+    pub interface_name: Option<String>,
     /// The certificate to use for the tunnel
     pub certificate_file: PathBuf,
     /// The certificate private key to use for the tunnel
@@ -165,6 +167,8 @@ pub struct NetworkConfig {
     /// ```
     #[serde(default = "default_dns_servers")]
     pub dns_servers: Vec<IpAddr>,
+    /// Optional interface name to request for the tunnel device
+    pub interface_name: Option<String>,
 }
 
 /// Logging configuration
@@ -265,6 +269,7 @@ impl Default for NetworkConfig {
         Self {
             routes: default_routes(),
             dns_servers: default_dns_servers(),
+            interface_name: None,
         }
     }
 }

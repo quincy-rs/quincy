@@ -68,6 +68,7 @@ impl QuincyClient {
             client_address,
             self.config.connection.mtu,
             Some(server_address.addr()),
+            self.config.network.interface_name.clone(),
             Some(self.config.network.routes.clone()),
             Some(self.config.network.dns_servers.clone()),
         )?;

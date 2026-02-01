@@ -56,6 +56,7 @@ impl QuincyServer {
             self.config.tunnel_network,
             self.config.connection.mtu,
             Some(self.config.tunnel_network.network()),
+            self.config.interface_name.clone(),
             None,
             None,
         )?;
