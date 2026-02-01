@@ -16,6 +16,7 @@ pub trait InterfaceIO: Send + Sync + 'static {
         interface_address: IpNet,
         mtu: u16,
         tunnel_gateway: Option<IpAddr>,
+        interface_name: Option<&str>,
         routes: Option<&[IpNet]>,
         dns_servers: Option<&[IpAddr]>,
     ) -> Result<Self>
@@ -78,6 +79,7 @@ impl<I: InterfaceIO> Interface<I> {
         interface_address: IpNet,
         mtu: u16,
         tunnel_gateway: Option<IpAddr>,
+        interface_name: Option<String>,
         routes: Option<Vec<IpNet>>,
         dns_servers: Option<Vec<IpAddr>>,
     ) -> Result<Self> {
@@ -85,6 +87,7 @@ impl<I: InterfaceIO> Interface<I> {
             interface_address,
             mtu,
             tunnel_gateway,
+            interface_name.as_deref(),
             routes.as_deref(),
             dns_servers.as_deref(),
         )?;

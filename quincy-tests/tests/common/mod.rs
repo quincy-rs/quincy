@@ -74,6 +74,7 @@ macro_rules! interface_impl {
                 _interface_address: IpNet,
                 _mtu: u16,
                 _tunnel_gateway: Option<IpAddr>,
+                _interface_name: Option<&str>,
                 _routes: Option<&[IpNet]>,
                 _dns_servers: Option<&[IpAddr]>,
             ) -> Result<Self> {
