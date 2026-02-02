@@ -1,5 +1,6 @@
 use crate::error::{CertificateError, Result};
-use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::fs::File;
 use std::io::{BufReader, Cursor};
 use std::path::Path;
@@ -57,28 +58,23 @@ pub fn load_certificates_from_pem(pem_data: &str) -> Result<Vec<CertificateDer<'
 
 /// Loads a private key from a file.
 ///
+/// Automatically detects and parses private keys in any supported format:
+/// - PKCS8
+/// - RSA PKCS1
+/// - EC SEC1
+///
 /// ### Arguments
 /// - `path` - Path to the file containing the private key.
 ///
 /// ### Returns
-/// - `PrivatePkcs8KeyDer` - The loaded private key.
-pub fn load_private_key_from_file(path: &Path) -> Result<PrivatePkcs8KeyDer<'static>> {
-    let file = File::open(path).map_err(|_| CertificateError::PrivateKeyLoadFailed {
-        path: path.to_path_buf(),
-    })?;
-    let mut reader = BufReader::new(file);
-
-    let key = rustls_pemfile::pkcs8_private_keys(&mut reader)
-        .last()
-        .ok_or_else(|| CertificateError::PrivateKeyLoadFailed {
+/// - `PrivateKeyDer` - The loaded private key.
+pub fn load_private_key_from_file(path: &Path) -> Result<PrivateKeyDer<'static>> {
+    PrivateKeyDer::from_pem_file(path).map_err(|_| {
+        CertificateError::PrivateKeyLoadFailed {
             path: path.to_path_buf(),
-        })?
-        .map_err(|_| CertificateError::PrivateKeyLoadFailed {
-            path: path.to_path_buf(),
-        })?
-        .clone_key();
-
-    Ok(key)
+        }
+        .into()
+    })
 }
 
 #[cfg(test)]
@@ -87,14 +83,20 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    const VALID_CERT_PEM: &str = include_str!("../../quincy-tests/tests/static/server_cert.pem");
-    const VALID_KEY_PEM: &str = include_str!("../../quincy-tests/tests/static/server_key.pem");
+    const VALID_CERT_PEM_PKCS8: &str =
+        include_str!("../../quincy-tests/tests/static/server_cert_pkcs8.pem");
+    const VALID_KEY_PEM_PKCS8: &str =
+        include_str!("../../quincy-tests/tests/static/server_key_pkcs8.pem");
+    const VALID_KEY_PEM_RSA_PKCS1: &str =
+        include_str!("../../quincy-tests/tests/static/server_key_rsa_pkcs1.pem");
+    const VALID_KEY_PEM_EC_SEC1: &str =
+        include_str!("../../quincy-tests/tests/static/server_key_ec_sec1.pem");
 
     // ========== load_certificates_from_pem tests ==========
 
     #[test]
     fn load_certificates_from_pem_valid() {
-        let certs = load_certificates_from_pem(VALID_CERT_PEM).unwrap();
+        let certs = load_certificates_from_pem(VALID_CERT_PEM_PKCS8).unwrap();
         assert_eq!(certs.len(), 1);
     }
 
@@ -119,7 +121,7 @@ mod tests {
     #[test]
     fn load_certificates_from_pem_wrong_pem_type() {
         // Private key PEM should not parse as certificate
-        let result = load_certificates_from_pem(VALID_KEY_PEM);
+        let result = load_certificates_from_pem(VALID_KEY_PEM_PKCS8);
         assert!(result.is_err());
     }
 
@@ -128,7 +130,7 @@ mod tests {
     #[test]
     fn load_certificates_from_file_valid() {
         let mut file = NamedTempFile::new().unwrap();
-        file.write_all(VALID_CERT_PEM.as_bytes()).unwrap();
+        file.write_all(VALID_CERT_PEM_PKCS8.as_bytes()).unwrap();
 
         let certs = load_certificates_from_file(file.path()).unwrap();
         assert_eq!(certs.len(), 1);
@@ -160,7 +162,7 @@ mod tests {
     #[test]
     fn load_certificates_from_file_wrong_pem_type() {
         let mut file = NamedTempFile::new().unwrap();
-        file.write_all(VALID_KEY_PEM.as_bytes()).unwrap();
+        file.write_all(VALID_KEY_PEM_PKCS8.as_bytes()).unwrap();
 
         let result = load_certificates_from_file(file.path());
         assert!(result.is_err());
@@ -169,12 +171,48 @@ mod tests {
     // ========== load_private_key_from_file tests ==========
 
     #[test]
-    fn load_private_key_from_file_valid() {
+    fn load_private_key_from_file_valid_pkcs8() {
         let mut file = NamedTempFile::new().unwrap();
-        file.write_all(VALID_KEY_PEM.as_bytes()).unwrap();
+        file.write_all(VALID_KEY_PEM_PKCS8.as_bytes()).unwrap();
 
         let result = load_private_key_from_file(file.path());
         assert!(result.is_ok());
+        // Verify it's PKCS8 format
+        if let Ok(PrivateKeyDer::Pkcs8(_)) = result {
+            // Success
+        } else {
+            panic!("Expected PKCS8 key format");
+        }
+    }
+
+    #[test]
+    fn load_private_key_from_file_valid_rsa_pkcs1() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(VALID_KEY_PEM_RSA_PKCS1.as_bytes()).unwrap();
+
+        let result = load_private_key_from_file(file.path());
+        assert!(result.is_ok());
+        // Verify it's PKCS1 (RSA) format
+        if let Ok(PrivateKeyDer::Pkcs1(_)) = result {
+            // Success
+        } else {
+            panic!("Expected PKCS1 (RSA) key format");
+        }
+    }
+
+    #[test]
+    fn load_private_key_from_file_valid_ec_sec1() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(VALID_KEY_PEM_EC_SEC1.as_bytes()).unwrap();
+
+        let result = load_private_key_from_file(file.path());
+        assert!(result.is_ok());
+        // Verify it's SEC1 (EC) format
+        if let Ok(PrivateKeyDer::Sec1(_)) = result {
+            // Success
+        } else {
+            panic!("Expected SEC1 (EC) key format");
+        }
     }
 
     #[test]
@@ -203,7 +241,7 @@ mod tests {
     #[test]
     fn load_private_key_from_file_wrong_pem_type() {
         let mut file = NamedTempFile::new().unwrap();
-        file.write_all(VALID_CERT_PEM.as_bytes()).unwrap();
+        file.write_all(VALID_CERT_PEM_PKCS8.as_bytes()).unwrap();
 
         let result = load_private_key_from_file(file.path());
         assert!(result.is_err());
