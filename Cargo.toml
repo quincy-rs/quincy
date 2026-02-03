@@ -31,7 +31,7 @@ quinn = { version = "^0.11.8", default-features = false, features = [
 # Interfaces and networking
 tun-rs = { version = "=2.7.3", features = ["async_tokio"] } # pinned audited version
 socket2 = { version = "^0.6.0", features = ["all"] }
-bytes = "^1.4"
+bytes = "^1.11"
 ipnet = { version = "^2.7", features = ["serde"] }
 
 # Tokio
