@@ -432,7 +432,7 @@ impl ServerConfig {
         let mut rustls_config = rustls::ServerConfig::builder_with_provider(crypto_provider)
             .with_protocol_versions(TLS_PROTOCOL_VERSIONS)?
             .with_no_client_auth()
-            .with_single_cert(certs, key.into())?;
+            .with_single_cert(certs, key)?;
 
         rustls_config.alpn_protocols.clone_from(&TLS_ALPN_PROTOCOLS);
         rustls_config.max_early_data_size = 0;

@@ -3,7 +3,7 @@ connection_string = "localhost:55155"
 [authentication]
 username = "test"
 password = "test"
-trusted_certificate_paths = ["tests/static/server_cert.pem"]
+trusted_certificate_paths = ["tests/static/server_cert_pkcs8.pem"]
 
 [connection]
 mtu = 1400
