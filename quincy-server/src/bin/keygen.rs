@@ -1,6 +1,6 @@
 use base64::prelude::*;
 use clap::{Parser, Subcommand, ValueEnum};
-use rand_core::{OsRng, RngCore};
+use rand_core::OsRng;
 use reishi_quinn::{KeyPair, PqKeyPair};
 use std::io::{self, BufRead};
 use std::process;
@@ -53,14 +53,12 @@ fn main() {
 fn genkey(key_exchange: KeyExchangeMode) {
     match key_exchange {
         KeyExchangeMode::Standard => {
-            let mut secret_bytes = [0u8; 32];
-            OsRng.fill_bytes(&mut secret_bytes);
-            println!("{}", BASE64_STANDARD.encode(secret_bytes));
+            let kp = KeyPair::generate(&mut OsRng);
+            println!("{}", BASE64_STANDARD.encode(kp.secret_bytes()));
         }
         KeyExchangeMode::Hybrid => {
-            let mut secret_bytes = [0u8; 96];
-            OsRng.fill_bytes(&mut secret_bytes);
-            println!("{}", BASE64_STANDARD.encode(secret_bytes));
+            let kp = PqKeyPair::generate(&mut OsRng);
+            println!("{}", BASE64_STANDARD.encode(kp.secret_bytes()));
         }
     }
 }

@@ -4087,9 +4087,9 @@ checksum = "a96887878f22d7bad8a3b6dc5b7440e0ada9a245242924394987b21cf2210a4c"
 
 [[package]]
 name = "reishi-handshake"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "161592ee7fb6b6eb32c0b5cb252d546d8c5463c90c5735013766a779c8a274e5"
+checksum = "0cf18b7bca84bafa836d2d1bd6347e45aa355dbf8d7aa356ebb4ea57f5efd0a4"
 dependencies = [
  "blake2",
  "chacha20poly1305",
@@ -4102,9 +4102,9 @@ dependencies = [
 
 [[package]]
 name = "reishi-quinn"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70e0cf8be0a5192cd1aa3348707e43e7272539d74b1cf4fa59b33dfc4e8bfde6"
+checksum = "94962481ab860e29ddf0368da01dda2ac857230dcb3b78833215eef627d10bb1"
 dependencies = [
  "bytes",
  "chacha20",
