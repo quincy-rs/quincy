@@ -1,9 +1,13 @@
 name = "tun0"
-certificate_file = "tests/static/server_cert_pkcs8.pem"
-certificate_key_file = "tests/static/server_key_pkcs8.pem"
 tunnel_network = "10.0.0.1/24"
 bind_address = "::"
 bind_port = 55155
+
+[protocol]
+mode = "tls"
+key_exchange = "Standard"
+certificate_file = "tests/static/server_cert_pkcs8.pem"
+certificate_key_file = "tests/static/server_key_pkcs8.pem"
 
 [authentication]
 users_file = "tests/static/users"

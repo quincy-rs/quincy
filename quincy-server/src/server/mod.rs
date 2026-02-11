@@ -201,7 +201,10 @@ impl QuincyServer {
             self.config.reuse_socket,
         )?;
 
-        let endpoint_config = self.config.connection.as_endpoint_config()?;
+        let endpoint_config = self
+            .config
+            .connection
+            .as_endpoint_config(self.config.noise_key_exchange())?;
         let endpoint = Endpoint::new(
             endpoint_config,
             Some(quinn_config),

@@ -1,0 +1,16 @@
+connection_string = "localhost:55158"
+
+[protocol]
+mode = "noise"
+key_exchange = "Standard"
+server_public_key = "6axLx6XF+CrzWL6WppAr4R5/FO1NCq6yRuG59iqQCQ8="
+
+[authentication]
+username = "test"
+password = "test"
+
+[connection]
+mtu = 1400
+
+[log]
+level = "info"

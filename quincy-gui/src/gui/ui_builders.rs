@@ -6,6 +6,7 @@ use iced::widget::{
 };
 use iced::widget::{column, opaque, row, scrollable, stack, text, text_editor};
 use iced::{border, Alignment, Background, Border, Element, Font, Length};
+use quincy::config::ClientProtocolConfig;
 
 use super::app::QuincyGui;
 use super::styles::{
@@ -409,6 +410,15 @@ impl QuincyGui {
                     .join(", ")
             };
 
+            let (protocol_name, crypto_type) = match &config.protocol {
+                ClientProtocolConfig::Tls(tls_config) => {
+                    ("TLS", format!("{:?}", tls_config.key_exchange))
+                }
+                ClientProtocolConfig::Noise(noise_config) => {
+                    ("Noise", format!("{:?}", noise_config.key_exchange))
+                }
+            };
+
             column![
                 self.build_owned_config_field(
                     "Connection String".to_string(),
@@ -420,7 +430,7 @@ impl QuincyGui {
                 ),
                 self.build_owned_config_field(
                     "Encryption Type".to_string(),
-                    format!("{:?}", config.crypto.key_exchange)
+                    format!("{protocol_name} ({crypto_type})")
                 ),
                 self.build_owned_config_field("Routes".to_string(), routes_display),
                 self.build_owned_config_field("DNS Servers".to_string(), dns_servers_display),

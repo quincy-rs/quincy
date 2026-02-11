@@ -188,7 +188,10 @@ impl QuincyClient {
             false,
         )?;
 
-        let endpoint_config = self.config.connection.as_endpoint_config()?;
+        let endpoint_config = self
+            .config
+            .connection
+            .as_endpoint_config(self.config.noise_key_exchange())?;
         let endpoint = Endpoint::new(endpoint_config, None, socket, QUINN_RUNTIME.clone())?;
 
         Ok(endpoint)

@@ -6,6 +6,9 @@ connection_string = "<your_server>:55555"
 username = "some_user"
 # The password used for authentication
 password = "some_password"
+
+[protocol]
+mode = "tls"
 # A list of trusted certificate file paths the server can use or have its certificate signed by
 trusted_certificate_paths = ["some/cert/path/server_cert.pem"]
 # A list of trusted certificates as PEM strings

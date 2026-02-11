@@ -48,6 +48,10 @@ pub enum QuincyError {
     #[error("Routing error: {0}")]
     Route(#[from] RouteError),
 
+    /// Noise protocol errors
+    #[error("Noise protocol error: {0}")]
+    Noise(#[from] NoiseError),
+
     /// Socket and low-level networking errors
     #[error("Socket error: {0}")]
     Socket(#[from] SocketError),
@@ -392,6 +396,25 @@ pub enum RouteError {
     /// Platform-specific routing error
     #[error("Platform routing error: {message}")]
     PlatformError { message: String },
+}
+
+/// Noise protocol errors.
+///
+/// Covers Noise key validation, handshake failures, and configuration issues
+/// for the Noise IK protocol backend.
+#[derive(Error, Debug)]
+pub enum NoiseError {
+    /// Invalid Noise key material
+    #[error("Invalid Noise key: {reason}")]
+    InvalidKey { reason: String },
+
+    /// Noise handshake failed
+    #[error("Noise handshake failed")]
+    HandshakeFailed,
+
+    /// Noise configuration error
+    #[error("Noise configuration error: {reason}")]
+    ConfigError { reason: String },
 }
 
 /// Socket operations and low-level networking errors.

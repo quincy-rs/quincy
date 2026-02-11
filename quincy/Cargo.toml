@@ -46,6 +46,11 @@ serde_json = { workspace = true }
 rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
 
+# Noise
+reishi-quinn = { workspace = true }
+base64 = { workspace = true }
+rand_core = { workspace = true }
+
 # Tracing/Logging
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
