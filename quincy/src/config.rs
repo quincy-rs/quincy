@@ -451,33 +451,6 @@ fn tls_crypto_provider(key_exchange: &TlsKeyExchange) -> CryptoProvider {
     }
 }
 
-// --- Transport config helper ---
-
-/// Applies common transport settings to a Quinn transport config.
-fn apply_transport_config(
-    transport_config: &mut TransportConfig,
-    connection: &ConnectionConfig,
-    set_keep_alive: bool,
-) -> Result<()> {
-    transport_config.max_idle_timeout(Some(
-        Duration::from_secs(connection.connection_timeout_s)
-            .try_into()
-            .map_err(|e| ConfigError::InvalidValue {
-                field: "connection_timeout_s".to_string(),
-                reason: format!("timeout value out of bounds: {e}"),
-            })?,
-    ));
-    if set_keep_alive {
-        transport_config
-            .keep_alive_interval(Some(Duration::from_secs(connection.keep_alive_interval_s)));
-    }
-    transport_config.initial_mtu(connection.mtu_with_overhead());
-    transport_config.min_mtu(connection.mtu_with_overhead());
-    transport_config.congestion_controller_factory(connection.congestion_controller_factory());
-
-    Ok(())
-}
-
 // --- Client config builders ---
 
 impl ClientConfig {
@@ -488,7 +461,7 @@ impl ClientConfig {
     pub fn quinn_client_config(&self) -> Result<quinn::ClientConfig> {
         match &self.protocol {
             ClientProtocolConfig::Tls(tls) => self.build_tls_client_config(tls),
-            ClientProtocolConfig::Noise(noise) => Self::build_noise_client_config(noise),
+            ClientProtocolConfig::Noise(noise) => self.build_noise_client_config(noise),
         }
     }
 
@@ -528,17 +501,16 @@ impl ClientConfig {
             reason: format!("QUIC configuration creation failed: {e}"),
         })?;
 
+        let transport_config = self.connection.as_transport_config(true)?;
         let mut quinn_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
-        let mut transport_config = TransportConfig::default();
-        apply_transport_config(&mut transport_config, &self.connection, true)?;
         quinn_config.transport_config(Arc::new(transport_config));
 
         Ok(quinn_config)
     }
 
     /// Builds a Noise IK-based Quinn client configuration.
-    fn build_noise_client_config(noise: &ClientNoiseConfig) -> Result<quinn::ClientConfig> {
-        let quinn_config = match noise.key_exchange {
+    fn build_noise_client_config(&self, noise: &ClientNoiseConfig) -> Result<quinn::ClientConfig> {
+        let mut quinn_config = match noise.key_exchange {
             NoiseKeyExchange::Standard => {
                 let server_pub_bytes = decode_base64_key(&noise.server_public_key, 32)?;
                 let server_public = PublicKey::from_bytes(
@@ -580,6 +552,9 @@ impl ClientConfig {
                 cfg
             }
         };
+
+        let transport_config = self.connection.as_transport_config(true)?;
+        quinn_config.transport_config(Arc::new(transport_config));
 
         Ok(quinn_config)
     }
@@ -635,9 +610,8 @@ impl ServerConfig {
             reason: format!("QUIC configuration creation failed: {e}"),
         })?;
 
+        let transport_config = self.connection.as_transport_config(false)?;
         let mut quinn_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
-        let mut transport_config = TransportConfig::default();
-        apply_transport_config(&mut transport_config, &self.connection, false)?;
         quinn_config.transport_config(Arc::new(transport_config));
 
         Ok(quinn_config)
@@ -680,8 +654,7 @@ impl ServerConfig {
             }
         };
 
-        let mut transport_config = TransportConfig::default();
-        apply_transport_config(&mut transport_config, &self.connection, false)?;
+        let transport_config = self.connection.as_transport_config(false)?;
         quinn_config.transport_config(Arc::new(transport_config));
 
         Ok(quinn_config)
@@ -725,7 +698,7 @@ impl ConnectionConfig {
         };
 
         endpoint_config
-            .max_udp_payload_size(self.mtu_with_overhead())
+            .max_udp_payload_size(self.mtu_with_overhead()?)
             .map_err(|e| ConfigError::InvalidValue {
                 field: "mtu".to_string(),
                 reason: format!("MTU configuration failed: {e}"),
@@ -734,9 +707,45 @@ impl ConnectionConfig {
         Ok(endpoint_config)
     }
 
+    /// Creates a Quinn transport configuration.
+    ///
+    /// ### Arguments
+    /// - `set_keep_alive` - whether to enable keep-alive (typically true for clients)
+    pub fn as_transport_config(&self, set_keep_alive: bool) -> Result<TransportConfig> {
+        let mut transport_config = TransportConfig::default();
+
+        transport_config.max_idle_timeout(Some(
+            Duration::from_secs(self.connection_timeout_s)
+                .try_into()
+                .map_err(|e| ConfigError::InvalidValue {
+                    field: "connection_timeout_s".to_string(),
+                    reason: format!("timeout value out of bounds: {e}"),
+                })?,
+        ));
+        if set_keep_alive {
+            transport_config
+                .keep_alive_interval(Some(Duration::from_secs(self.keep_alive_interval_s)));
+        }
+        let mtu = self.mtu_with_overhead()?;
+        transport_config.initial_mtu(mtu);
+        transport_config.min_mtu(mtu);
+        transport_config.congestion_controller_factory(self.congestion_controller_factory());
+
+        Ok(transport_config)
+    }
+
     /// Returns the MTU with QUIC overhead added.
-    pub fn mtu_with_overhead(&self) -> u16 {
-        self.mtu + QUIC_MTU_OVERHEAD
+    pub fn mtu_with_overhead(&self) -> Result<u16> {
+        self.mtu.checked_add(QUIC_MTU_OVERHEAD).ok_or_else(|| {
+            ConfigError::InvalidValue {
+                field: "mtu".to_string(),
+                reason: format!(
+                    "MTU value {} overflows when adding QUIC overhead of {}",
+                    self.mtu, QUIC_MTU_OVERHEAD
+                ),
+            }
+            .into()
+        })
     }
 
     /// Returns the congestion controller factory for this configuration.

@@ -408,10 +408,6 @@ pub enum NoiseError {
     #[error("Invalid Noise key: {reason}")]
     InvalidKey { reason: String },
 
-    /// Noise handshake failed
-    #[error("Noise handshake failed")]
-    HandshakeFailed,
-
     /// Noise configuration error
     #[error("Noise configuration error: {reason}")]
     ConfigError { reason: String },
