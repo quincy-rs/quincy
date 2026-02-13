@@ -1,11 +1,14 @@
 # Name of the server instance (currently not used as the name of the interface)
 name = "tun0"
+# The address of the tunnel endpoint and base address of the address pool available to clients
+tunnel_network = "10.0.0.1/24"
+
+[protocol]
+mode = "tls"
 # Path to the certificate used for TLS
 certificate_file = "examples/cert/server_cert.pem"
 # Path to the certificate key used for TLS
 certificate_key_file = "examples/cert/server_key.pem"
-# The address of the tunnel endpoint and base address of the address pool available to clients
-tunnel_network = "10.0.0.1/24"
 
 [authentication]
 # Path to the file containing user credentials

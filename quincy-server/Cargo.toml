@@ -20,6 +20,10 @@ path = "src/main.rs"
 name = "quincy-users"
 path = "src/bin/users.rs"
 
+[[bin]]
+name = "quincy-keygen"
+path = "src/bin/keygen.rs"
+
 [features]
 default = ["offload", "jemalloc"]
 offload = ["quincy/offload"]
@@ -54,6 +58,10 @@ bytes = { workspace = true }
 
 # Quinn
 quinn = { workspace = true }
+
+# Noise (for quincy-keygen)
+reishi-quinn = { workspace = true }
+base64 = { workspace = true }
 
 # Serialization
 serde = { workspace = true }

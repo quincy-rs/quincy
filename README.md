@@ -27,6 +27,9 @@ Quincy is a VPN client and server implementation using the [QUIC](https://en.wik
   - [Server](#server)
   - [Users](#users)
 - [Architecture](#architecture)
+- [Protocol modes](#protocol-modes)
+  - [TLS](#tls)
+  - [Noise](#noise)
 - [Certificate management](#certificate-management)
   - [Certificate signed by a trusted CA](#certificate-signed-by-a-trusted-ca)
   - [Self-signed certificate](#self-signed-certificate)
@@ -119,6 +122,7 @@ Quincy provides a couple of binaries based on their intended use:
 - `quincy-client`: The VPN client CLI
 - `quincy-server`: The VPN server CLI
 - `quincy-users`: A utility CLI binary meant for managing the `users` file
+- `quincy-keygen`: A utility CLI binary meant for generating a new keypair when using the Noise protocol
 - `quincy-client-gui`: The VPN client GUI
 - `quincy-client-daemon`: The VPN client daemon (background privileged service)
 
@@ -183,6 +187,18 @@ The prompt will again look something like this:
 Enter the username: test
 ```
 
+### Keygen
+The `quincy-keygen` utility provides WireGuard-style key management with pipeable output:
+```bash
+# Generate a private key
+quincy-keygen genkey
+quincy-keygen genkey --key-exchange hybrid
+
+# Derive the matching public key from a private key on stdin
+quincy-keygen pubkey
+quincy-keygen pubkey --key-exchange hybrid
+```
+
 ## Architecture
 Quincy uses the QUIC protocol implemented by [`quinn`](https://github.com/quinn-rs/quinn) to create an encrypted tunnel between clients and the server.
 
@@ -198,6 +214,73 @@ The [`tokio`](https://github.com/tokio-rs/tokio) runtime is used to provide an e
 
 ### Architecture diagram
 [![Architecture diagram](docs/architecture_diagram.svg)](docs/architecture_diagram.svg)
+
+## Protocol modes
+Quincy supports two cryptographic protocol modes for the QUIC tunnel: TLS and Noise. The mode is selected in the `[protocol]` section of both the server and client configuration files.
+
+### TLS
+TLS 1.3 is the default protocol mode. It uses standard X.509 certificates for server authentication and supports three key exchange algorithms:
+- `Standard`: ECDH (X25519)
+- `Hybrid`: X25519 + ML-KEM-768
+- `PostQuantum`: ML-KEM-768
+
+TLS mode requires a certificate and private key on the server, and one or more trusted certificates on the client. See [Certificate management](#certificate-management) for details on generating and configuring certificates.
+
+**Server**
+```toml
+[protocol]
+mode = "tls"
+key_exchange = "hybrid"
+certificate_file = "server_cert.pem"
+certificate_key_file = "server_key.pem"
+```
+
+**Client**
+```toml
+[protocol]
+mode = "tls"
+key_exchange = "hybrid"
+trusted_certificate_paths = ["server_cert.pem"]
+```
+
+### Noise
+Noise mode uses the Noise NK (server public key known, initiator generates a new key-pair every time) handshake pattern instead of TLS. This has two main advantages:
+- **No certificates needed** — deployment is simpler in environments where managing a PKI or obtaining certificates from a CA is impractical. The server has a static keypair and clients are configured with the server's public key.
+- **Improved detection evasion** — traffic does not contain a standard TLS ClientHello, making it harder for DPI systems to fingerprint and block the connection.
+
+Because the client knows the server's public key ahead of time, the handshake completes in a single round trip (1-RTT). Two key exchange algorithms are supported:
+- `Standard`: X25519
+- `Hybrid`: X25519 + ML-KEM-768
+
+#### Key management
+Using the `quincy-keygen` binary, you can generate and derive the server key pair:
+```bash
+# Generate a private key
+quincy-keygen genkey
+
+# Derive the matching public key from a private key on stdin
+quincy-keygen pubkey
+```
+
+Place the keys in the respective configuration files:
+
+**Server**
+```toml
+[protocol]
+mode = "noise"
+key_exchange = "standard"
+private_key = "<base64 private key>"
+```
+
+**Client**
+```toml
+[protocol]
+mode = "noise"
+key_exchange = "standard"
+server_public_key = "<base64 public key>"
+```
+
+**Note: The `key_exchange` value must match on both the server and client.**
 
 ## Certificate management
 There are a couple of options when it comes to setting up the certificates used by Quincy.
@@ -267,6 +350,8 @@ openssl x509 -req -in cert.csr -signkey <your_certificate_key_file> -out <your_c
 
 **Server**
 ```toml
+[protocol]
+mode = "tls"
 # Path to the certificate used for TLS
 certificate_file = "server_cert.pem"
 # Path to the certificate key used for TLS
@@ -275,7 +360,8 @@ certificate_key_file = "server_key.pem"
 
 **Client**
 ```toml
-[authentication]
+[protocol]
+mode = "tls"
 # A list of trusted certificate file paths the server can use or have its certificate signed by
 trusted_certificate_paths = ["examples/cert/server_cert.pem"]
 # A list of trusted certificates as PEM strings

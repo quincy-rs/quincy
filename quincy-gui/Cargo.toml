@@ -38,9 +38,6 @@ iced = { workspace = true }
 # Networking
 ipnet = { workspace = true }
 
-# Utils
-dashmap = { workspace = true }
-
 # Tokio
 tokio = { workspace = true }
 

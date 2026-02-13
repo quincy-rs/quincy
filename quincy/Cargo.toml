@@ -46,6 +46,11 @@ serde_json = { workspace = true }
 rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
 
+# Noise
+reishi-quinn = { workspace = true }
+base64 = { workspace = true }
+rand_core = { workspace = true }
+
 # Tracing/Logging
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -54,6 +59,8 @@ nu-ansi-term = { workspace = true }
 # Utils
 # anyhow removed - using thiserror-based error system instead
 thiserror = { workspace = true }
+zeroize = { workspace = true }
+secrecy = { workspace = true }
 
 # Alloc
 [target.'cfg(unix)'.dependencies]

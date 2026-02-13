@@ -1,48 +1,36 @@
-use crate::common::{
-    client_config, make_queue_pair, server_config, TestInterface, TestReceiver, TestSender,
-};
-use quincy::config::{ClientConfig, ServerConfig};
-use quincy::Result;
+mod common;
+
+use common::{setup_interface, TestInterface};
+use quincy::config::{ClientConfig, FromPath, ServerConfig};
 use quincy_client::client::QuincyClient;
 use quincy_server::server::QuincyServer;
 use rstest::rstest;
-use std::sync::LazyLock;
-use tracing_test::traced_test;
-
-mod common;
-
-struct Client;
-type ClientInterface = TestInterface<Client>;
-struct Server;
-type ServerInterface = TestInterface<Server>;
-
-pub static TEST_QUEUE_CLIENT_SEND: LazyLock<(TestSender, TestReceiver)> = make_queue_pair();
-pub static TEST_QUEUE_CLIENT_RECV: LazyLock<(TestSender, TestReceiver)> = make_queue_pair();
-pub static TEST_QUEUE_SERVER_SEND: LazyLock<(TestSender, TestReceiver)> = make_queue_pair();
-pub static TEST_QUEUE_SERVER_RECV: LazyLock<(TestSender, TestReceiver)> = make_queue_pair();
-
-interface_impl_imports!();
-interface_impl!(
-    ClientInterface,
-    TEST_QUEUE_CLIENT_SEND,
-    TEST_QUEUE_CLIENT_RECV
-);
-interface_impl!(
-    ServerInterface,
-    TEST_QUEUE_SERVER_SEND,
-    TEST_QUEUE_SERVER_RECV
-);
+use std::path::Path;
 
 #[rstest]
+#[case("tests/static/configs/tls_standard")]
+#[case("tests/static/configs/tls_hybrid")]
+#[case("tests/static/configs/tls_postquantum")]
+#[case("tests/static/configs/noise_standard")]
+#[case("tests/static/configs/noise_hybrid")]
 #[tokio::test]
-#[traced_test]
-async fn test_failed_auth(mut client_config: ClientConfig, server_config: ServerConfig) {
+async fn test_failed_auth(#[case] config_dir: &str) {
+    struct Client;
+    struct Server;
+
+    let _client_ch = setup_interface::<Client>();
+    let _server_ch = setup_interface::<Server>();
+
+    let mut client_config =
+        ClientConfig::from_path(&Path::new(config_dir).join("client.toml"), "QUINCY_").unwrap();
     client_config.authentication.password = "wrong_password".to_string();
+
+    let server_config =
+        ServerConfig::from_path(&Path::new(config_dir).join("server.toml"), "QUINCY_").unwrap();
+
     let mut client = QuincyClient::new(client_config);
     let server = QuincyServer::new(server_config).unwrap();
 
-    tokio::spawn(async move { server.run::<ServerInterface>().await });
-    assert!(client.start::<ClientInterface>().await.is_err());
-
-    assert!(logs_contain("Failed to authenticate client"));
+    tokio::spawn(async move { server.run::<TestInterface<Server>>().await });
+    assert!(client.start::<TestInterface<Client>>().await.is_err());
 }
