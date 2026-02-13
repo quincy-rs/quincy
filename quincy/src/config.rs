@@ -5,7 +5,7 @@ use crate::constants::{
     QUIC_MTU_OVERHEAD, TLS_ALPN_PROTOCOLS, TLS_INITIAL_CIPHER_SUITE, TLS_PROTOCOL_VERSIONS,
 };
 use crate::error::{ConfigError, NoiseError, Result};
-use base64::prelude::*;
+use base64::{prelude::*, DecodeSliceError};
 use figment::{
     providers::{Env, Format, Toml},
     Figment,
@@ -17,7 +17,8 @@ use quinn::{
 };
 use reishi_quinn::{
     noise_handshake_token_key, noise_hmac_key, KeyPair, NoiseConfigBuilder, PqKeyPair,
-    PqNoiseConfigBuilder, PqPublicKey, PublicKey, REISHI_PQ_V1_QUIC_V1, REISHI_V1_QUIC_V1,
+    PqNoiseConfigBuilder, PqPublicKey, PqStaticSecret, PublicKey, StaticSecret,
+    REISHI_PQ_V1_QUIC_V1, REISHI_V1_QUIC_V1,
 };
 use rustls::crypto::aws_lc_rs::kx_group::{MLKEM768, X25519MLKEM768};
 use rustls::crypto::{aws_lc_rs, CryptoProvider};
@@ -28,6 +29,7 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use zeroize::Zeroizing;
 
 /// Quincy server configuration.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -54,14 +56,13 @@ pub struct ServerConfig {
     /// Whether to isolate clients from each other (default = true)
     #[serde(default = "default_true_fn")]
     pub isolate_clients: bool,
+    /// Protocol configuration (TLS or Noise)
+    pub protocol: ServerProtocolConfig,
     /// Authentication configuration
     pub authentication: ServerAuthenticationConfig,
     /// Miscellaneous connection configuration
     #[serde(default)]
     pub connection: ConnectionConfig,
-    /// Protocol configuration (TLS or Noise)
-    #[serde(default)]
-    pub protocol: ServerProtocolConfig,
     /// Logging configuration
     pub log: LogConfig,
 }
@@ -74,7 +75,7 @@ pub struct ServerConfig {
 pub enum ServerProtocolConfig {
     /// TLS 1.3 protocol mode (default)
     Tls(ServerTlsConfig),
-    /// Noise IK protocol mode
+    /// Noise NK protocol mode
     Noise(ServerNoiseConfig),
 }
 
@@ -115,6 +116,8 @@ pub struct ServerAuthenticationConfig {
 pub struct ClientConfig {
     /// Connection string to be used to connect to a Quincy server
     pub connection_string: String,
+    /// Protocol configuration (TLS or Noise)
+    pub protocol: ClientProtocolConfig,
     /// Authentication configuration
     pub authentication: ClientAuthenticationConfig,
     /// QUIC connection configuration
@@ -123,9 +126,6 @@ pub struct ClientConfig {
     /// Network configuration
     #[serde(default)]
     pub network: NetworkConfig,
-    /// Protocol configuration (TLS or Noise)
-    #[serde(default)]
-    pub protocol: ClientProtocolConfig,
     /// Logging configuration
     pub log: LogConfig,
 }
@@ -138,7 +138,7 @@ pub struct ClientConfig {
 pub enum ClientProtocolConfig {
     /// TLS 1.3 protocol mode (default)
     Tls(ClientTlsConfig),
-    /// Noise IK protocol mode
+    /// Noise NK protocol mode
     Noise(ClientNoiseConfig),
 }
 
@@ -322,26 +322,6 @@ impl ConfigInit<ClientConfig> for ClientConfig {}
 impl FromPath<ServerConfig> for ServerConfig {}
 impl FromPath<ClientConfig> for ClientConfig {}
 
-impl Default for ServerProtocolConfig {
-    fn default() -> Self {
-        Self::Tls(ServerTlsConfig {
-            key_exchange: default_tls_key_exchange(),
-            certificate_file: PathBuf::new(),
-            certificate_key_file: PathBuf::new(),
-        })
-    }
-}
-
-impl Default for ClientProtocolConfig {
-    fn default() -> Self {
-        Self::Tls(ClientTlsConfig {
-            key_exchange: default_tls_key_exchange(),
-            trusted_certificate_paths: Vec::new(),
-            trusted_certificates: Vec::new(),
-        })
-    }
-}
-
 impl Default for ConnectionConfig {
     fn default() -> Self {
         Self {
@@ -508,15 +488,13 @@ impl ClientConfig {
         Ok(quinn_config)
     }
 
-    /// Builds a Noise IK-based Quinn client configuration.
+    /// Builds a Noise NK-based Quinn client configuration.
     fn build_noise_client_config(&self, noise: &ClientNoiseConfig) -> Result<quinn::ClientConfig> {
         let mut quinn_config = match noise.key_exchange {
             NoiseKeyExchange::Standard => {
-                let server_pub_bytes = decode_base64_key(&noise.server_public_key, 32)?;
-                let server_public = PublicKey::from_bytes(
-                    <[u8; 32]>::try_from(&server_pub_bytes[..])
-                        .expect("key length already validated"),
-                );
+                let server_pub_bytes =
+                    decode_base64_key::<{ PublicKey::LEN }>(&noise.server_public_key)?;
+                let server_public = PublicKey::from_bytes(*server_pub_bytes);
 
                 let local_keypair = KeyPair::generate(&mut rand_core::OsRng);
 
@@ -532,9 +510,10 @@ impl ClientConfig {
                 cfg
             }
             NoiseKeyExchange::Hybrid => {
-                let server_pub_bytes = decode_base64_key(&noise.server_public_key, 1216)?;
+                let server_pub_bytes =
+                    decode_base64_key::<{ PqPublicKey::LEN }>(&noise.server_public_key)?;
                 let server_public =
-                    PqPublicKey::from_bytes(&server_pub_bytes).ok_or(NoiseError::InvalidKey {
+                    PqPublicKey::from_bytes(&*server_pub_bytes).ok_or(NoiseError::InvalidKey {
                         reason: "Invalid PQ public key material".to_string(),
                     })?;
 
@@ -617,14 +596,12 @@ impl ServerConfig {
         Ok(quinn_config)
     }
 
-    /// Builds a Noise IK-based Quinn server configuration.
+    /// Builds a Noise NK-based Quinn server configuration.
     fn build_noise_server_config(&self, noise: &ServerNoiseConfig) -> Result<quinn::ServerConfig> {
         let mut quinn_config = match noise.key_exchange {
             NoiseKeyExchange::Standard => {
-                let secret_bytes = decode_base64_key(&noise.private_key, 32)?;
-                let keypair = KeyPair::from_secret_bytes(
-                    <[u8; 32]>::try_from(&secret_bytes[..]).expect("key length already validated"),
-                );
+                let secret_bytes = decode_base64_key::<{ StaticSecret::LEN }>(&noise.private_key)?;
+                let keypair = KeyPair::from_secret_bytes(&secret_bytes);
 
                 let server_config = NoiseConfigBuilder::new(keypair)
                     .build_server_config()
@@ -637,10 +614,9 @@ impl ServerConfig {
                 cfg
             }
             NoiseKeyExchange::Hybrid => {
-                let secret_bytes = decode_base64_key(&noise.private_key, 96)?;
-                let keypair = PqKeyPair::from_secret_bytes(
-                    <[u8; 96]>::try_from(&secret_bytes[..]).expect("key length already validated"),
-                );
+                let secret_bytes =
+                    decode_base64_key::<{ PqStaticSecret::LEN }>(&noise.private_key)?;
+                let keypair = PqKeyPair::from_secret_bytes(&secret_bytes);
 
                 let server_config = PqNoiseConfigBuilder::new(keypair)
                     .build_server_config()
@@ -767,24 +743,28 @@ impl ConnectionConfig {
 // --- Helpers ---
 
 /// Decodes a base64-encoded key and validates its length.
-fn decode_base64_key(encoded: &str, expected_len: usize) -> Result<Vec<u8>> {
-    let bytes = BASE64_STANDARD
-        .decode(encoded)
-        .map_err(|e| NoiseError::InvalidKey {
-            reason: format!("Invalid base64 encoding: {e}"),
+fn decode_base64_key<const KEY_LEN: usize>(encoded: &str) -> Result<Zeroizing<[u8; KEY_LEN]>> {
+    let mut key_bytes = Zeroizing::new([0u8; KEY_LEN]);
+
+    let decoded_bytes = BASE64_STANDARD
+        .decode_slice(encoded.trim(), &mut *key_bytes)
+        .map_err(|e| match e {
+            DecodeSliceError::OutputSliceTooSmall => NoiseError::InvalidKey {
+                reason: format!("Expected {KEY_LEN}-byte key"),
+            },
+            _ => NoiseError::InvalidKey {
+                reason: "Invalid base64 encoding".to_string(),
+            },
         })?;
 
-    if bytes.len() != expected_len {
+    if decoded_bytes != KEY_LEN {
         return Err(NoiseError::InvalidKey {
-            reason: format!(
-                "Expected {expected_len}-byte key, got {} bytes",
-                bytes.len()
-            ),
+            reason: format!("Expected {KEY_LEN}-byte key"),
         }
         .into());
     }
 
-    Ok(bytes)
+    Ok(key_bytes)
 }
 
 #[cfg(test)]
@@ -1027,22 +1007,22 @@ mod tests {
     #[test]
     fn decode_valid_base64_key() {
         let key_32 = BASE64_STANDARD.encode([0u8; 32]);
-        assert!(decode_base64_key(&key_32, 32).is_ok());
+        assert!(decode_base64_key::<32>(&key_32).is_ok());
 
         let key_96 = BASE64_STANDARD.encode([0u8; 96]);
-        assert!(decode_base64_key(&key_96, 96).is_ok());
+        assert!(decode_base64_key::<96>(&key_96).is_ok());
     }
 
     #[test]
     fn decode_base64_key_wrong_length() {
         let key_16 = BASE64_STANDARD.encode([0u8; 16]);
-        let result = decode_base64_key(&key_16, 32);
+        let result = decode_base64_key::<32>(&key_16);
         assert!(result.is_err());
     }
 
     #[test]
     fn decode_base64_key_invalid_encoding() {
-        let result = decode_base64_key("not-valid-base64!!!", 32);
+        let result = decode_base64_key::<32>("not-valid-base64!!!");
         assert!(result.is_err());
     }
 }

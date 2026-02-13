@@ -94,7 +94,7 @@ fn pubkey(key_exchange: KeyExchangeMode) {
                     process::exit(1);
                 }
             };
-            let kp = KeyPair::from_secret_bytes(secret_bytes);
+            let kp = KeyPair::from_secret_bytes(&secret_bytes);
             println!("{}", BASE64_STANDARD.encode(kp.public.as_bytes()));
         }
         KeyExchangeMode::Hybrid => {
@@ -105,7 +105,7 @@ fn pubkey(key_exchange: KeyExchangeMode) {
                     process::exit(1);
                 }
             };
-            let kp = PqKeyPair::from_secret_bytes(secret_bytes);
+            let kp = PqKeyPair::from_secret_bytes(&secret_bytes);
             println!("{}", BASE64_STANDARD.encode(kp.public.to_bytes()));
         }
     }

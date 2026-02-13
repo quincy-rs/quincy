@@ -59,7 +59,7 @@ rustls = { version = "^0.23.18", default-features = false, features = [
 rustls-pemfile = "^2.0"
 
 # Noise
-reishi-quinn = { version = "^0.1.1", features = ["pq"] }
+reishi-quinn = { version = "^0.1.2", features = ["pq"] }
 base64 = "^0.22"
 
 # Authentication
@@ -79,6 +79,7 @@ privesc = "^1.2.0"
 thiserror = "^2.0"
 clap = { version = "^4.1", features = ["derive"] }
 regex = "^1.11"
+zeroize = "^1.8.2"
 
 # GUI
 iced = { version = "^0.14.0", features = [
