@@ -401,7 +401,7 @@ pub enum RouteError {
 /// Noise protocol errors.
 ///
 /// Covers Noise key validation, handshake failures, and configuration issues
-/// for the Noise IK protocol backend.
+/// for the Noise NK protocol backend.
 #[derive(Error, Debug)]
 pub enum NoiseError {
     /// Invalid Noise key material

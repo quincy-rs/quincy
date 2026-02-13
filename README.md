@@ -122,6 +122,7 @@ Quincy provides a couple of binaries based on their intended use:
 - `quincy-client`: The VPN client CLI
 - `quincy-server`: The VPN server CLI
 - `quincy-users`: A utility CLI binary meant for managing the `users` file
+- `quincy-keygen`: A utility CLI binary meant for generating a new keypair when using the Noise protocol
 - `quincy-client-gui`: The VPN client GUI
 - `quincy-client-daemon`: The VPN client daemon (background privileged service)
 
@@ -186,6 +187,18 @@ The prompt will again look something like this:
 Enter the username: test
 ```
 
+### Keygen
+The `quincy-keygen` utility provides WireGuard-style key management with pipeable output:
+```bash
+# Generate a private key
+quincy-keygen genkey
+quincy-keygen genkey --key-exchange hybrid
+
+# Derive the matching public key from a private key on stdin
+quincy-keygen pubkey
+quincy-keygen pubkey --key-exchange hybrid
+```
+
 ## Architecture
 Quincy uses the QUIC protocol implemented by [`quinn`](https://github.com/quinn-rs/quinn) to create an encrypted tunnel between clients and the server.
 
@@ -217,7 +230,7 @@ TLS mode requires a certificate and private key on the server, and one or more t
 ```toml
 [protocol]
 mode = "tls"
-key_exchange = "Hybrid"
+key_exchange = "hybrid"
 certificate_file = "server_cert.pem"
 certificate_key_file = "server_key.pem"
 ```
@@ -226,12 +239,12 @@ certificate_key_file = "server_key.pem"
 ```toml
 [protocol]
 mode = "tls"
-key_exchange = "Hybrid"
+key_exchange = "hybrid"
 trusted_certificate_paths = ["server_cert.pem"]
 ```
 
 ### Noise
-Noise mode uses the Noise IK handshake pattern instead of TLS. This has two main advantages:
+Noise mode uses the Noise NK (server public key known, initiator generates a new key-pair every time) handshake pattern instead of TLS. This has two main advantages:
 - **No certificates needed** — deployment is simpler in environments where managing a PKI or obtaining certificates from a CA is impractical. The server has a static keypair and clients are configured with the server's public key.
 - **Improved detection evasion** — traffic does not contain a standard TLS ClientHello, making it harder for DPI systems to fingerprint and block the connection.
 
@@ -240,15 +253,13 @@ Because the client knows the server's public key ahead of time, the handshake co
 - `Hybrid`: X25519 + ML-KEM-768
 
 #### Key management
-The `quincy-keygen` utility provides WireGuard-style key management with pipeable output:
+Using the `quincy-keygen` binary, you can generate and derive the server key pair:
 ```bash
 # Generate a private key
 quincy-keygen genkey
-quincy-keygen genkey --key-exchange hybrid
 
 # Derive the matching public key from a private key on stdin
-quincy-keygen genkey | quincy-keygen pubkey
-quincy-keygen genkey --key-exchange hybrid | quincy-keygen pubkey --key-exchange hybrid
+quincy-keygen pubkey
 ```
 
 Place the keys in the respective configuration files:
@@ -257,7 +268,7 @@ Place the keys in the respective configuration files:
 ```toml
 [protocol]
 mode = "noise"
-key_exchange = "Standard"
+key_exchange = "standard"
 private_key = "<base64 private key>"
 ```
 
@@ -265,7 +276,7 @@ private_key = "<base64 private key>"
 ```toml
 [protocol]
 mode = "noise"
-key_exchange = "Standard"
+key_exchange = "standard"
 server_public_key = "<base64 public key>"
 ```
 
@@ -339,6 +350,8 @@ openssl x509 -req -in cert.csr -signkey <your_certificate_key_file> -out <your_c
 
 **Server**
 ```toml
+[protocol]
+mode = "tls"
 # Path to the certificate used for TLS
 certificate_file = "server_cert.pem"
 # Path to the certificate key used for TLS
@@ -347,7 +360,8 @@ certificate_key_file = "server_key.pem"
 
 **Client**
 ```toml
-[authentication]
+[protocol]
+mode = "tls"
 # A list of trusted certificate file paths the server can use or have its certificate signed by
 trusted_certificate_paths = ["examples/cert/server_cert.pem"]
 # A list of trusted certificates as PEM strings
