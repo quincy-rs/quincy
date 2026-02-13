@@ -23,6 +23,7 @@ use reishi_quinn::{
 use rustls::crypto::aws_lc_rs::kx_group::{MLKEM768, X25519MLKEM768};
 use rustls::crypto::{aws_lc_rs, CryptoProvider};
 use rustls::{CipherSuite, RootCertStore};
+use secrecy::{ExposeSecret, SecretString};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::net::IpAddr;
@@ -32,7 +33,7 @@ use std::time::Duration;
 use zeroize::Zeroizing;
 
 /// Quincy server configuration.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ServerConfig {
     /// The name of the tunnel
     pub name: String,
@@ -70,7 +71,7 @@ pub struct ServerConfig {
 /// Server protocol configuration.
 ///
 /// Selects between TLS and Noise as the cryptographic protocol for QUIC.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum ServerProtocolConfig {
     /// TLS 1.3 protocol mode (default)
@@ -92,13 +93,13 @@ pub struct ServerTlsConfig {
 }
 
 /// Server Noise protocol configuration.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ServerNoiseConfig {
     /// The key exchange algorithm to use (default = Standard)
     #[serde(default = "default_noise_key_exchange")]
     pub key_exchange: NoiseKeyExchange,
     /// Base64-encoded server private key (32 bytes for Standard, 96 bytes for Hybrid)
-    pub private_key: String,
+    pub private_key: SecretString,
 }
 
 /// Quincy server-side authentication configuration.
@@ -600,7 +601,8 @@ impl ServerConfig {
     fn build_noise_server_config(&self, noise: &ServerNoiseConfig) -> Result<quinn::ServerConfig> {
         let mut quinn_config = match noise.key_exchange {
             NoiseKeyExchange::Standard => {
-                let secret_bytes = decode_base64_key::<{ StaticSecret::LEN }>(&noise.private_key)?;
+                let secret_bytes =
+                    decode_base64_key::<{ StaticSecret::LEN }>(noise.private_key.expose_secret())?;
                 let keypair = KeyPair::from_secret_bytes(&secret_bytes);
 
                 let server_config = NoiseConfigBuilder::new(keypair)
@@ -614,8 +616,9 @@ impl ServerConfig {
                 cfg
             }
             NoiseKeyExchange::Hybrid => {
-                let secret_bytes =
-                    decode_base64_key::<{ PqStaticSecret::LEN }>(&noise.private_key)?;
+                let secret_bytes = decode_base64_key::<{ PqStaticSecret::LEN }>(
+                    noise.private_key.expose_secret(),
+                )?;
                 let keypair = PqKeyPair::from_secret_bytes(&secret_bytes);
 
                 let server_config = PqNoiseConfigBuilder::new(keypair)
@@ -875,7 +878,7 @@ mod tests {
             ServerProtocolConfig::Noise(noise) => {
                 assert_eq!(noise.key_exchange, NoiseKeyExchange::Standard);
                 assert_eq!(
-                    noise.private_key,
+                    noise.private_key.expose_secret(),
                     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
                 );
             }

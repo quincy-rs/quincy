@@ -80,6 +80,7 @@ thiserror = "^2.0"
 clap = { version = "^4.1", features = ["derive"] }
 regex = "^1.11"
 zeroize = "^1.8.2"
+secrecy = { version = "^0.10", features = ["serde"] }
 
 # GUI
 iced = { version = "^0.14.0", features = [
