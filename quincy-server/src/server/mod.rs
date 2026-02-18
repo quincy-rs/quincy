@@ -3,28 +3,27 @@ mod connection;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::time::Duration;
 
-use crate::auth::AuthServer;
-use crate::server::connection::QuincyConnection;
-use crate::users_file::UsersFileServerAuthenticator;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use quincy::config::ServerConfig;
-use quincy::network::socket::bind_socket;
-use quincy::Result;
 use quinn::{Endpoint, VarInt};
 use tokio::signal;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tracing::{debug, info, warn};
 
-use self::address_pool::AddressPool;
+use crate::users::UsersFile;
+use quincy::config::{AllowedNoiseKeys, NoiseKeyExchange, ServerConfig, ServerProtocolConfig};
 use quincy::constants::{PACKET_BUFFER_SIZE, PACKET_CHANNEL_SIZE, QUINN_RUNTIME};
 use quincy::network::interface::{Interface, InterfaceIO};
 use quincy::network::packet::Packet;
+use quincy::network::socket::bind_socket;
 use quincy::utils::tasks::abort_all;
-use tracing::{debug, info, warn};
+use quincy::Result;
+
+use self::address_pool::AddressPool;
+use self::connection::QuincyConnection;
 
 type ConnectionQueues = Arc<DashMap<IpAddr, Sender<Bytes>>>;
 
@@ -33,20 +32,25 @@ pub struct QuincyServer {
     config: ServerConfig,
     connection_queues: ConnectionQueues,
     address_pool: Arc<AddressPool>,
+    users: Arc<UsersFile>,
 }
 
 impl QuincyServer {
     /// Creates a new instance of the Quincy tunnel.
     ///
+    /// Loads the users file and initializes the address pool from the tunnel network.
+    ///
     /// ### Arguments
     /// - `config` - the server configuration
     pub fn new(config: ServerConfig) -> Result<Self> {
         let address_pool = AddressPool::new(config.tunnel_network);
+        let users = UsersFile::load(&config.users_file)?;
 
         Ok(Self {
             config,
             connection_queues: Arc::new(DashMap::new()),
             address_pool: Arc::new(address_pool),
+            users: Arc::new(users),
         })
     }
 
@@ -61,16 +65,6 @@ impl QuincyServer {
             None,
         )?;
         let interface = Arc::new(interface);
-
-        let authenticator = Box::new(UsersFileServerAuthenticator::new(
-            &self.config.authentication,
-            self.address_pool.clone(),
-        )?);
-        let auth_server = AuthServer::new(
-            authenticator,
-            self.config.tunnel_network,
-            Duration::from_secs(self.config.connection.connection_timeout_s),
-        );
 
         let (sender, receiver) = channel(PACKET_CHANNEL_SIZE);
 
@@ -89,7 +83,7 @@ impl QuincyServer {
             )),
         ]);
 
-        let handler_task = self.handle_connections(auth_server, sender);
+        let handler_task = self.handle_connections(sender);
 
         let result = tokio::select! {
             handler_task_result = handler_task => handler_task_result,
@@ -104,13 +98,8 @@ impl QuincyServer {
     /// Handles incoming connections by spawning a new QuincyConnection instance for them.
     ///
     /// ### Arguments
-    /// - `auth_server` - the authentication server to use for authenticating clients
     /// - `ingress_queue` - the queue for sending data to the TUN interface
-    async fn handle_connections(
-        &self,
-        auth_server: AuthServer,
-        ingress_queue: Sender<Packet>,
-    ) -> Result<()> {
+    async fn handle_connections(&self, ingress_queue: Sender<Packet>) -> Result<()> {
         let endpoint = self.create_quinn_endpoint()?;
 
         info!(
@@ -118,7 +107,12 @@ impl QuincyServer {
             endpoint.local_addr().expect("Endpoint has a local address")
         );
 
-        let mut authentication_tasks = FuturesUnordered::new();
+        let protocol = Arc::new(self.config.protocol.clone());
+        let server_address = self.config.tunnel_network;
+        let users = self.users.clone();
+        let address_pool = self.address_pool.clone();
+
+        let mut identification_tasks = FuturesUnordered::new();
         let mut connection_tasks = FuturesUnordered::new();
 
         loop {
@@ -145,17 +139,27 @@ impl QuincyServer {
                         ingress_queue.clone(),
                     );
 
-                    authentication_tasks.push(
-                        connection.authenticate(&auth_server)
-                    );
+                    let protocol = protocol.clone();
+                    let users = users.clone();
+                    let address_pool = address_pool.clone();
+                    let server_addr = server_address;
+
+                    identification_tasks.push(async move {
+                        connection.identify_and_assign(
+                            &protocol,
+                            &users,
+                            &address_pool,
+                            server_addr,
+                        ).await
+                    });
                 }
 
-                // Authentication tasks
-                Some(connection) = authentication_tasks.next() => {
+                // Identification tasks
+                Some(connection) = identification_tasks.next() => {
                     let connection = match connection {
                         Ok(connection) => connection,
                         Err(e) => {
-                            warn!("Failed to authenticate client: {e}");
+                            warn!("Failed to identify client: {e}");
                             continue;
                         }
                     };
@@ -192,7 +196,25 @@ impl QuincyServer {
 
     /// Creates a Quinn QUIC endpoint that clients can connect to.
     fn create_quinn_endpoint(&self) -> Result<Endpoint> {
-        let quinn_config = self.config.as_quinn_server_config()?;
+        // Build allowed keys/fingerprints from the users file
+        let (allowed_keys, allowed_fingerprints) = match &self.config.protocol {
+            ServerProtocolConfig::Noise(noise) => {
+                let keys = match noise.key_exchange {
+                    NoiseKeyExchange::Standard => Some(AllowedNoiseKeys::Standard(
+                        self.users.collect_noise_public_keys(),
+                    )),
+                    NoiseKeyExchange::Hybrid => Some(AllowedNoiseKeys::Hybrid(
+                        self.users.collect_noise_pq_public_keys(),
+                    )),
+                };
+                (keys, None)
+            }
+            ServerProtocolConfig::Tls(_) => (None, Some(self.users.collect_cert_fingerprints())),
+        };
+
+        let quinn_config = self
+            .config
+            .as_quinn_server_config(allowed_keys, allowed_fingerprints)?;
 
         let socket = bind_socket(
             SocketAddr::new(self.config.bind_address, self.config.bind_port),
@@ -220,7 +242,6 @@ impl QuincyServer {
     /// ### Arguments
     /// - `tun_read` - the read half of the TUN interface
     /// - `connection_queues` - the queues for sending data to the QUIC connections
-    /// - `buffer_size` - the size of the buffer to use when reading from the TUN interface
     async fn process_outbound_traffic(
         interface: Arc<Interface<impl InterfaceIO>>,
         connection_queues: ConnectionQueues,

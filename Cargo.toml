@@ -57,15 +57,17 @@ rustls = { version = "^0.23.18", default-features = false, features = [
     "aws-lc-rs",
 ] }
 rustls-pemfile = "^2.0"
+aws-lc-rs = "^1.16"
 
 # Noise
-reishi-quinn = { version = "^0.1.2", features = ["pq"] }
+reishi-quinn = { version = "^0.1.4", features = ["pq"] }
 base64 = "^0.22"
 
-# Authentication
-argon2 = "^0.5.0"
-rpassword = "^7.2"
+# Crypto RNG
 rand_core = { version = "^0.6.4", features = ["getrandom"] }
+
+# Certificate generation
+rcgen = "^0.13"
 
 # Tracing/Logging
 tracing = { version = "^0.1.37", features = ["release_max_level_info"] }

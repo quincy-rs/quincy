@@ -9,12 +9,10 @@ trusted_certificate_paths = ["examples/cert/server_cert.pem"]
 # trusted_certificates = [
 #   "-----BEGIN CERTIFICATE-----\nMIIBkjCB...\n-----END CERTIFICATE-----"
 # ]
-
-[authentication]
-# The username used for authentication
-username = "test"
-# The password used for authentication
-password = "test"
+# Path to the client certificate for mutual TLS authentication
+client_certificate_file = "examples/cert/client_cert.pem"
+# Path to the client certificate private key
+client_certificate_key_file = "examples/cert/client_key.pem"
 
 [connection]
 # The MTU used by the QUIC tunnel and the spawned TUN interface

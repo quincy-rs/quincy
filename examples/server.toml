@@ -2,6 +2,8 @@
 name = "tun0"
 # The address of the tunnel endpoint and base address of the address pool available to clients
 tunnel_network = "10.0.0.1/24"
+# Path to the TOML users file for authentication
+users_file = "examples/users.toml"
 
 [protocol]
 mode = "tls"
@@ -9,10 +11,6 @@ mode = "tls"
 certificate_file = "examples/cert/server_cert.pem"
 # Path to the certificate key used for TLS
 certificate_key_file = "examples/cert/server_key.pem"
-
-[authentication]
-# Path to the file containing user credentials
-users_file = "examples/users"
 
 [connection]
 # The MTU used by the QUIC tunnel and the spawned TUN interface

@@ -17,12 +17,8 @@ name = "quincy-server"
 path = "src/main.rs"
 
 [[bin]]
-name = "quincy-users"
-path = "src/bin/users.rs"
-
-[[bin]]
-name = "quincy-keygen"
-path = "src/bin/keygen.rs"
+name = "quincy-identity"
+path = "src/bin/identity.rs"
 
 [features]
 default = ["offload", "jemalloc"]
@@ -35,11 +31,6 @@ quincy = { workspace = true }
 # Configuration
 clap = { workspace = true }
 
-# Authentication (for quincy-users)
-rpassword = { workspace = true }
-argon2 = { workspace = true }
-rand_core = { workspace = true }
-
 # Utils
 # anyhow removed - using quincy::error::Result instead
 dashmap = { workspace = true }
@@ -47,7 +38,6 @@ dashmap = { workspace = true }
 # Tokio
 tokio = { workspace = true }
 futures = { workspace = true }
-async-trait = { workspace = true }
 
 # Tracing/Logging
 tracing = { workspace = true }
@@ -59,10 +49,18 @@ bytes = { workspace = true }
 # Quinn
 quinn = { workspace = true }
 
-# Noise (for quincy-keygen)
+# TLS
+rustls = { workspace = true }
+rcgen = { workspace = true }
+aws-lc-rs = { workspace = true }
+
+# Noise (for quincy-identity)
 reishi-quinn = { workspace = true }
 base64 = { workspace = true }
+rand_core = { workspace = true }
+
+# Configuration
+figment = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
-serde_json = { workspace = true }

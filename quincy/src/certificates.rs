@@ -1,9 +1,21 @@
-use crate::error::{CertificateError, Result};
-use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use std::fs::File;
-use std::io::{BufReader, Cursor};
+use std::collections::HashSet;
+use std::fmt::Debug;
 use std::path::Path;
+use std::sync::Arc;
+use std::{
+    fs::File,
+    io::{BufReader, Cursor},
+};
+
+use aws_lc_rs::digest;
+use rustls::crypto::{CryptoProvider, WebPkiSupportedAlgorithms};
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, UnixTime};
+use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
+use rustls::server::WebPkiClientVerifier;
+use rustls::{DigitallySignedStruct, DistinguishedName, Error, RootCertStore, SignatureScheme};
+
+use crate::error::{CertificateError, Result};
 
 /// Loads certificates from a file.
 ///
@@ -77,6 +89,144 @@ pub fn load_private_key_from_file(path: &Path) -> Result<PrivateKeyDer<'static>>
     })
 }
 
+/// Computes the SHA-256 fingerprint of a DER-encoded certificate.
+///
+/// Returns a string in the format `sha256:<lowercase-hex>`.
+///
+/// ### Arguments
+/// - `cert` - the DER-encoded certificate
+pub fn compute_cert_fingerprint(cert: &CertificateDer<'_>) -> String {
+    let hash = digest::digest(&digest::SHA256, cert.as_ref());
+    let hex: String = hash.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+    format!("sha256:{hex}")
+}
+
+/// Custom client certificate verifier for Quincy.
+///
+/// Validates client certificates using two methods:
+/// 1. CA-based validation: delegates to `WebPkiClientVerifier` if CA roots are available
+/// 2. Fingerprint-based validation: if the certificate's SHA-256 fingerprint
+///    matches one in the allowed set
+///
+/// Client authentication is mandatory -- anonymous clients are rejected.
+pub struct QuincyCertVerifier {
+    /// Optional WebPKI verifier for CA-based chain validation.
+    ca_verifier: Option<Arc<dyn ClientCertVerifier>>,
+    /// Set of allowed certificate fingerprints in `sha256:<hex>` format.
+    allowed_fingerprints: HashSet<String>,
+    /// Supported signature verification algorithms.
+    supported_algs: WebPkiSupportedAlgorithms,
+}
+
+impl QuincyCertVerifier {
+    /// Creates a new `QuincyCertVerifier`.
+    ///
+    /// ### Arguments
+    /// - `ca_roots` - root CA certificate store for chain validation
+    /// - `allowed_fingerprints` - set of allowed certificate fingerprints
+    /// - `crypto_provider` - the crypto provider for signature verification algorithms
+    pub fn new(
+        ca_roots: RootCertStore,
+        allowed_fingerprints: HashSet<String>,
+        crypto_provider: Arc<CryptoProvider>,
+    ) -> Self {
+        let supported_algs = crypto_provider.signature_verification_algorithms;
+
+        let ca_verifier = if ca_roots.is_empty() {
+            None
+        } else {
+            WebPkiClientVerifier::builder_with_provider(Arc::new(ca_roots), crypto_provider)
+                .build()
+                .ok()
+        };
+
+        Self {
+            ca_verifier,
+            allowed_fingerprints,
+            supported_algs,
+        }
+    }
+}
+
+impl Debug for QuincyCertVerifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QuincyCertVerifier")
+            .field("has_ca_verifier", &self.ca_verifier.is_some())
+            .field(
+                "allowed_fingerprints_count",
+                &self.allowed_fingerprints.len(),
+            )
+            .finish()
+    }
+}
+
+impl ClientCertVerifier for QuincyCertVerifier {
+    fn offer_client_auth(&self) -> bool {
+        true
+    }
+
+    fn client_auth_mandatory(&self) -> bool {
+        true
+    }
+
+    fn root_hint_subjects(&self) -> &[DistinguishedName] {
+        if let Some(ca_verifier) = &self.ca_verifier {
+            ca_verifier.root_hint_subjects()
+        } else {
+            &[]
+        }
+    }
+
+    fn verify_client_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        now: UnixTime,
+    ) -> std::result::Result<ClientCertVerified, Error> {
+        // First, try CA-based chain validation via WebPkiClientVerifier
+        if let Some(ca_verifier) = &self.ca_verifier {
+            if ca_verifier
+                .verify_client_cert(end_entity, intermediates, now)
+                .is_ok()
+            {
+                return Ok(ClientCertVerified::assertion());
+            }
+        }
+
+        // Fall back to fingerprint-based validation
+        let fingerprint = compute_cert_fingerprint(end_entity);
+        if self.allowed_fingerprints.contains(&fingerprint) {
+            return Ok(ClientCertVerified::assertion());
+        }
+
+        Err(Error::InvalidCertificate(
+            rustls::CertificateError::ApplicationVerificationFailure,
+        ))
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.supported_algs)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.supported_algs)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.supported_algs.supported_schemes()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,6 +241,28 @@ mod tests {
         include_str!("../../quincy-tests/tests/static/server_key_rsa_pkcs1.pem");
     const VALID_KEY_PEM_EC_SEC1: &str =
         include_str!("../../quincy-tests/tests/static/server_key_ec_sec1.pem");
+
+    // ========== compute_cert_fingerprint tests ==========
+
+    #[test]
+    fn compute_fingerprint_deterministic() {
+        let certs = load_certificates_from_pem(VALID_CERT_PEM_PKCS8).unwrap();
+        let fp1 = compute_cert_fingerprint(&certs[0]);
+        let fp2 = compute_cert_fingerprint(&certs[0]);
+        assert_eq!(fp1, fp2);
+        assert!(fp1.starts_with("sha256:"));
+        // SHA-256 produces 64 hex chars
+        assert_eq!(fp1.len(), "sha256:".len() + 64);
+    }
+
+    #[test]
+    fn compute_fingerprint_lowercase_hex() {
+        let certs = load_certificates_from_pem(VALID_CERT_PEM_PKCS8).unwrap();
+        let fp = compute_cert_fingerprint(&certs[0]);
+        let hex_part = fp.strip_prefix("sha256:").unwrap();
+        assert!(hex_part.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(hex_part, hex_part.to_lowercase());
+    }
 
     // ========== load_certificates_from_pem tests ==========
 

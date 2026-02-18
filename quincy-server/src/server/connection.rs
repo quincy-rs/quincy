@@ -1,17 +1,27 @@
-use crate::auth::AuthServer;
+use std::time::Duration;
+
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use ipnet::IpNet;
-use quincy::utils::tasks::abort_all;
-use quincy::{QuincyError, Result};
-
-use quincy::network::packet::Packet;
 use quinn::Connection;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::info;
 
-/// Represents a Quincy connection encapsulating authentication and IO.
+use crate::users::UsersFile;
+use quincy::config::ServerProtocolConfig;
+use quincy::ip_assignment::{self, IpAssignment};
+use quincy::network::packet::Packet;
+use quincy::utils::tasks::abort_all;
+use quincy::{QuincyError, Result};
+
+use crate::identity;
+use crate::server::address_pool::AddressPool;
+
+/// Default timeout for IP assignment exchange.
+const IP_ASSIGNMENT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Represents a Quincy connection encapsulating identification and IO.
 #[derive(Clone)]
 pub struct QuincyConnection {
     connection: Connection,
@@ -35,10 +45,34 @@ impl QuincyConnection {
         }
     }
 
-    /// Attempts to authenticate the client.
-    pub async fn authenticate(mut self, auth_server: &AuthServer) -> Result<Self> {
+    /// Identifies the client from the handshake and assigns an IP address.
+    ///
+    /// Uses the peer identity from the completed QUIC handshake (Noise public key
+    /// or TLS client certificate) to look up the username, allocates an IP from the
+    /// address pool, and sends the assignment to the client over a uni-stream.
+    ///
+    /// ### Arguments
+    /// - `protocol` - the server protocol configuration
+    /// - `users` - the parsed users file
+    /// - `address_pool` - the pool of available client IP addresses
+    /// - `server_address` - the server's tunnel address
+    pub async fn identify_and_assign(
+        mut self,
+        protocol: &ServerProtocolConfig,
+        users: &UsersFile,
+        address_pool: &AddressPool,
+        server_address: IpNet,
+    ) -> Result<Self> {
         let (username, client_address) =
-            auth_server.handle_authentication(&self.connection).await?;
+            identity::identify_and_assign(&self.connection, protocol, users, address_pool).await?;
+
+        let assignment = IpAssignment {
+            client_address,
+            server_address,
+        };
+
+        ip_assignment::send_ip_assignment(&self.connection, &assignment, IP_ASSIGNMENT_TIMEOUT)
+            .await?;
 
         info!(
             "Connection established: user = {}, client address = {}, remote address = {}",

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::certificates::{
     load_certificates_from_file, load_certificates_from_pem, load_private_key_from_file,
 };
@@ -59,8 +61,8 @@ pub struct ServerConfig {
     pub isolate_clients: bool,
     /// Protocol configuration (TLS or Noise)
     pub protocol: ServerProtocolConfig,
-    /// Authentication configuration
-    pub authentication: ServerAuthenticationConfig,
+    /// Path to the TOML users file for authentication
+    pub users_file: PathBuf,
     /// Miscellaneous connection configuration
     #[serde(default)]
     pub connection: ConnectionConfig,
@@ -102,25 +104,24 @@ pub struct ServerNoiseConfig {
     pub private_key: SecretString,
 }
 
-/// Quincy server-side authentication configuration.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct ServerAuthenticationConfig {
-    /// The type of authenticator to use (default = users_file)
-    #[serde(default = "default_auth_type")]
-    pub auth_type: AuthType,
-    /// The path to the file containing the list of users and their password hashes
-    pub users_file: PathBuf,
+/// Allowed Noise public keys for server-side client authentication.
+///
+/// Passed to the Noise config builder's `with_allowed_keys` to restrict
+/// which clients can complete the handshake.
+pub enum AllowedNoiseKeys {
+    /// Standard X25519 public keys
+    Standard(HashSet<PublicKey>),
+    /// Hybrid X25519 + ML-KEM-768 public keys
+    Hybrid(HashSet<PqPublicKey>),
 }
 
 /// Quincy client configuration.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ClientConfig {
     /// Connection string to be used to connect to a Quincy server
     pub connection_string: String,
     /// Protocol configuration (TLS or Noise)
     pub protocol: ClientProtocolConfig,
-    /// Authentication configuration
-    pub authentication: ClientAuthenticationConfig,
     /// QUIC connection configuration
     #[serde(default)]
     pub connection: ConnectionConfig,
@@ -134,7 +135,7 @@ pub struct ClientConfig {
 /// Client protocol configuration.
 ///
 /// Selects between TLS and Noise as the cryptographic protocol for QUIC.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum ClientProtocolConfig {
     /// TLS 1.3 protocol mode (default)
@@ -144,7 +145,7 @@ pub enum ClientProtocolConfig {
 }
 
 /// Client TLS protocol configuration.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ClientTlsConfig {
     /// The key exchange algorithm to use (default = Hybrid)
     #[serde(default = "default_tls_key_exchange")]
@@ -155,28 +156,22 @@ pub struct ClientTlsConfig {
     /// A list of trusted certificates as PEM strings
     #[serde(default)]
     pub trusted_certificates: Vec<String>,
+    /// Path to the client certificate file for mutual TLS authentication
+    pub client_certificate_file: PathBuf,
+    /// Path to the client certificate private key file
+    pub client_certificate_key_file: PathBuf,
 }
 
 /// Client Noise protocol configuration.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ClientNoiseConfig {
     /// The key exchange algorithm to use (default = Standard)
     #[serde(default = "default_noise_key_exchange")]
     pub key_exchange: NoiseKeyExchange,
     /// Base64-encoded server public key (32 bytes for Standard, 1216 bytes for Hybrid)
     pub server_public_key: String,
-}
-
-/// Quincy client-side authentication configuration.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct ClientAuthenticationConfig {
-    /// The type of authenticator to use (default = users_file)
-    #[serde(default = "default_auth_type")]
-    pub auth_type: AuthType,
-    /// The username to use for authentication
-    pub username: String,
-    /// The password to use for authentication
-    pub password: String,
+    /// Base64-encoded client private key for persistent identity
+    pub private_key: SecretString,
 }
 
 /// TLS key exchange algorithm.
@@ -261,14 +256,6 @@ pub struct LogConfig {
     /// The log level to use (default = info)
     #[serde(default = "default_log_level")]
     pub level: String,
-}
-
-/// Authentication type.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub enum AuthType {
-    /// File-based user authentication with username/password
-    #[serde(alias = "users_file")]
-    UsersFile,
 }
 
 /// Congestion control algorithm to use for QUIC connections.
@@ -378,10 +365,6 @@ fn default_keep_alive_interval_s() -> u64 {
     25
 }
 
-fn default_auth_type() -> AuthType {
-    AuthType::UsersFile
-}
-
 fn default_routes() -> Vec<IpNet> {
     Vec::new()
 }
@@ -446,7 +429,7 @@ impl ClientConfig {
         }
     }
 
-    /// Builds a TLS-based Quinn client configuration.
+    /// Builds a TLS-based Quinn client configuration with mutual authentication.
     fn build_tls_client_config(&self, tls: &ClientTlsConfig) -> Result<quinn::ClientConfig> {
         let mut cert_store = RootCertStore::empty();
 
@@ -460,12 +443,15 @@ impl ClientConfig {
             cert_store.add_parsable_certificates(certs);
         }
 
+        let client_certs = load_certificates_from_file(&tls.client_certificate_file)?;
+        let client_key = load_private_key_from_file(&tls.client_certificate_key_file)?;
+
         let crypto_provider = Arc::from(tls_crypto_provider(&tls.key_exchange));
 
         let mut rustls_config = rustls::ClientConfig::builder_with_provider(crypto_provider)
             .with_protocol_versions(TLS_PROTOCOL_VERSIONS)?
             .with_root_certificates(cert_store)
-            .with_no_client_auth();
+            .with_client_auth_cert(client_certs, client_key)?;
 
         rustls_config.alpn_protocols.clone_from(&TLS_ALPN_PROTOCOLS);
 
@@ -489,7 +475,7 @@ impl ClientConfig {
         Ok(quinn_config)
     }
 
-    /// Builds a Noise NK-based Quinn client configuration.
+    /// Builds a Noise IK-based Quinn client configuration using the client's persistent keypair.
     fn build_noise_client_config(&self, noise: &ClientNoiseConfig) -> Result<quinn::ClientConfig> {
         let mut quinn_config = match noise.key_exchange {
             NoiseKeyExchange::Standard => {
@@ -497,7 +483,9 @@ impl ClientConfig {
                     decode_base64_key::<{ PublicKey::LEN }>(&noise.server_public_key)?;
                 let server_public = PublicKey::from_bytes(*server_pub_bytes);
 
-                let local_keypair = KeyPair::generate(&mut rand_core::OsRng);
+                let secret_bytes =
+                    decode_base64_key::<{ StaticSecret::LEN }>(noise.private_key.expose_secret())?;
+                let local_keypair = KeyPair::from_secret_bytes(&secret_bytes);
 
                 let client_config = NoiseConfigBuilder::new(local_keypair)
                     .with_remote_public(server_public)
@@ -513,12 +501,12 @@ impl ClientConfig {
             NoiseKeyExchange::Hybrid => {
                 let server_pub_bytes =
                     decode_base64_key::<{ PqPublicKey::LEN }>(&noise.server_public_key)?;
-                let server_public =
-                    PqPublicKey::from_bytes(&*server_pub_bytes).ok_or(NoiseError::InvalidKey {
-                        reason: "Invalid PQ public key material".to_string(),
-                    })?;
+                let server_public = PqPublicKey::from_bytes(*server_pub_bytes);
 
-                let local_keypair = PqKeyPair::generate(&mut rand_core::OsRng);
+                let secret_bytes = decode_base64_key::<{ PqStaticSecret::LEN }>(
+                    noise.private_key.expose_secret(),
+                )?;
+                let local_keypair = PqKeyPair::from_secret_bytes(&secret_bytes);
 
                 let client_config = PqNoiseConfigBuilder::new(local_keypair)
                     .with_remote_public(server_public)
@@ -553,25 +541,58 @@ impl ClientConfig {
 impl ServerConfig {
     /// Creates Quinn server configuration from this Quincy tunnel configuration.
     ///
+    /// ### Arguments
+    /// - `allowed_keys` - for Noise mode, the set of allowed client public keys.
+    ///   For TLS mode, pass `None`.
+    /// - `allowed_fingerprints` - for TLS mode, the set of allowed client certificate
+    ///   fingerprints. For Noise mode, pass `None`.
+    ///
     /// ### Returns
     /// - `quinn::ServerConfig` - the Quinn server configuration
-    pub fn as_quinn_server_config(&self) -> Result<quinn::ServerConfig> {
+    pub fn as_quinn_server_config(
+        &self,
+        allowed_keys: Option<AllowedNoiseKeys>,
+        allowed_fingerprints: Option<HashSet<String>>,
+    ) -> Result<quinn::ServerConfig> {
         match &self.protocol {
-            ServerProtocolConfig::Tls(tls) => self.build_tls_server_config(tls),
-            ServerProtocolConfig::Noise(noise) => self.build_noise_server_config(noise),
+            ServerProtocolConfig::Tls(tls) => {
+                self.build_tls_server_config(tls, allowed_fingerprints.unwrap_or_default())
+            }
+            ServerProtocolConfig::Noise(noise) => {
+                self.build_noise_server_config(noise, allowed_keys)
+            }
         }
     }
 
-    /// Builds a TLS-based Quinn server configuration.
-    fn build_tls_server_config(&self, tls: &ServerTlsConfig) -> Result<quinn::ServerConfig> {
+    /// Builds a TLS-based Quinn server configuration with mutual authentication.
+    ///
+    /// ### Arguments
+    /// - `tls` - the server TLS configuration
+    /// - `allowed_fingerprints` - set of allowed client certificate fingerprints
+    fn build_tls_server_config(
+        &self,
+        tls: &ServerTlsConfig,
+        allowed_fingerprints: HashSet<String>,
+    ) -> Result<quinn::ServerConfig> {
         let key = load_private_key_from_file(&tls.certificate_key_file)?;
         let certs = load_certificates_from_file(&tls.certificate_file)?;
 
         let crypto_provider = Arc::from(tls_crypto_provider(&tls.key_exchange));
 
+        // Extract CA certs from the certificate chain (all certs after the first)
+        let ca_certs: Vec<_> = certs.iter().skip(1).cloned().collect();
+        let mut ca_store = RootCertStore::empty();
+        ca_store.add_parsable_certificates(ca_certs);
+
+        let verifier = Arc::new(crate::certificates::QuincyCertVerifier::new(
+            ca_store,
+            allowed_fingerprints,
+            crypto_provider.clone(),
+        ));
+
         let mut rustls_config = rustls::ServerConfig::builder_with_provider(crypto_provider)
             .with_protocol_versions(TLS_PROTOCOL_VERSIONS)?
-            .with_no_client_auth()
+            .with_client_cert_verifier(verifier)
             .with_single_cert(certs, key)?;
 
         rustls_config.alpn_protocols.clone_from(&TLS_ALPN_PROTOCOLS);
@@ -597,19 +618,34 @@ impl ServerConfig {
         Ok(quinn_config)
     }
 
-    /// Builds a Noise NK-based Quinn server configuration.
-    fn build_noise_server_config(&self, noise: &ServerNoiseConfig) -> Result<quinn::ServerConfig> {
+    /// Builds a Noise IK-based Quinn server configuration with allowed-keys restriction.
+    ///
+    /// ### Arguments
+    /// - `noise` - the server Noise configuration
+    /// - `allowed_keys` - optional set of allowed client public keys
+    fn build_noise_server_config(
+        &self,
+        noise: &ServerNoiseConfig,
+        allowed_keys: Option<AllowedNoiseKeys>,
+    ) -> Result<quinn::ServerConfig> {
         let mut quinn_config = match noise.key_exchange {
             NoiseKeyExchange::Standard => {
                 let secret_bytes =
                     decode_base64_key::<{ StaticSecret::LEN }>(noise.private_key.expose_secret())?;
                 let keypair = KeyPair::from_secret_bytes(&secret_bytes);
 
-                let server_config = NoiseConfigBuilder::new(keypair)
-                    .build_server_config()
-                    .map_err(|e| NoiseError::ConfigError {
-                        reason: format!("Failed to build Noise server config: {e}"),
-                    })?;
+                let mut builder = NoiseConfigBuilder::new(keypair);
+
+                if let Some(AllowedNoiseKeys::Standard(keys)) = allowed_keys {
+                    builder = builder.with_allowed_keys(keys);
+                }
+
+                let server_config =
+                    builder
+                        .build_server_config()
+                        .map_err(|e| NoiseError::ConfigError {
+                            reason: format!("Failed to build Noise server config: {e}"),
+                        })?;
 
                 let mut cfg = quinn::ServerConfig::with_crypto(Arc::new(server_config));
                 cfg.token_key(noise_handshake_token_key());
@@ -621,11 +657,18 @@ impl ServerConfig {
                 )?;
                 let keypair = PqKeyPair::from_secret_bytes(&secret_bytes);
 
-                let server_config = PqNoiseConfigBuilder::new(keypair)
-                    .build_server_config()
-                    .map_err(|e| NoiseError::ConfigError {
-                        reason: format!("Failed to build PQ Noise server config: {e}"),
-                    })?;
+                let mut builder = PqNoiseConfigBuilder::new(keypair);
+
+                if let Some(AllowedNoiseKeys::Hybrid(keys)) = allowed_keys {
+                    builder = builder.with_allowed_keys(keys);
+                }
+
+                let server_config =
+                    builder
+                        .build_server_config()
+                        .map_err(|e| NoiseError::ConfigError {
+                            reason: format!("Failed to build PQ Noise server config: {e}"),
+                        })?;
 
                 let mut cfg = quinn::ServerConfig::with_crypto(Arc::new(server_config));
                 cfg.token_key(noise_handshake_token_key());
@@ -746,7 +789,7 @@ impl ConnectionConfig {
 // --- Helpers ---
 
 /// Decodes a base64-encoded key and validates its length.
-fn decode_base64_key<const KEY_LEN: usize>(encoded: &str) -> Result<Zeroizing<[u8; KEY_LEN]>> {
+pub fn decode_base64_key<const KEY_LEN: usize>(encoded: &str) -> Result<Zeroizing<[u8; KEY_LEN]>> {
     let mut key_bytes = Zeroizing::new([0u8; KEY_LEN]);
 
     let decoded_bytes = BASE64_STANDARD
@@ -784,16 +827,13 @@ mod tests {
             reuse_socket = true
             tunnel_network = "10.0.0.1/24"
             isolate_clients = false
+            users_file = "/path/to/users.toml"
 
             [protocol]
             mode = "tls"
             certificate_file = "/path/to/cert.pem"
             certificate_key_file = "/path/to/key.pem"
             key_exchange = "PostQuantum"
-
-            [authentication]
-            auth_type = "UsersFile"
-            users_file = "/path/to/users"
 
             [connection]
             mtu = 1500
@@ -824,11 +864,7 @@ mod tests {
             "10.0.0.1/24".parse::<IpNet>().unwrap()
         );
         assert!(!config.isolate_clients);
-        assert_eq!(config.authentication.auth_type, AuthType::UsersFile);
-        assert_eq!(
-            config.authentication.users_file,
-            PathBuf::from("/path/to/users")
-        );
+        assert_eq!(config.users_file, PathBuf::from("/path/to/users.toml"));
         assert_eq!(config.connection.mtu, 1500);
         assert_eq!(
             config.connection.congestion_controller,
@@ -856,14 +892,12 @@ mod tests {
         let toml = r#"
             name = "quincy-server"
             tunnel_network = "10.0.0.1/24"
+            users_file = "/path/to/users.toml"
 
             [protocol]
             mode = "noise"
             key_exchange = "Standard"
             private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-
-            [authentication]
-            users_file = "/path/to/users"
 
             [log]
             level = "info"
@@ -891,16 +925,13 @@ mod tests {
         let toml = r#"
             connection_string = "example.com:55555"
 
-            [authentication]
-            auth_type = "UsersFile"
-            username = "testuser"
-            password = "testpass"
-
             [protocol]
             mode = "tls"
             key_exchange = "Standard"
             trusted_certificate_paths = ["/path/to/cert1.pem", "/path/to/cert2.pem"]
             trusted_certificates = ["-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----"]
+            client_certificate_file = "/path/to/client_cert.pem"
+            client_certificate_key_file = "/path/to/client_key.pem"
 
             [connection]
             mtu = 1500
@@ -924,9 +955,6 @@ mod tests {
             .expect("Failed to parse client config");
 
         assert_eq!(config.connection_string, "example.com:55555");
-        assert_eq!(config.authentication.auth_type, AuthType::UsersFile);
-        assert_eq!(config.authentication.username, "testuser");
-        assert_eq!(config.authentication.password, "testpass");
 
         match &config.protocol {
             ClientProtocolConfig::Tls(tls) => {
@@ -941,6 +969,14 @@ mod tests {
                 assert_eq!(
                     tls.trusted_certificates,
                     vec!["-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----"]
+                );
+                assert_eq!(
+                    tls.client_certificate_file,
+                    PathBuf::from("/path/to/client_cert.pem")
+                );
+                assert_eq!(
+                    tls.client_certificate_key_file,
+                    PathBuf::from("/path/to/client_key.pem")
                 );
             }
             _ => panic!("Expected TLS protocol config"),
@@ -977,14 +1013,11 @@ mod tests {
         let toml = r#"
             connection_string = "example.com:55555"
 
-            [authentication]
-            username = "testuser"
-            password = "testpass"
-
             [protocol]
             mode = "noise"
             key_exchange = "Standard"
             server_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+            private_key = "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
             [log]
             level = "info"
@@ -1001,6 +1034,10 @@ mod tests {
                 assert_eq!(
                     noise.server_public_key,
                     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+                );
+                assert_eq!(
+                    noise.private_key.expose_secret(),
+                    "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
                 );
             }
             _ => panic!("Expected Noise protocol config"),

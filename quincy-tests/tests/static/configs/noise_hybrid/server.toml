@@ -2,14 +2,12 @@ name = "tun0"
 tunnel_network = "10.0.0.1/24"
 bind_address = "::"
 bind_port = 55159
+users_file = "tests/static/users.toml"
 
 [protocol]
 mode = "noise"
 key_exchange = "Hybrid"
 private_key = "wh4uIPejgT77CP/URVlRHt3bRgW3IPqerfAsacsa2ebXBjlHupvGa53SgQ+1+fGWVE3H6JWWHCmF5akLQ/VAf61FRL07i0VkoHuNJnSb+yOYljACDpPLmibjGCQjV11l"
-
-[authentication]
-users_file = "tests/static/users"
 
 [connection]
 mtu = 1400
