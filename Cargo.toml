@@ -1,5 +1,5 @@
 [workspace]
-members = ["quincy", "quincy-client", "quincy-server", "quincy-gui", "quincy-tests"]
+members = ["quincy", "quincy-client", "quincy-identity", "quincy-server", "quincy-gui", "quincy-tests"]
 resolver = "2"
 
 [workspace.package]

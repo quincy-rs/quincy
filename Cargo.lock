@@ -3781,11 +3781,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "quincy-identity"
+version = "1.3.0"
+dependencies = [
+ "base64",
+ "clap",
+ "quincy",
+ "rand_core 0.6.4",
+ "rcgen",
+ "reishi-quinn",
+ "rustls",
+]
+
+[[package]]
 name = "quincy-server"
 version = "1.3.0"
 dependencies = [
- "aws-lc-rs",
- "base64",
  "bytes",
  "clap",
  "dashmap",
@@ -3794,8 +3805,6 @@ dependencies = [
  "ipnet",
  "quincy",
  "quinn",
- "rand_core 0.6.4",
- "rcgen",
  "reishi-quinn",
  "rustls",
  "serde",

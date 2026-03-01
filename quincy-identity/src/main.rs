@@ -9,24 +9,50 @@
 //!   quincy-identity tls gencert --out-cert <path> --out-key <path> [--cn <common-name>]
 //!   quincy-identity tls fingerprint --cert <path>
 
-use aws_lc_rs::digest;
 use base64::prelude::*;
+use clap::builder::PossibleValue;
 use clap::{Parser, Subcommand, ValueEnum};
+use quincy::config::NoiseKeyExchange;
 use rand_core::OsRng;
 use rcgen::{CertificateParams, KeyPair as RcgenKeyPair};
 use reishi_quinn::{KeyPair, PqKeyPair};
+use rustls::pki_types::CertificateDer;
 use std::fs;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 use std::process;
 
-/// Key exchange mode for Noise keypair generation.
-#[derive(Clone, Debug, ValueEnum)]
-enum KeyExchangeMode {
-    /// X25519 Diffie-Hellman
-    Standard,
-    /// X25519 + ML-KEM-768 hybrid
-    Hybrid,
+/// Newtype wrapper around [`NoiseKeyExchange`] that implements [`clap::ValueEnum`].
+///
+/// The core `quincy` crate does not depend on `clap`, so we cannot derive
+/// `ValueEnum` on `NoiseKeyExchange` directly. This wrapper bridges the gap.
+#[derive(Clone, Debug)]
+struct KeyExchangeArg(NoiseKeyExchange);
+
+impl ValueEnum for KeyExchangeArg {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[
+            KeyExchangeArg(NoiseKeyExchange::Standard),
+            KeyExchangeArg(NoiseKeyExchange::Hybrid),
+        ]
+    }
+
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        match self.0 {
+            NoiseKeyExchange::Standard => {
+                Some(PossibleValue::new("standard").help("X25519 Diffie-Hellman"))
+            }
+            NoiseKeyExchange::Hybrid => {
+                Some(PossibleValue::new("hybrid").help("X25519 + ML-KEM-768 hybrid"))
+            }
+        }
+    }
+}
+
+impl Default for KeyExchangeArg {
+    fn default() -> Self {
+        KeyExchangeArg(NoiseKeyExchange::Standard)
+    }
 }
 
 /// Generate and manage identities for Quincy VPN.
@@ -60,13 +86,13 @@ enum NoiseCommand {
     Genkey {
         /// The key exchange mode to generate keys for
         #[arg(short, long, default_value = "standard")]
-        key_exchange: KeyExchangeMode,
+        key_exchange: KeyExchangeArg,
     },
     /// Derive the public key from a private key read from stdin
     Pubkey {
         /// The key exchange mode of the private key
         #[arg(short, long, default_value = "standard")]
-        key_exchange: KeyExchangeMode,
+        key_exchange: KeyExchangeArg,
     },
 }
 
@@ -98,8 +124,8 @@ fn main() {
 
     match args.command {
         ProtocolCommand::Noise { command } => match command {
-            NoiseCommand::Genkey { key_exchange } => noise_genkey(key_exchange),
-            NoiseCommand::Pubkey { key_exchange } => noise_pubkey(key_exchange),
+            NoiseCommand::Genkey { key_exchange } => noise_genkey(&key_exchange.0),
+            NoiseCommand::Pubkey { key_exchange } => noise_pubkey(&key_exchange.0),
         },
         ProtocolCommand::Tls { command } => match command {
             TlsCommand::Gencert {
@@ -113,13 +139,13 @@ fn main() {
 }
 
 /// Generates a Noise private key and prints it as base64 to stdout.
-fn noise_genkey(key_exchange: KeyExchangeMode) {
+fn noise_genkey(key_exchange: &NoiseKeyExchange) {
     match key_exchange {
-        KeyExchangeMode::Standard => {
+        NoiseKeyExchange::Standard => {
             let kp = KeyPair::generate(&mut OsRng);
             println!("{}", BASE64_STANDARD.encode(kp.secret_bytes()));
         }
-        KeyExchangeMode::Hybrid => {
+        NoiseKeyExchange::Hybrid => {
             let kp = PqKeyPair::generate(&mut OsRng);
             println!("{}", BASE64_STANDARD.encode(kp.secret_bytes()));
         }
@@ -127,7 +153,7 @@ fn noise_genkey(key_exchange: KeyExchangeMode) {
 }
 
 /// Reads a base64-encoded Noise private key from stdin and prints the derived public key.
-fn noise_pubkey(key_exchange: KeyExchangeMode) {
+fn noise_pubkey(key_exchange: &NoiseKeyExchange) {
     let line = match io::stdin().lock().lines().next() {
         Some(Ok(line)) => line.trim().to_string(),
         Some(Err(e)) => {
@@ -149,7 +175,7 @@ fn noise_pubkey(key_exchange: KeyExchangeMode) {
     };
 
     match key_exchange {
-        KeyExchangeMode::Standard => {
+        NoiseKeyExchange::Standard => {
             let secret_bytes: [u8; 32] = match bytes.try_into() {
                 Ok(b) => b,
                 Err(_) => {
@@ -160,7 +186,7 @@ fn noise_pubkey(key_exchange: KeyExchangeMode) {
             let kp = KeyPair::from_secret_bytes(&secret_bytes);
             println!("{}", BASE64_STANDARD.encode(kp.public.as_bytes()));
         }
-        KeyExchangeMode::Hybrid => {
+        NoiseKeyExchange::Hybrid => {
             let secret_bytes: [u8; 96] = match bytes.try_into() {
                 Ok(b) => b,
                 Err(_) => {
@@ -207,8 +233,9 @@ fn tls_gencert(out_cert: &Path, out_key: &Path, cn: &str) {
         process::exit(1);
     });
 
-    // Compute and print fingerprint
-    let fingerprint = compute_fingerprint(cert.der());
+    // Compute and print fingerprint using the core library's compute_cert_fingerprint
+    let cert_der = CertificateDer::from(cert.der().to_vec());
+    let fingerprint = quincy::certificates::compute_cert_fingerprint(&cert_der);
     println!("Certificate written to: {}", out_cert.display());
     println!("Private key written to: {}", out_key.display());
     println!("SHA-256 fingerprint: {fingerprint}");
@@ -231,13 +258,4 @@ fn tls_fingerprint(cert_path: &Path) {
 
     let fingerprint = quincy::certificates::compute_cert_fingerprint(end_entity);
     println!("{fingerprint}");
-}
-
-/// Computes the SHA-256 fingerprint of DER-encoded certificate bytes.
-///
-/// Returns a string in the format `sha256:<lowercase-hex>`.
-fn compute_fingerprint(der_bytes: &[u8]) -> String {
-    let hash = digest::digest(&digest::SHA256, der_bytes);
-    let hex: String = hash.as_ref().iter().map(|b| format!("{b:02x}")).collect();
-    format!("sha256:{hex}")
 }

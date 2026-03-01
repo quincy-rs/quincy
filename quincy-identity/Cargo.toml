@@ -1,0 +1,37 @@
+[package]
+name = "quincy-identity"
+description = "QUIC-based VPN - Identity management tool"
+readme = "../README.md"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "quincy-identity"
+path = "src/main.rs"
+
+[features]
+default = []
+
+[dependencies]
+quincy = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Crypto
+rcgen = { workspace = true }
+reishi-quinn = { workspace = true }
+rand_core = { workspace = true }
+
+# TLS types (for CertificateDer)
+rustls = { workspace = true }
+
+# Encoding
+base64 = { workspace = true }
