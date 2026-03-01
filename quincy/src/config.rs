@@ -59,6 +59,12 @@ pub struct ServerConfig {
     /// Whether to isolate clients from each other (default = true)
     #[serde(default = "default_true_fn")]
     pub isolate_clients: bool,
+    /// Whether to reject duplicate sessions for the same identity (default = true)
+    ///
+    /// When enabled, only one active connection per user identity is allowed.
+    /// A second connection attempt from the same identity will be silently closed.
+    #[serde(default = "default_true_fn")]
+    pub reject_duplicate_sessions: bool,
     /// Protocol configuration (TLS or Noise)
     pub protocol: ServerProtocolConfig,
     /// Path to the TOML users file for authentication
@@ -579,15 +585,9 @@ impl ServerConfig {
 
         let crypto_provider = Arc::from(tls_crypto_provider(&tls.key_exchange));
 
-        // Extract CA certs from the certificate chain (all certs after the first)
-        let ca_certs: Vec<_> = certs.iter().skip(1).cloned().collect();
-        let mut ca_store = RootCertStore::empty();
-        ca_store.add_parsable_certificates(ca_certs);
-
         let verifier = Arc::new(crate::certificates::QuincyCertVerifier::new(
-            ca_store,
             allowed_fingerprints,
-            crypto_provider.clone(),
+            &crypto_provider,
         ));
 
         let mut rustls_config = rustls::ServerConfig::builder_with_provider(crypto_provider)
@@ -638,6 +638,11 @@ impl ServerConfig {
 
                 if let Some(AllowedNoiseKeys::Standard(keys)) = allowed_keys {
                     builder = builder.with_allowed_keys(keys);
+                } else if allowed_keys.is_some() {
+                    return Err(NoiseError::ConfigError {
+                        reason: "Allowed keys use Hybrid mode, but server is configured for Standard Noise key exchange".to_string(),
+                    }
+                    .into());
                 }
 
                 let server_config =
@@ -661,6 +666,11 @@ impl ServerConfig {
 
                 if let Some(AllowedNoiseKeys::Hybrid(keys)) = allowed_keys {
                     builder = builder.with_allowed_keys(keys);
+                } else if allowed_keys.is_some() {
+                    return Err(NoiseError::ConfigError {
+                        reason: "Allowed keys use Standard mode, but server is configured for Hybrid Noise key exchange".to_string(),
+                    }
+                    .into());
                 }
 
                 let server_config =

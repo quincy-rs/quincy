@@ -33,5 +33,8 @@ rand_core = { workspace = true }
 # TLS types (for CertificateDer)
 rustls = { workspace = true }
 
+# Secret handling
+zeroize = { workspace = true }
+
 # Encoding
 base64 = { workspace = true }

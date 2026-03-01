@@ -28,8 +28,9 @@ async fn test_client_isolation(#[case] config_dir: &str) {
 
     let client_config =
         ClientConfig::from_path(&Path::new(config_dir).join("client.toml"), "QUINCY_").unwrap();
-    let server_config =
+    let mut server_config =
         ServerConfig::from_path(&Path::new(config_dir).join("server.toml"), "QUINCY_").unwrap();
+    server_config.reject_duplicate_sessions = false;
 
     let mut client_a = QuincyClient::new(client_config.clone());
     let mut client_b = QuincyClient::new(client_config);

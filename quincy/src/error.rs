@@ -84,17 +84,21 @@ pub enum AuthError {
     #[error("Authentication timeout")]
     Timeout,
 
-    /// Permission denied for requested operation
-    #[error("Permission denied")]
-    PermissionDenied,
-
     /// Authentication store (e.g., users file) is unavailable
     #[error("Authentication store unavailable")]
     StoreUnavailable,
 
+    /// No available addresses in the tunnel address pool
+    #[error("Address pool exhausted")]
+    AddressPoolExhausted,
+
     /// IP assignment uni-stream send or receive failure
     #[error("IP assignment failed")]
     IpAssignmentFailed,
+
+    /// Authentication store contains invalid data (e.g., duplicate keys, bad format)
+    #[error("Invalid authentication store: {reason}")]
+    InvalidUserStore { reason: String },
 }
 
 /// Configuration loading and validation errors.

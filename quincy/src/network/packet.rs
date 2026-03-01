@@ -43,6 +43,34 @@ impl Packet {
         }
     }
 
+    /// Returns the source IP address of the packet.
+    #[inline]
+    pub fn source(&self) -> Result<IpAddr> {
+        if self.is_empty() {
+            return Err(NetworkError::PacketError {
+                reason: "Packet is empty".to_string(),
+            }
+            .into());
+        }
+
+        let version = self.data[0] >> 4;
+
+        match version {
+            4 => {
+                let dest_addr = self.parse_ipv4_source()?;
+                Ok(IpAddr::V4(dest_addr))
+            }
+            6 => {
+                let dest_addr = self.parse_ipv6_source()?;
+                Ok(IpAddr::V6(dest_addr))
+            }
+            _ => Err(NetworkError::PacketError {
+                reason: format!("Unsupported IP version: {version}"),
+            }
+            .into()),
+        }
+    }
+
     #[inline]
     fn parse_ipv4_destination(&self) -> Result<Ipv4Addr> {
         if self.data.len() < 20 {
@@ -77,6 +105,40 @@ impl Packet {
         let dest_addr = Ipv6Addr::from(destination_slice);
 
         Ok(dest_addr)
+    }
+
+    #[inline]
+    fn parse_ipv4_source(&self) -> Result<Ipv4Addr> {
+        if self.data.len() < 20 {
+            return Err(NetworkError::PacketError {
+                reason: "Packet is too short for IPv4 header".to_string(),
+            }
+            .into());
+        }
+
+        let source_slice: [u8; 4] = self.data[12..16]
+            .try_into()
+            .expect("slice has valid length");
+
+        let source_addr = Ipv4Addr::from(source_slice);
+
+        Ok(source_addr)
+    }
+
+    #[inline]
+    fn parse_ipv6_source(&self) -> Result<Ipv6Addr> {
+        if self.data.len() < 40 {
+            return Err(NetworkError::PacketError {
+                reason: "Packet is too short for IPv6 header".to_string(),
+            }
+            .into());
+        }
+
+        let source_slice: [u8; 16] = self.data[8..24].try_into().expect("slice had valid length");
+
+        let source_addr = Ipv6Addr::from(source_slice);
+
+        Ok(source_addr)
     }
 }
 

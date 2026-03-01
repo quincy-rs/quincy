@@ -5,7 +5,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use bytes::Bytes;
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use quinn::{Endpoint, VarInt};
@@ -13,6 +13,8 @@ use tokio::signal;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tracing::{debug, info, warn};
 
+use crate::server::address_pool::AddressPool;
+use crate::server::connection::{Assigned, QuincyConnection};
 use crate::users::UsersFile;
 use quincy::config::{AllowedNoiseKeys, NoiseKeyExchange, ServerConfig, ServerProtocolConfig};
 use quincy::constants::{PACKET_BUFFER_SIZE, PACKET_CHANNEL_SIZE, QUINN_RUNTIME};
@@ -22,10 +24,19 @@ use quincy::network::socket::bind_socket;
 use quincy::utils::tasks::abort_all;
 use quincy::Result;
 
-use self::address_pool::AddressPool;
-use self::connection::QuincyConnection;
-
+/// Map of connection addresses to their TX channel.
 type ConnectionQueues = Arc<DashMap<IpAddr, Sender<Bytes>>>;
+
+/// Set of currently active usernames, used to reject duplicate sessions.
+type ActiveSessions = Arc<DashSet<String>>;
+
+/// Result of an IP assignment task, carrying the context needed for cleanup on failure.
+struct AssignmentResult {
+    result: Result<QuincyConnection<Assigned>>,
+    quic_connection: quinn::Connection,
+    active_sessions: ActiveSessions,
+    username: String,
+}
 
 /// Represents a Quincy server encapsulating Quincy connections and TUN interface IO.
 pub struct QuincyServer {
@@ -33,6 +44,7 @@ pub struct QuincyServer {
     connection_queues: ConnectionQueues,
     address_pool: Arc<AddressPool>,
     users: Arc<UsersFile>,
+    active_sessions: ActiveSessions,
 }
 
 impl QuincyServer {
@@ -51,6 +63,7 @@ impl QuincyServer {
             connection_queues: Arc::new(DashMap::new()),
             address_pool: Arc::new(address_pool),
             users: Arc::new(users),
+            active_sessions: Arc::new(DashSet::new()),
         })
     }
 
@@ -111,8 +124,9 @@ impl QuincyServer {
         let server_address = self.config.tunnel_network;
         let users = self.users.clone();
         let address_pool = self.address_pool.clone();
+        let active_sessions = self.active_sessions.clone();
 
-        let mut identification_tasks = FuturesUnordered::new();
+        let mut assignment_tasks = FuturesUnordered::new();
         let mut connection_tasks = FuturesUnordered::new();
 
         loop {
@@ -134,37 +148,66 @@ impl QuincyServer {
                         }
                     };
 
+                    let quic_connection_clone = quic_connection.clone();
                     let connection = QuincyConnection::new(
                         quic_connection,
                         ingress_queue.clone(),
                     );
 
-                    let protocol = protocol.clone();
-                    let users = users.clone();
-                    let address_pool = address_pool.clone();
-                    let server_addr = server_address;
-
-                    identification_tasks.push(async move {
-                        connection.identify_and_assign(
-                            &protocol,
-                            &users,
-                            &address_pool,
-                            server_addr,
-                        ).await
-                    });
-                }
-
-                // Identification tasks
-                Some(connection) = identification_tasks.next() => {
-                    let connection = match connection {
-                        Ok(connection) => connection,
+                    // Identify synchronously (reads peer_identity + HashMap lookup)
+                    let connection = match connection.identify(&protocol, &users) {
+                        Ok(conn) => conn,
                         Err(e) => {
                             warn!("Failed to identify client: {e}");
+                            quic_connection_clone.close(VarInt::from_u32(0x02), "Session establishment failed".as_bytes());
                             continue;
                         }
                     };
 
-                    let client_address = connection.client_address()?.addr();
+                    let username = connection.username().to_string();
+
+                    // Reject duplicate sessions BEFORE IP allocation
+                    if self.config.reject_duplicate_sessions
+                        && !active_sessions.insert(username.clone())
+                    {
+                        warn!(
+                            "Rejecting duplicate session for user '{username}' from {}",
+                            quic_connection_clone.remote_address().ip()
+                        );
+                        quic_connection_clone.close(VarInt::from_u32(0x02), "Session establishment failed".as_bytes());
+                        continue;
+                    }
+
+                    let address_pool = address_pool.clone();
+                    let server_addr = server_address;
+                    let active_sessions_clone = active_sessions.clone();
+                    let username_clone = username.clone();
+
+                    assignment_tasks.push(async move {
+                        let result = connection.assign_ip(&address_pool, server_addr).await;
+                        AssignmentResult {
+                            result,
+                            quic_connection: quic_connection_clone,
+                            active_sessions: active_sessions_clone,
+                            username: username_clone,
+                        }
+                    });
+                }
+
+                // Assignment tasks
+                Some(assignment) = assignment_tasks.next() => {
+                    let connection = match assignment.result {
+                        Ok(connection) => connection,
+                        Err(e) => {
+                            warn!("Failed to assign IP to client: {e}");
+                            assignment.quic_connection.close(VarInt::from_u32(0x02), "Session establishment failed".as_bytes());
+                            assignment.active_sessions.remove(&assignment.username);
+                            continue;
+                        }
+                    };
+
+                    let client_address = connection.client_address().addr();
+
                     let (connection_sender, connection_receiver) = channel(PACKET_CHANNEL_SIZE);
 
                     connection_tasks.push(tokio::spawn(connection.run(connection_receiver)));
@@ -174,11 +217,13 @@ impl QuincyServer {
                 // Connection tasks
                 Some(connection) = connection_tasks.next() => {
                     let (connection, err) = connection?;
-                    let client_address = &connection.client_address()?.addr();
+                    let username = connection.username();
+                    let client_address = &connection.client_address().addr();
 
                     self.connection_queues.remove(client_address);
                     self.address_pool.release_address(client_address);
-                    warn!("Connection with client {client_address} has encountered an error: {err}");
+                    active_sessions.remove(username);
+                    warn!("Connection with client {client_address} (user '{username}') has encountered an error: {err}");
                 }
 
                 // Shutdown
@@ -302,9 +347,14 @@ async fn relay_isolated(
 ) -> Result<()> {
     loop {
         let mut packets = Vec::with_capacity(PACKET_BUFFER_SIZE);
-        ingress_queue
+        let count = ingress_queue
             .recv_many(&mut packets, PACKET_BUFFER_SIZE)
             .await;
+
+        // ingress_queue closed
+        if count == 0 {
+            return Ok(());
+        }
 
         let filtered_packets = packets
             .into_iter()
@@ -333,9 +383,14 @@ async fn relay_unisolated(
     loop {
         let mut packets = Vec::with_capacity(PACKET_BUFFER_SIZE);
 
-        ingress_queue
+        let count = ingress_queue
             .recv_many(&mut packets, PACKET_BUFFER_SIZE)
             .await;
+
+        // ingress_queue closed
+        if count == 0 {
+            return Ok(());
+        }
 
         for packet in packets {
             let dest_addr = match packet.destination() {

@@ -68,8 +68,14 @@ async fn test_failed_auth_unauthorized_identity(#[case] config_dir: &str) {
 
     tokio::spawn(async move { server.run::<TestInterface<Server>>().await.unwrap() });
 
-    // The client should fail to connect because the server rejects the
-    // unauthorized identity during the QUIC handshake.
+    // The client should fail to connect:
+    // - Noise: the handshake itself rejects the unauthorized key (allowed-keys check)
+    // - TLS: the handshake succeeds but the server closes the connection after
+    //   failing to identify the client's certificate fingerprint in the users file,
+    //   causing the client's accept_uni() call to return a connection error.
+    //
+    // The outer timeout is a safety net to prevent infinite hangs in CI; it should
+    // never fire because both protocol modes produce explicit errors.
     let result = timeout(
         Duration::from_secs(5),
         client.start::<TestInterface<Client>>(),
@@ -78,15 +84,17 @@ async fn test_failed_auth_unauthorized_identity(#[case] config_dir: &str) {
 
     match result {
         Ok(Err(_)) => {
-            // Expected: handshake or connection error
-        }
-        Err(_) => {
-            // Timeout is also acceptable for TLS mode where the server silently
-            // closes the connection and the client may hang waiting for the
-            // IP assignment uni-stream.
+            // Expected: handshake rejection (Noise) or connection closed during
+            // IP assignment (TLS)
         }
         Ok(Ok(())) => {
             panic!("Expected connection to fail with unauthorized identity, but it succeeded");
+        }
+        Err(_) => {
+            panic!(
+                "Timed out waiting for connection failure — the server should explicitly \
+                 reject unauthorized clients, not leave them hanging"
+            );
         }
     }
 }

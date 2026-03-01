@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::path::Path;
-use std::sync::Arc;
 use std::{
     fs::File,
     io::{BufReader, Cursor},
@@ -12,8 +11,7 @@ use rustls::crypto::{CryptoProvider, WebPkiSupportedAlgorithms};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
-use rustls::server::WebPkiClientVerifier;
-use rustls::{DigitallySignedStruct, DistinguishedName, Error, RootCertStore, SignatureScheme};
+use rustls::{DigitallySignedStruct, DistinguishedName, Error, SignatureScheme};
 
 use crate::error::{CertificateError, Result};
 
@@ -103,15 +101,13 @@ pub fn compute_cert_fingerprint(cert: &CertificateDer<'_>) -> String {
 
 /// Custom client certificate verifier for Quincy.
 ///
-/// Validates client certificates using two methods:
-/// 1. CA-based validation: delegates to `WebPkiClientVerifier` if CA roots are available
-/// 2. Fingerprint-based validation: if the certificate's SHA-256 fingerprint
-///    matches one in the allowed set
+/// Validates client certificates by checking whether the leaf certificate's SHA-256
+/// fingerprint is present in the allowed set. Client authentication is mandatory --
+/// anonymous clients are rejected.
 ///
-/// Client authentication is mandatory -- anonymous clients are rejected.
+/// Fingerprint-based validation does not check certificate expiry. Expired certificates
+/// remain valid until their fingerprint is removed from the users file.
 pub struct QuincyCertVerifier {
-    /// Optional WebPKI verifier for CA-based chain validation.
-    ca_verifier: Option<Arc<dyn ClientCertVerifier>>,
     /// Set of allowed certificate fingerprints in `sha256:<hex>` format.
     allowed_fingerprints: HashSet<String>,
     /// Supported signature verification algorithms.
@@ -122,28 +118,12 @@ impl QuincyCertVerifier {
     /// Creates a new `QuincyCertVerifier`.
     ///
     /// ### Arguments
-    /// - `ca_roots` - root CA certificate store for chain validation
     /// - `allowed_fingerprints` - set of allowed certificate fingerprints
     /// - `crypto_provider` - the crypto provider for signature verification algorithms
-    pub fn new(
-        ca_roots: RootCertStore,
-        allowed_fingerprints: HashSet<String>,
-        crypto_provider: Arc<CryptoProvider>,
-    ) -> Self {
-        let supported_algs = crypto_provider.signature_verification_algorithms;
-
-        let ca_verifier = if ca_roots.is_empty() {
-            None
-        } else {
-            WebPkiClientVerifier::builder_with_provider(Arc::new(ca_roots), crypto_provider)
-                .build()
-                .ok()
-        };
-
+    pub fn new(allowed_fingerprints: HashSet<String>, crypto_provider: &CryptoProvider) -> Self {
         Self {
-            ca_verifier,
             allowed_fingerprints,
-            supported_algs,
+            supported_algs: crypto_provider.signature_verification_algorithms,
         }
     }
 }
@@ -151,7 +131,6 @@ impl QuincyCertVerifier {
 impl Debug for QuincyCertVerifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QuincyCertVerifier")
-            .field("has_ca_verifier", &self.ca_verifier.is_some())
             .field(
                 "allowed_fingerprints_count",
                 &self.allowed_fingerprints.len(),
@@ -170,30 +149,15 @@ impl ClientCertVerifier for QuincyCertVerifier {
     }
 
     fn root_hint_subjects(&self) -> &[DistinguishedName] {
-        if let Some(ca_verifier) = &self.ca_verifier {
-            ca_verifier.root_hint_subjects()
-        } else {
-            &[]
-        }
+        &[]
     }
 
     fn verify_client_cert(
         &self,
         end_entity: &CertificateDer<'_>,
-        intermediates: &[CertificateDer<'_>],
-        now: UnixTime,
+        _intermediates: &[CertificateDer<'_>],
+        _now: UnixTime,
     ) -> std::result::Result<ClientCertVerified, Error> {
-        // First, try CA-based chain validation via WebPkiClientVerifier
-        if let Some(ca_verifier) = &self.ca_verifier {
-            if ca_verifier
-                .verify_client_cert(end_entity, intermediates, now)
-                .is_ok()
-            {
-                return Ok(ClientCertVerified::assertion());
-            }
-        }
-
-        // Fall back to fingerprint-based validation
         let fingerprint = compute_cert_fingerprint(end_entity);
         if self.allowed_fingerprints.contains(&fingerprint) {
             return Ok(ClientCertVerified::assertion());

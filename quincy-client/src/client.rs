@@ -7,6 +7,7 @@ use tracing::{debug, info};
 
 use quincy::config::ClientConfig;
 use quincy::constants::QUINN_RUNTIME;
+use quincy::error::ConfigError;
 use quincy::ip_assignment;
 use quincy::network::interface::{Interface, InterfaceIO};
 use quincy::network::socket::bind_socket;
@@ -129,17 +130,25 @@ impl QuincyClient {
     async fn connect_to_server(&self) -> Result<Connection> {
         let quinn_config = self.config.quinn_client_config()?;
 
-        let server_hostname = self
-            .config
-            .connection_string
-            .split(':')
-            .next()
-            .ok_or_else(|| {
-                QuincyError::config_file_not_found(format!(
-                    "Could not parse hostname from connection string '{}'",
-                    self.config.connection_string
-                ))
-            })?;
+        let (host_part, _port) =
+            self.config
+                .connection_string
+                .rsplit_once(':')
+                .ok_or_else(|| {
+                    QuincyError::Config(ConfigError::InvalidValue {
+                        field: "connection_string".to_string(),
+                        reason: format!(
+                            "expected 'host:port' format, got '{}'",
+                            self.config.connection_string
+                        ),
+                    })
+                })?;
+
+        // Strip brackets from IPv6 addresses (e.g., "[::1]" -> "::1")
+        let server_hostname = host_part
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+            .unwrap_or(host_part);
 
         let server_addr = self
             .config
