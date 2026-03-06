@@ -72,3 +72,4 @@ wintun-bindings = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
+etherparse = "0.18"

@@ -3734,6 +3734,7 @@ dependencies = [
  "base64",
  "bytes",
  "dashmap",
+ "etherparse",
  "figment",
  "futures",
  "ipnet",

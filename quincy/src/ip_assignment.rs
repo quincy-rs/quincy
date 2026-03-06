@@ -152,3 +152,231 @@ fn validate_assignment(assignment: &IpAssignment) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::QuincyError;
+    use std::str::FromStr;
+
+    fn make_ipv4(addr: &str, prefix: u8) -> IpNet {
+        IpNet::from_str(&format!("{}/{}", addr, prefix)).unwrap()
+    }
+
+    fn make_ipv6(addr: &str, prefix: u8) -> IpNet {
+        IpNet::from_str(&format!("{}/{}", addr, prefix)).unwrap()
+    }
+
+    mod validate_assignment_address {
+        use super::*;
+
+        #[test]
+        fn accepts_valid_ipv4_address() {
+            let ipnet = make_ipv4("10.0.0.1", 24);
+            assert!(validate_assignment_address(ipnet).is_ok());
+        }
+
+        #[test]
+        fn accepts_valid_ipv6_address() {
+            let ipnet = make_ipv6("fd00::1", 64);
+            assert!(validate_assignment_address(ipnet).is_ok());
+        }
+
+        #[test]
+        fn rejects_ipv4_loopback() {
+            let ipnet = make_ipv4("127.0.0.1", 8);
+            let result = validate_assignment_address(ipnet);
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                QuincyError::Auth(AuthError::IpAssignmentFailed)
+            ));
+        }
+
+        #[test]
+        fn rejects_ipv6_loopback() {
+            let ipnet = make_ipv6("::1", 128);
+            let result = validate_assignment_address(ipnet);
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                QuincyError::Auth(AuthError::IpAssignmentFailed)
+            ));
+        }
+
+        #[test]
+        fn rejects_ipv4_unspecified() {
+            let ipnet = make_ipv4("0.0.0.0", 0);
+            let result = validate_assignment_address(ipnet);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_ipv6_unspecified() {
+            let ipnet = make_ipv6("::", 0);
+            let result = validate_assignment_address(ipnet);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_ipv4_multicast() {
+            let ipnet = make_ipv4("224.0.0.1", 24);
+            let result = validate_assignment_address(ipnet);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_ipv6_multicast() {
+            let ipnet = make_ipv6("ff02::1", 64);
+            let result = validate_assignment_address(ipnet);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_ipv4_broadcast() {
+            let ipnet = make_ipv4("255.255.255.255", 32);
+            let result = validate_assignment_address(ipnet);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_zero_prefix_length_ipv4() {
+            let ipnet = make_ipv4("10.0.0.1", 0);
+            let result = validate_assignment_address(ipnet);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_zero_prefix_length_ipv6() {
+            let ipnet = make_ipv6("fd00::1", 0);
+            let result = validate_assignment_address(ipnet);
+            assert!(result.is_err());
+        }
+    }
+
+    mod validate_assignment {
+        use super::*;
+
+        #[test]
+        fn accepts_valid_assignment_ipv4() {
+            let assignment = IpAssignment {
+                client_address: make_ipv4("10.0.0.2", 24),
+                server_address: make_ipv4("10.0.0.1", 24),
+            };
+            assert!(validate_assignment(&assignment).is_ok());
+        }
+
+        #[test]
+        fn accepts_valid_assignment_ipv6() {
+            let assignment = IpAssignment {
+                client_address: make_ipv6("fd00::2", 64),
+                server_address: make_ipv6("fd00::1", 64),
+            };
+            assert!(validate_assignment(&assignment).is_ok());
+        }
+
+        #[test]
+        fn rejects_client_not_in_server_subnet_ipv4() {
+            let assignment = IpAssignment {
+                client_address: make_ipv4("10.0.0.2", 24),
+                server_address: make_ipv4("192.168.1.1", 24),
+            };
+            let result = validate_assignment(&assignment);
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                QuincyError::Auth(AuthError::IpAssignmentFailed)
+            ));
+        }
+
+        #[test]
+        fn rejects_client_not_in_server_subnet_ipv6() {
+            let assignment = IpAssignment {
+                client_address: make_ipv6("fd00::2", 64),
+                server_address: make_ipv6("fd01::1", 64),
+            };
+            let result = validate_assignment(&assignment);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_server_not_in_client_subnet_ipv4() {
+            let assignment = IpAssignment {
+                client_address: make_ipv4("10.0.0.2", 24),
+                server_address: make_ipv4("10.0.1.1", 24),
+            };
+            let result = validate_assignment(&assignment);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_different_subnets_with_same_prefix() {
+            let assignment = IpAssignment {
+                client_address: make_ipv4("10.0.1.2", 24),
+                server_address: make_ipv4("10.0.2.1", 24),
+            };
+            let result = validate_assignment(&assignment);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_assignment_with_loopback_client() {
+            let assignment = IpAssignment {
+                client_address: make_ipv4("127.0.0.1", 8),
+                server_address: make_ipv4("10.0.0.1", 24),
+            };
+            let result = validate_assignment(&assignment);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_assignment_with_loopback_server() {
+            let assignment = IpAssignment {
+                client_address: make_ipv4("10.0.0.2", 24),
+                server_address: make_ipv4("127.0.0.1", 8),
+            };
+            let result = validate_assignment(&assignment);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_assignment_with_unspecified_client() {
+            let assignment = IpAssignment {
+                client_address: make_ipv4("0.0.0.0", 24),
+                server_address: make_ipv4("10.0.0.1", 24),
+            };
+            let result = validate_assignment(&assignment);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_assignment_with_multicast_client() {
+            let assignment = IpAssignment {
+                client_address: make_ipv4("224.0.0.1", 24),
+                server_address: make_ipv4("10.0.0.1", 24),
+            };
+            let result = validate_assignment(&assignment);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_assignment_with_broadcast_server() {
+            let assignment = IpAssignment {
+                client_address: make_ipv4("10.0.0.2", 24),
+                server_address: make_ipv4("255.255.255.255", 32),
+            };
+            let result = validate_assignment(&assignment);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_assignment_with_zero_prefix_client() {
+            let assignment = IpAssignment {
+                client_address: make_ipv4("10.0.0.2", 0),
+                server_address: make_ipv4("10.0.0.1", 0),
+            };
+            let result = validate_assignment(&assignment);
+            assert!(result.is_err());
+        }
+    }
+}

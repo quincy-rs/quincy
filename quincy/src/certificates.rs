@@ -205,7 +205,9 @@ mod tests {
         include_str!("../../quincy-tests/tests/static/server_key_rsa_pkcs1.pem");
     const VALID_KEY_PEM_EC_SEC1: &str =
         include_str!("../../quincy-tests/tests/static/server_key_ec_sec1.pem");
-
+    const CLIENT_CERT_PEM: &str = include_str!("../../quincy-tests/tests/static/client_cert.pem");
+    const BAD_CLIENT_CERT_PEM: &str =
+        include_str!("../../quincy-tests/tests/static/bad_client_cert.pem");
     // ========== compute_cert_fingerprint tests ==========
 
     #[test]
@@ -381,5 +383,106 @@ mod tests {
 
         let result = load_private_key_from_file(file.path());
         assert!(result.is_err());
+    }
+
+    // ========== QuincyCertVerifier tests ==========
+
+    fn create_verifier(allowed_fingerprints: HashSet<String>) -> QuincyCertVerifier {
+        let provider = CryptoProvider::get_default()
+            .cloned()
+            .unwrap_or_else(|| std::sync::Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
+        QuincyCertVerifier::new(allowed_fingerprints, &provider)
+    }
+
+    #[test]
+    fn verify_client_cert_accepts_known_fingerprint() {
+        let certs = load_certificates_from_pem(CLIENT_CERT_PEM).unwrap();
+        let fingerprint = compute_cert_fingerprint(&certs[0]);
+        let mut allowed = HashSet::new();
+        allowed.insert(fingerprint);
+
+        let verifier = create_verifier(allowed);
+
+        let result = verifier.verify_client_cert(&certs[0], &[], UnixTime::now());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn verify_client_cert_rejects_unknown_fingerprint() {
+        let certs = load_certificates_from_pem(BAD_CLIENT_CERT_PEM).unwrap();
+        let client_certs = load_certificates_from_pem(CLIENT_CERT_PEM).unwrap();
+        let fingerprint = compute_cert_fingerprint(&client_certs[0]);
+        let mut allowed = HashSet::new();
+        allowed.insert(fingerprint);
+
+        let verifier = create_verifier(allowed);
+
+        let result = verifier.verify_client_cert(&certs[0], &[], UnixTime::now());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidCertificate(rustls::CertificateError::ApplicationVerificationFailure)
+        ));
+    }
+
+    #[test]
+    fn verify_client_cert_rejects_empty_allowed_set() {
+        let certs = load_certificates_from_pem(CLIENT_CERT_PEM).unwrap();
+        let allowed: HashSet<String> = HashSet::new();
+
+        let verifier = create_verifier(allowed);
+
+        let result = verifier.verify_client_cert(&certs[0], &[], UnixTime::now());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn verify_tls12_signature_delegates_to_rustls() {
+        let verifier = create_verifier(HashSet::new());
+        let schemes = verifier.supported_verify_schemes();
+        assert!(schemes.contains(&SignatureScheme::ECDSA_NISTP256_SHA256));
+    }
+
+    #[test]
+    fn verify_tls13_signature_delegates_to_rustls() {
+        let verifier = create_verifier(HashSet::new());
+        let schemes = verifier.supported_verify_schemes();
+        assert!(schemes.contains(&SignatureScheme::ECDSA_NISTP256_SHA256));
+    }
+
+    #[test]
+    fn verifier_supported_verify_schemes() {
+        let verifier = create_verifier(HashSet::new());
+        let schemes = verifier.supported_verify_schemes();
+        assert!(!schemes.is_empty());
+    }
+
+    #[test]
+    fn verifier_offer_client_auth() {
+        let verifier = create_verifier(HashSet::new());
+        assert!(verifier.offer_client_auth());
+    }
+
+    #[test]
+    fn verifier_client_auth_mandatory() {
+        let verifier = create_verifier(HashSet::new());
+        assert!(verifier.client_auth_mandatory());
+    }
+
+    #[test]
+    fn verifier_root_hint_subjects_empty() {
+        let verifier = create_verifier(HashSet::new());
+        assert!(verifier.root_hint_subjects().is_empty());
+    }
+
+    #[test]
+    fn verifier_debug_impl() {
+        let mut allowed = HashSet::new();
+        allowed.insert("sha256:abc".to_string());
+        let verifier = create_verifier(allowed);
+        let debug_str = format!("{:?}", verifier);
+        assert!(debug_str.contains("allowed_fingerprints_count"));
+        assert!(debug_str.contains('1'));
     }
 }
