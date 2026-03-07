@@ -1,20 +1,29 @@
 pub mod address_pool;
 mod connection;
+pub mod session;
+
+#[cfg(feature = "metrics")]
+mod metrics;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+#[cfg(feature = "metrics")]
+use std::time::Duration;
+use std::time::Instant;
 
 use bytes::Bytes;
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use quinn::{Endpoint, VarInt};
 use tokio::signal;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tracing::{debug, info, warn};
 
 use crate::server::address_pool::AddressPool;
 use crate::server::connection::{Assigned, QuincyConnection};
+use crate::server::session::{ConnectionSession, UserSessionRegistry};
 use crate::users::UsersFile;
 use quincy::config::{AllowedNoiseKeys, NoiseKeyExchange, ServerConfig, ServerProtocolConfig};
 use quincy::constants::{PACKET_BUFFER_SIZE, PACKET_CHANNEL_SIZE, QUINN_RUNTIME};
@@ -27,15 +36,10 @@ use quincy::Result;
 /// Map of connection addresses to their TX channel.
 type ConnectionQueues = Arc<DashMap<IpAddr, Sender<Bytes>>>;
 
-/// Set of currently active usernames, used to reject duplicate sessions.
-type ActiveSessions = Arc<DashSet<String>>;
-
 /// Result of an IP assignment task, carrying the context needed for cleanup on failure.
 struct AssignmentResult {
     result: Result<QuincyConnection<Assigned>>,
     quic_connection: quinn::Connection,
-    active_sessions: ActiveSessions,
-    username: String,
 }
 
 /// Represents a Quincy server encapsulating Quincy connections and TUN interface IO.
@@ -44,7 +48,7 @@ pub struct QuincyServer {
     connection_queues: ConnectionQueues,
     address_pool: Arc<AddressPool>,
     users: Arc<UsersFile>,
-    active_sessions: ActiveSessions,
+    session_registry: Arc<UserSessionRegistry>,
 }
 
 impl QuincyServer {
@@ -63,7 +67,7 @@ impl QuincyServer {
             connection_queues: Arc::new(DashMap::new()),
             address_pool: Arc::new(address_pool),
             users: Arc::new(users),
-            active_sessions: Arc::new(DashSet::new()),
+            session_registry: Arc::new(UserSessionRegistry::new()),
         })
     }
 
@@ -78,6 +82,13 @@ impl QuincyServer {
             None,
         )?;
         let interface = Arc::new(interface);
+
+        #[cfg(feature = "metrics")]
+        if self.config.metrics.enabled {
+            use crate::server::metrics::init_metrics;
+
+            init_metrics(&self.config.metrics)?;
+        }
 
         let (sender, receiver) = channel(PACKET_CHANNEL_SIZE);
 
@@ -124,7 +135,7 @@ impl QuincyServer {
         let server_address = self.config.tunnel_network;
         let users = self.users.clone();
         let address_pool = self.address_pool.clone();
-        let active_sessions = self.active_sessions.clone();
+        let session_registry = self.session_registry.clone();
 
         let mut assignment_tasks = FuturesUnordered::new();
         let mut connection_tasks = FuturesUnordered::new();
@@ -164,32 +175,14 @@ impl QuincyServer {
                         }
                     };
 
-                    let username = connection.username().to_string();
-
-                    // Reject duplicate sessions BEFORE IP allocation
-                    if self.config.reject_duplicate_sessions
-                        && !active_sessions.insert(username.clone())
-                    {
-                        warn!(
-                            "Rejecting duplicate session for user '{username}' from {}",
-                            quic_connection_clone.remote_address().ip()
-                        );
-                        quic_connection_clone.close(VarInt::from_u32(0x02), "Session establishment failed".as_bytes());
-                        continue;
-                    }
-
                     let address_pool = address_pool.clone();
                     let server_addr = server_address;
-                    let active_sessions_clone = active_sessions.clone();
-                    let username_clone = username.clone();
 
                     assignment_tasks.push(async move {
                         let result = connection.assign_ip(&address_pool, server_addr).await;
                         AssignmentResult {
                             result,
                             quic_connection: quic_connection_clone,
-                            active_sessions: active_sessions_clone,
-                            username: username_clone,
                         }
                     });
                 }
@@ -200,30 +193,62 @@ impl QuincyServer {
                         Ok(connection) => connection,
                         Err(e) => {
                             warn!("Failed to assign IP to client: {e}");
-                            assignment.quic_connection.close(VarInt::from_u32(0x02), "Session establishment failed".as_bytes());
-                            assignment.active_sessions.remove(&assignment.username);
+                            assignment.quic_connection.close(
+                                VarInt::from_u32(0x02),
+                                "Session establishment failed".as_bytes(),
+                            );
                             continue;
                         }
                     };
 
-                    let client_address = connection.client_address().addr();
+                    let client_address = connection.client_address();
+                    let username = connection.username().to_string();
+
+                    // Resolve effective bandwidth limit:
+                    // per-user override > server default > None (unlimited)
+                    let bandwidth_limit = self
+                        .users
+                        .users
+                        .get(&username)
+                        .and_then(|entry| entry.bandwidth_limit)
+                        .or(self.config.default_bandwidth_limit);
+
+                    // Register session and obtain the shared rate limiter
+                    let rate_limiter = session_registry.add_connection(
+                        &username,
+                        ConnectionSession {
+                            client_address,
+                            connected_at: Instant::now(),
+                        },
+                        bandwidth_limit,
+                    );
 
                     let (connection_sender, connection_receiver) = channel(PACKET_CHANNEL_SIZE);
 
-                    connection_tasks.push(tokio::spawn(connection.run(connection_receiver)));
-                    self.connection_queues.insert(client_address, connection_sender);
+                    connection_tasks.push(tokio::spawn(connection.run(
+                        connection_receiver,
+                        rate_limiter,
+                        #[cfg(feature = "metrics")]
+                        Duration::from_secs(self.config.metrics.reporting_interval_s),
+                    )));
+                    self.connection_queues
+                        .insert(client_address.addr(), connection_sender);
                 }
 
                 // Connection tasks
                 Some(connection) = connection_tasks.next() => {
                     let (connection, err) = connection?;
                     let username = connection.username();
-                    let client_address = &connection.client_address().addr();
+                    let client_address = connection.client_address();
 
-                    self.connection_queues.remove(client_address);
-                    self.address_pool.release_address(client_address);
-                    active_sessions.remove(username);
-                    warn!("Connection with client {client_address} (user '{username}') has encountered an error: {err}");
+                    self.connection_queues.remove(&client_address.addr());
+                    self.address_pool.release_address(&client_address.addr());
+                    session_registry.remove_connection(username, &client_address);
+
+                    warn!(
+                        "Connection with client {} (user '{username}') has encountered an error: {err}",
+                        client_address.addr()
+                    );
                 }
 
                 // Shutdown
@@ -312,7 +337,15 @@ impl QuincyServer {
 
             debug!("Found connection for IP {dest_addr}");
 
-            connection_queue.send(packet.into()).await?;
+            match connection_queue.try_send(packet.into()) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    debug!("Dropping outbound packet for {dest_addr}: per-client queue full");
+                }
+                Err(TrySendError::Closed(_)) => {
+                    debug!("Dropping outbound packet for {dest_addr}: connection closed");
+                }
+            }
         }
     }
 
@@ -403,7 +436,17 @@ async fn relay_unisolated(
 
             match connection_queues.get(&dest_addr) {
                 // Send the packet to the appropriate QUIC connection
-                Some(connection_queue) => connection_queue.send(packet.into()).await?,
+                Some(connection_queue) => match connection_queue.try_send(packet.into()) {
+                    Ok(()) => {}
+                    Err(TrySendError::Full(_)) => {
+                        debug!("Dropping client-to-client packet for {dest_addr}: queue full");
+                    }
+                    Err(TrySendError::Closed(_)) => {
+                        debug!(
+                            "Dropping client-to-client packet for {dest_addr}: connection closed"
+                        );
+                    }
+                },
                 // Send the packet to the TUN interface
                 None => interface.write_packet(packet).await?,
             }

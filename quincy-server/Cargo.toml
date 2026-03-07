@@ -20,6 +20,7 @@ path = "src/main.rs"
 default = ["offload", "jemalloc"]
 offload = ["quincy/offload"]
 jemalloc = ["quincy/jemalloc"]
+metrics = ["dep:metrics", "dep:metrics-exporter-prometheus", "dep:metrics-util"]
 
 [dependencies]
 quincy = { workspace = true }
@@ -56,3 +57,11 @@ figment = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
+
+# Metrics
+metrics = { workspace = true, optional = true }
+metrics-exporter-prometheus = { workspace = true, optional = true }
+metrics-util = { workspace = true, optional = true }
+
+# Rate limiting
+governor = { workspace = true }

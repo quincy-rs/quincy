@@ -56,6 +56,10 @@ pub enum QuincyError {
     #[error("Socket error: {0}")]
     Socket(#[from] SocketError),
 
+    /// Metrics system errors
+    #[error("Metrics error: {0}")]
+    Metrics(#[from] MetricsError),
+
     /// I/O operations errors
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -446,6 +450,14 @@ pub enum SocketError {
     /// Address not available
     #[error("Address not available: {address}")]
     AddressNotAvailable { address: String },
+}
+
+/// Metrics system errors.
+#[derive(Error, Debug)]
+pub enum MetricsError {
+    /// Metrics recorder installation failed
+    #[error("Metrics recorder installation failed: {reason}")]
+    RecorderInstallFailed { reason: String },
 }
 
 // Conversion implementations for external crate errors

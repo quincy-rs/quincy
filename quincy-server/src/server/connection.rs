@@ -1,23 +1,25 @@
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use governor::Jitter;
 use ipnet::IpNet;
 use quinn::Connection;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{debug, info};
 
+use crate::identity;
+use crate::server::address_pool::AddressPool;
+use crate::server::session::BandwidthLimiter;
 use crate::users::UsersFile;
 use quincy::config::ServerProtocolConfig;
 use quincy::ip_assignment::{self, IpAssignment};
 use quincy::network::packet::Packet;
 use quincy::utils::tasks::abort_all;
 use quincy::{QuincyError, Result};
-
-use crate::identity;
-use crate::server::address_pool::AddressPool;
 
 /// Default timeout for IP assignment exchange.
 const IP_ASSIGNMENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -87,6 +89,7 @@ impl QuincyConnection<New> {
 
 impl QuincyConnection<Identified> {
     /// Returns the username resolved during identification.
+    #[allow(dead_code)]
     pub fn username(&self) -> &str {
         &self.state.username
     }
@@ -151,8 +154,18 @@ impl QuincyConnection<Assigned> {
         self.state.client_address
     }
 
-    /// Starts the IO tasks for this connection.
-    pub async fn run(self, egress_queue: Receiver<Bytes>) -> (Self, QuincyError) {
+    /// Starts the IO and metrics tasks for this connection.
+    ///
+    /// ### Arguments
+    /// - `egress_queue` - channel carrying packets destined for this client
+    /// - `rate_limiter` - optional shared bandwidth limiter for the user
+    /// - `metrics_interval` - how often to report per-connection metrics
+    pub async fn run(
+        self,
+        egress_queue: Receiver<Bytes>,
+        rate_limiter: Option<Arc<BandwidthLimiter>>,
+        #[cfg(feature = "metrics")] metrics_interval: Duration,
+    ) -> (Self, QuincyError) {
         let client_address = self.state.client_address.addr();
 
         let mut tasks = FuturesUnordered::new();
@@ -161,13 +174,23 @@ impl QuincyConnection<Assigned> {
             tokio::spawn(Self::process_outgoing_data(
                 self.connection.clone(),
                 egress_queue,
+                rate_limiter.clone(),
             )),
             tokio::spawn(Self::process_incoming_data(
                 self.connection.clone(),
                 self.ingress_queue.clone(),
                 client_address,
+                rate_limiter,
             )),
         ]);
+
+        #[cfg(feature = "metrics")]
+        tasks.push(tokio::spawn(Self::report_metrics(
+            self.connection.clone(),
+            metrics_interval,
+            self.state.username.clone(),
+            self.state.client_address.addr(),
+        )));
 
         let res = tasks
             .next()
@@ -189,16 +212,30 @@ impl QuincyConnection<Assigned> {
     /// Processes outgoing data and sends it to the QUIC connection.
     ///
     /// ### Arguments
+    /// - `connection` - the QUIC connection to send datagrams on
     /// - `egress_queue` - the queue to receive data from the TUN interface
+    /// - `rate_limiter` - optional shared bandwidth limiter for the user
     async fn process_outgoing_data(
         connection: Connection,
         mut egress_queue: Receiver<Bytes>,
+        rate_limiter: Option<Arc<BandwidthLimiter>>,
     ) -> Result<()> {
         loop {
             let data = egress_queue
                 .recv()
                 .await
                 .ok_or(QuincyError::system("Egress queue has been closed"))?;
+
+            if let Some(ref limiter) = rate_limiter {
+                let tokens = (data.len() as u32 / 1024)
+                    .max(1)
+                    .try_into()
+                    .expect("token amount is always non-zero");
+
+                let _ = limiter
+                    .until_n_ready_with_jitter(tokens, Jitter::up_to(Duration::from_millis(5)))
+                    .await;
+            }
 
             connection.send_datagram(data)?;
         }
@@ -214,10 +251,12 @@ impl QuincyConnection<Assigned> {
     /// - `connection` - the QUIC connection to read datagrams from
     /// - `ingress_queue` - the queue to send validated packets to the TUN interface
     /// - `client_address` - the client's assigned tunnel IP address
+    /// - `rate_limiter` - optional shared bandwidth limiter for the user
     async fn process_incoming_data(
         connection: Connection,
         ingress_queue: Sender<Packet>,
         client_address: IpAddr,
+        rate_limiter: Option<Arc<BandwidthLimiter>>,
     ) -> Result<()> {
         loop {
             let packet: Packet = connection.read_datagram().await?.into();
@@ -236,7 +275,59 @@ impl QuincyConnection<Assigned> {
                 continue;
             }
 
+            if let Some(ref limiter) = rate_limiter {
+                let tokens = (packet.len() as u32 / 1024)
+                    .max(1)
+                    .try_into()
+                    .expect("token amount is always non-zero");
+
+                let _ = limiter
+                    .until_n_ready_with_jitter(tokens, Jitter::up_to(Duration::from_millis(5)))
+                    .await;
+            }
+
             ingress_queue.send(packet).await?;
+        }
+    }
+
+    /// Periodically polls `quinn::Connection::stats()` and updates Prometheus
+    /// metrics counters.
+    ///
+    /// Runs until the connection handle is closed. This task will be aborted by
+    /// the parent `run()` when the other tasks exit.
+    ///
+    /// ### Arguments
+    /// - `connection` - the QUIC connection handle (cheap Arc clone)
+    /// - `reporting_interval` - how often to poll and report metrics
+    /// - `username` - the username associated with this connection
+    /// - `client_ip` - the client IP address associated with this connection
+    #[cfg(feature = "metrics")]
+    async fn report_metrics(
+        connection: Connection,
+        reporting_interval: Duration,
+        username: String,
+        client_ip: IpAddr,
+    ) -> Result<()> {
+        use metrics::{counter, gauge};
+
+        let connected_at = std::time::Instant::now();
+        let mut interval = tokio::time::interval(reporting_interval);
+
+        let labels = [("user", username), ("connection", client_ip.to_string())];
+
+        loop {
+            interval.tick().await;
+
+            let stats = connection.stats();
+
+            counter!("quincy_bytes_tx_total", &labels).absolute(stats.udp_tx.bytes);
+            counter!("quincy_bytes_rx_total", &labels).absolute(stats.udp_rx.bytes);
+            counter!("quincy_datagrams_tx_total", &labels).absolute(stats.udp_tx.datagrams);
+            counter!("quincy_datagrams_rx_total", &labels).absolute(stats.udp_rx.datagrams);
+
+            gauge!("quincy_connection_rtt_seconds", &labels).set(stats.path.rtt.as_secs_f64());
+            gauge!("quincy_connection_duration_seconds", &labels)
+                .set(connected_at.elapsed().as_secs_f64());
         }
     }
 }
