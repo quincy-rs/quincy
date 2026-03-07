@@ -1,3 +1,3 @@
-pub mod auth;
+pub mod identity;
 pub mod server;
-pub mod users_file;
+pub mod users;

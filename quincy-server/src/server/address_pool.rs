@@ -36,9 +36,8 @@ impl AddressPool {
         };
 
         range
-            .find(|address| !self.used_addresses.contains(address))
+            .find(|address| self.used_addresses.insert(*address))
             .map(|address| {
-                self.used_addresses.insert(address);
                 IpNet::with_netmask(address, self.network.netmask())
                     .expect("Netmask will always be valid")
             })

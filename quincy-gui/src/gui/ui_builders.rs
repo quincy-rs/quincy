@@ -425,10 +425,6 @@ impl QuincyGui {
                     config.connection_string.clone()
                 ),
                 self.build_owned_config_field(
-                    "Username".to_string(),
-                    config.authentication.username.clone()
-                ),
-                self.build_owned_config_field(
                     "Encryption Type".to_string(),
                     format!("{protocol_name} ({crypto_type})")
                 ),

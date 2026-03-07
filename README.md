@@ -31,8 +31,8 @@ Quincy is a VPN client and server implementation using the [QUIC](https://en.wik
   - [TLS](#tls)
   - [Noise](#noise)
 - [Certificate management](#certificate-management)
-  - [Certificate signed by a trusted CA](#certificate-signed-by-a-trusted-ca)
-  - [Self-signed certificate](#self-signed-certificate)
+  - [Server certificate](#server-certificate)
+  - [Client certificate](#client-certificate)
 
 ## Supported platforms
 - [X] Windows (x86_64), using [Wintun](https://www.wintun.net/)
@@ -47,13 +47,16 @@ Binaries and installers are available for Windows, Linux (x86_64) and macOS (aar
 Using cargo, installation of any published version can be done with a simple command:
 ```bash
 # CLI client binary
-cargo install quincy-client
+cargo install --locked quincy-client
 
-# CLI server binaries
-cargo install quincy-server
+# CLI server binary
+cargo install --locked quincy-server
+
+# Identity management utility
+cargo install --locked quincy-identity
 
 # Client GUI binaries
-cargo install quincy-gui
+cargo install --locked quincy-gui
 ```
 
 ### Docker
@@ -73,17 +76,6 @@ docker run
   -v <configuration directory>:/etc/quincy # directory with the configuration files
   m0dex/quincy:latest # or any of the other tags
   quincy-server --config-path /etc/quincy/server.toml
-```
-
-To add or remove a user to the `users` file, you can run the following command:
-```bash
-docker run
-  --rm # remove the container after it stops
-  -it # interactive mode
-  -v <configuration directory>:/etc/quincy # directory with the configuration files
-  m0dex/quincy:latest # or any of the other tags
-  quincy-users --add /etc/quincy/users
-  # quincy-users --delete /etc/quincy/users
 ```
 
 ### Installers
@@ -121,8 +113,7 @@ For more information, see [aws-lc-rs build instructions](https://github.com/aws/
 Quincy provides a couple of binaries based on their intended use:
 - `quincy-client`: The VPN client CLI
 - `quincy-server`: The VPN server CLI
-- `quincy-users`: A utility CLI binary meant for managing the `users` file
-- `quincy-keygen`: A utility CLI binary meant for generating a new keypair when using the Noise protocol
+- `quincy-identity`: A utility for generating keys and certificates for both TLS and Noise modes
 - `quincy-client-gui`: The VPN client GUI
 - `quincy-client-daemon`: The VPN client daemon (background privileged service)
 
@@ -162,53 +153,46 @@ is self-signed and uses the hostname `quincy`. It should be replaced with a prop
 which can be generated using the instructions in the [Certificate management](#certificate-management) section.**
 
 ### Users
-The users utility can be used to manage entries in the `users` file.
-The `users` file contains usernames and password hashes in a format similar to `/etc/shadow` (example can be found in [`examples/users`](examples/users)).
+Quincy authenticates clients at the QUIC handshake layer using public keys (Noise) or certificate fingerprints (TLS). There are no passwords involved.
 
-The following command can be used to add users to this file:
+Users are managed through a TOML file referenced by the `users_file` field in the server configuration (example can be found in [`examples/users.toml`](examples/users.toml)):
+```toml
+[users.alice]
+# Base64-encoded Noise public keys authorized for this user
+authorized_keys = [
+    "base64-encoded-x25519-public-key",
+]
+# TLS certificate fingerprints authorized for this user
+authorized_certs = [
+    "sha256:2dba01529210e4e828265d56329df1b85a8f9aedccdd3fef67ab502b57cb0029",
+]
+
+[users.bob]
+authorized_keys = []
+authorized_certs = [
+    "sha256:abc123...",
+]
+```
+
+Each user can have any number of authorized Noise public keys and TLS certificate fingerprints. The server identifies the connecting client by matching their handshake identity against these entries.
+
+To generate the values for this file, use the `quincy-identity` utility:
 ```bash
-quincy-users --add examples/users
-```
+# Derive a Noise public key from a private key
+quincy-identity noise genkey | quincy-identity noise pubkey
 
-The prompts will look something like this:
-```
-Enter the username: test
-Enter password for user 'test':
-Confirm password for user 'test':
-```
-
-A similar command can be used to remove users from the file:
-```bash
-quincy-users --remove examples/users
-```
-
-The prompt will again look something like this:
-```
-Enter the username: test
-```
-
-### Keygen
-The `quincy-keygen` utility provides WireGuard-style key management with pipeable output:
-```bash
-# Generate a private key
-quincy-keygen genkey
-quincy-keygen genkey --key-exchange hybrid
-
-# Derive the matching public key from a private key on stdin
-quincy-keygen pubkey
-quincy-keygen pubkey --key-exchange hybrid
+# Get the fingerprint of a TLS client certificate
+quincy-identity tls fingerprint --cert client_cert.pem
 ```
 
 ## Architecture
 Quincy uses the QUIC protocol implemented by [`quinn`](https://github.com/quinn-rs/quinn) to create an encrypted tunnel between clients and the server.
 
-This tunnel serves two purposes:
-- authentication using a reliable bi-directional stream
-- data transfer using unreliable datagrams (lower latency and overhead)
+Client authentication is performed during the QUIC handshake itself, either through mutual TLS (certificate fingerprint verification) or through the Noise IK handshake (static public key verification). No additional authentication protocol is needed after the handshake.
 
-After a connection is established and the client is authenticated, a TUN interface is created using an IP address provided by the server.
+Once the handshake completes, the server identifies the client, allocates a tunnel IP from its address pool and sends it to the client over a uni-directional QUIC stream. The client then creates a TUN interface with the assigned address.
 
-When all is set up, a connection task is spawned, which handles IO on the TUN interface and the QUIC connection, relaying packets between them.
+With the tunnel set up, data transfer happens through unreliable QUIC datagrams (lower latency and overhead). A connection task is spawned for each client, relaying packets between the TUN interface and the QUIC connection.
 
 The [`tokio`](https://github.com/tokio-rs/tokio) runtime is used to provide an efficient and scalable implementation.
 
@@ -219,12 +203,12 @@ The [`tokio`](https://github.com/tokio-rs/tokio) runtime is used to provide an e
 Quincy supports two cryptographic protocol modes for the QUIC tunnel: TLS and Noise. The mode is selected in the `[protocol]` section of both the server and client configuration files.
 
 ### TLS
-TLS 1.3 is the default protocol mode. It uses standard X.509 certificates for server authentication and supports three key exchange algorithms:
+TLS 1.3 is the default protocol mode. It uses mutual TLS (mTLS) for both server and client authentication, with support for three key exchange algorithms:
 - `Standard`: ECDH (X25519)
 - `Hybrid`: X25519 + ML-KEM-768
 - `PostQuantum`: ML-KEM-768
 
-TLS mode requires a certificate and private key on the server, and one or more trusted certificates on the client. See [Certificate management](#certificate-management) for details on generating and configuring certificates.
+TLS mode requires a certificate and private key on both the server and the client. The server verifies client identity by matching the client certificate's SHA-256 fingerprint against the entries in the [users file](#users). See [Certificate management](#certificate-management) for details on generating and configuring certificates.
 
 **Server**
 ```toml
@@ -241,35 +225,41 @@ certificate_key_file = "server_key.pem"
 mode = "tls"
 key_exchange = "hybrid"
 trusted_certificate_paths = ["server_cert.pem"]
+client_certificate_file = "client_cert.pem"
+client_certificate_key_file = "client_key.pem"
 ```
 
 ### Noise
-Noise mode uses the Noise NK (server public key known, initiator generates a new key-pair every time) handshake pattern instead of TLS. This has two main advantages:
-- **No certificates needed** — deployment is simpler in environments where managing a PKI or obtaining certificates from a CA is impractical. The server has a static keypair and clients are configured with the server's public key.
-- **Improved detection evasion** — traffic does not contain a standard TLS ClientHello, making it harder for DPI systems to fingerprint and block the connection.
+Noise mode uses the Noise IK handshake pattern instead of TLS. Both the server and the client have static keypairs, and both sides know the other's public key before the handshake begins. This has two main advantages:
+- **No certificates needed**: deployment is simpler in environments where managing a PKI or obtaining certificates from a CA is impractical.
+- **Improved detection evasion**: traffic does not contain a standard TLS ClientHello, making it harder for DPI systems to fingerprint and block the connection.
 
-Because the client knows the server's public key ahead of time, the handshake completes in a single round trip (1-RTT). Two key exchange algorithms are supported:
+The server identifies connecting clients by matching their public key against the entries in the [users file](#users). Two key exchange algorithms are supported:
 - `Standard`: X25519
 - `Hybrid`: X25519 + ML-KEM-768
 
 #### Key management
-Using the `quincy-keygen` binary, you can generate and derive the server key pair:
+Using `quincy-identity`, you can generate keypairs for both the server and the client:
 ```bash
 # Generate a private key
-quincy-keygen genkey
+quincy-identity noise genkey
 
 # Derive the matching public key from a private key on stdin
-quincy-keygen pubkey
+quincy-identity noise pubkey
+
+# For hybrid key exchange, pass --key-exchange hybrid to both commands
+quincy-identity noise genkey --key-exchange hybrid
+quincy-identity noise genkey --key-exchange hybrid | quincy-identity noise pubkey --key-exchange hybrid
 ```
 
-Place the keys in the respective configuration files:
+Both the server and each client need their own keypair. Place the keys in the respective configuration files:
 
 **Server**
 ```toml
 [protocol]
 mode = "noise"
 key_exchange = "standard"
-private_key = "<base64 private key>"
+private_key = "<base64 server private key>"
 ```
 
 **Client**
@@ -277,16 +267,20 @@ private_key = "<base64 private key>"
 [protocol]
 mode = "noise"
 key_exchange = "standard"
-server_public_key = "<base64 public key>"
+server_public_key = "<base64 server public key>"
+private_key = "<base64 client private key>"
 ```
 
 **Note: The `key_exchange` value must match on both the server and client.**
 
 ## Certificate management
-There are a couple of options when it comes to setting up the certificates used by Quincy.
+TLS mode uses mutual TLS, so both the server and each client need their own certificate and private key.
 
-### Certificate signed by a trusted CA
-This is the *proper* way to manage certificates with Quincy.
+### Server certificate
+There are a couple of options when it comes to setting up the server certificate.
+
+#### Certificate signed by a trusted CA
+This is the *proper* way to manage the server certificate.
 
 You can either request/pay for a certificate from a service with a globally trusted CA (Let's Encrypt, GoDaddy, ...) or generate your own certificate authority and then sign an end-point certificate.
 
@@ -296,10 +290,10 @@ If you have a certificate signed by your own (self-signed) CA, follow the steps 
 
 You can use [mkcert](https://github.com/FiloSottile/mkcert) for generating your own CA certificate and using it to sign an end-point certificate.
 
-### Self-signed certificate
+#### Self-signed certificate
 This is an easier set up that might be used by home-lab administrators or for local testing.
 
-The steps to generate a self-signed certificate that can be used with Quincy:
+The steps to generate a self-signed server certificate that can be used with Quincy:
 1) Generate a private key (I use ECC for my certificates, but RSA is fine)
 ```
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -out <your_certificate_key_file>
@@ -346,7 +340,7 @@ issuerAltName          = issuer:copy
 openssl x509 -req -in cert.csr -signkey <your_certificate_key_file> -out <your_certificate_file> -days 365 -sha256 -extfile <your_v3_ext_file>
 ```
 
-5) Add the certificate to both your server and client configuration files.
+5) Add the certificate to the server configuration file.
 
 **Server**
 ```toml
@@ -358,18 +352,27 @@ certificate_file = "server_cert.pem"
 certificate_key_file = "server_key.pem"
 ```
 
+### Client certificate
+The simplest way to generate a client certificate is using `quincy-identity`:
+```bash
+quincy-identity tls gencert --out-cert client_cert.pem --out-key client_key.pem --cn "alice"
+```
+
+This will print the certificate's SHA-256 fingerprint, which you need to add to the [users file](#users). You can also retrieve the fingerprint later:
+```bash
+quincy-identity tls fingerprint --cert client_cert.pem
+```
+
+Add the certificate and key to the client configuration file, along with the server's trusted certificate:
+
 **Client**
 ```toml
 [protocol]
 mode = "tls"
 # A list of trusted certificate file paths the server can use or have its certificate signed by
-trusted_certificate_paths = ["examples/cert/server_cert.pem"]
-# A list of trusted certificates as PEM strings
-trusted_certificates = [
-    """
-    -----BEGIN CERTIFICATE-----
-    ...
-    -----END CERTIFICATE-----
-    """
-]
+trusted_certificate_paths = ["server_cert.pem"]
+# Path to the client certificate for mutual TLS authentication
+client_certificate_file = "client_cert.pem"
+# Path to the client certificate private key
+client_certificate_key_file = "client_key.pem"
 ```

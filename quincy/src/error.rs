@@ -67,42 +67,38 @@ pub enum QuincyError {
 
 /// Authentication and authorization errors.
 ///
-/// These errors cover user authentication, credential validation, and authorization
-/// failures. Messages are crafted to avoid leaking sensitive information while
-/// providing enough detail for troubleshooting.
+/// These errors cover handshake-layer authentication, identity resolution,
+/// and IP assignment failures. Messages are crafted to avoid leaking sensitive
+/// information while providing enough detail for troubleshooting.
 #[derive(Error, Debug)]
 pub enum AuthError {
-    /// Invalid credentials provided
-    #[error("Invalid credentials")]
-    InvalidCredentials,
+    /// Peer rejected by allowed keys or certificate verifier during handshake
+    #[error("Handshake rejected")]
+    HandshakeRejected,
 
-    /// User not found in authentication store
-    #[error("User not found")]
-    UserNotFound,
+    /// Peer identity not found in the users file after successful handshake
+    #[error("User unknown")]
+    UserUnknown,
 
     /// Authentication timeout
     #[error("Authentication timeout")]
     Timeout,
 
-    /// Malformed authentication payload
-    #[error("Invalid authentication data format")]
-    InvalidPayload,
-
-    /// Permission denied for requested operation
-    #[error("Permission denied")]
-    PermissionDenied,
-
     /// Authentication store (e.g., users file) is unavailable
     #[error("Authentication store unavailable")]
     StoreUnavailable,
 
-    /// Password hashing operation failed
-    #[error("Password verification failed")]
-    PasswordHashingFailed,
+    /// No available addresses in the tunnel address pool
+    #[error("Address pool exhausted")]
+    AddressPoolExhausted,
 
-    /// Authentication stream communication error
-    #[error("Authentication communication error")]
-    StreamError,
+    /// IP assignment uni-stream send or receive failure
+    #[error("IP assignment failed")]
+    IpAssignmentFailed,
+
+    /// Authentication store contains invalid data (e.g., duplicate keys, bad format)
+    #[error("Invalid authentication store: {reason}")]
+    InvalidUserStore { reason: String },
 }
 
 /// Configuration loading and validation errors.
@@ -644,17 +640,6 @@ impl QuincyError {
         QuincyError::System {
             message: message.into(),
         }
-    }
-
-    /// Creates a QuincyError for invalid credentials.
-    ///
-    /// This method is specifically used when user authentication fails due to
-    /// invalid credentials, such as incorrect username or password.
-    ///
-    /// ### Returns
-    /// A new `QuincyError::Auth` variant with `AuthError::InvalidCredentials`.
-    pub fn invalid_credentials() -> Self {
-        QuincyError::Auth(AuthError::InvalidCredentials)
     }
 
     /// Creates a QuincyError for a failed network connection.

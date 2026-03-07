@@ -7,9 +7,6 @@ use rustls::SupportedCipherSuite;
 /// Represents the maximum MTU overhead for QUIC, since the QUIC header is variable in size.
 pub const QUIC_MTU_OVERHEAD: u16 = 50;
 
-/// Buffer size for authentication messages.
-pub const AUTH_MESSAGE_BUFFER_SIZE: usize = 1024;
-
 /// Packet buffer size for operations on the TUN interface.
 pub const PACKET_BUFFER_SIZE: usize = 4;
 

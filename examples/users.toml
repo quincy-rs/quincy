@@ -1,0 +1,17 @@
+# Quincy users file
+#
+# Each user can have authorized Noise public keys and/or TLS certificate
+# fingerprints. Generate keys with `quincy-identity noise genkey` and
+# fingerprints with `quincy-identity tls fingerprint --cert <path>`.
+
+[users.alice]
+# Base64-encoded Noise public keys authorized for this user
+authorized_keys = [
+    # quincy-identity noise genkey | quincy-identity noise pubkey
+    # "base64-encoded-x25519-public-key-here",
+]
+# TLS certificate fingerprints authorized for this user
+authorized_certs = [
+    # quincy-identity tls fingerprint --cert client_cert.pem
+    # "sha256:hex-fingerprint-here",
+]

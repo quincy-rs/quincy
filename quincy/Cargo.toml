@@ -35,7 +35,6 @@ ipnet = { workspace = true }
 tokio = { workspace = true }
 dashmap = { workspace = true }
 futures = { workspace = true }
-async-trait = { workspace = true }
 
 # Configuration
 figment = { workspace = true }
@@ -45,6 +44,7 @@ serde_json = { workspace = true }
 # TLS
 rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
+aws-lc-rs = { workspace = true }
 
 # Noise
 reishi-quinn = { workspace = true }
@@ -72,3 +72,4 @@ wintun-bindings = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
+etherparse = "0.18"

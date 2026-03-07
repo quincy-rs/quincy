@@ -2,9 +2,9 @@
 
 ## Supported Versions
 
-Only the latest _minor_ version of Quincy is supported.
+Only the latest SemVer _major_ version of Quincy is supported.
 
-If the latest version is `0.13.3`, then a reported vulnerability will only get patched for `0.13.X` versions. 
+If the latest version is `1.3.1`, then a reported vulnerability will only get patched for the `1.X.X` release, not any `0.X.X` releases.
 Any other versions affected by the vulnerability will get yanked on crates.io and marked as yanked on their respective GitHub release pages.
 
 ## Reporting a Vulnerability

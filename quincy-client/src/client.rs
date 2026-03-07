@@ -1,21 +1,22 @@
-mod relayer;
-
-use crate::auth::AuthClient;
-use crate::users_file_auth::UsersFileClientAuthenticator;
-
-use quincy::config::ClientConfig;
-use quincy::constants::QUINN_RUNTIME;
-use quincy::network::socket::bind_socket;
-use quincy::{QuincyError, Result};
-use quinn::{Connection, Endpoint};
-
-use ipnet::IpNet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 
-use crate::client::relayer::ClientRelayer;
-use quincy::network::interface::{Interface, InterfaceIO};
+use ipnet::IpNet;
+use quinn::{Connection, Endpoint};
 use tracing::{debug, info};
+
+use quincy::config::ClientConfig;
+use quincy::constants::QUINN_RUNTIME;
+use quincy::error::ConfigError;
+use quincy::ip_assignment;
+use quincy::network::interface::{Interface, InterfaceIO};
+use quincy::network::socket::bind_socket;
+use quincy::{QuincyError, Result};
+
+use crate::relayer::ClientRelayer;
+
+/// Default timeout for receiving IP assignment from server.
+const IP_ASSIGNMENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Represents a Quincy client that connects to a server and relays packets between the server and a TUN interface.
 pub struct QuincyClient {
@@ -40,23 +41,23 @@ impl QuincyClient {
     }
 
     /// Connects to the Quincy server and starts the workers for this instance of the Quincy client.
+    ///
+    /// Authentication happens during the QUIC handshake (Noise allowed-keys or TLS mTLS).
+    /// After the handshake, the server sends the IP assignment over a uni-stream.
     pub async fn start<I: InterfaceIO>(&mut self) -> Result<()> {
         if self.relayer.is_some() {
             return Err(QuincyError::system("Client is already started"));
         }
 
         let connection = self.connect_to_server().await?;
-        let authenticator = Box::new(UsersFileClientAuthenticator::new(
-            &self.config.authentication,
-        ));
-        let auth_client = AuthClient::new(
-            authenticator,
-            Duration::from_secs(self.config.connection.connection_timeout_s),
-        );
 
-        let (client_address, server_address) = auth_client.authenticate(&connection).await?;
+        // Receive IP assignment from server (sent over uni-stream after handshake)
+        let assignment =
+            ip_assignment::recv_ip_assignment(&connection, IP_ASSIGNMENT_TIMEOUT).await?;
 
-        info!("Successfully authenticated");
+        let client_address = assignment.client_address;
+        let server_address = assignment.server_address;
+
         info!("Received client address: {client_address}");
         info!("Received server address: {server_address}");
 
@@ -107,6 +108,7 @@ impl QuincyClient {
         Ok(())
     }
 
+    /// Returns a reference to the client relayer, if running.
     pub fn relayer(&self) -> Option<&ClientRelayer> {
         self.relayer.as_ref()
     }
@@ -128,17 +130,25 @@ impl QuincyClient {
     async fn connect_to_server(&self) -> Result<Connection> {
         let quinn_config = self.config.quinn_client_config()?;
 
-        let server_hostname = self
-            .config
-            .connection_string
-            .split(':')
-            .next()
-            .ok_or_else(|| {
-                QuincyError::config_file_not_found(format!(
-                    "Could not parse hostname from connection string '{}'",
-                    self.config.connection_string
-                ))
-            })?;
+        let (host_part, _port) =
+            self.config
+                .connection_string
+                .rsplit_once(':')
+                .ok_or_else(|| {
+                    QuincyError::Config(ConfigError::InvalidValue {
+                        field: "connection_string".to_string(),
+                        reason: format!(
+                            "expected 'host:port' format, got '{}'",
+                            self.config.connection_string
+                        ),
+                    })
+                })?;
+
+        // Strip brackets from IPv6 addresses (e.g., "[::1]" -> "::1")
+        let server_hostname = host_part
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+            .unwrap_or(host_part);
 
         let server_addr = self
             .config

@@ -5,11 +5,11 @@ use jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
-pub mod auth;
 pub mod certificates;
 pub mod config;
 pub mod constants;
 pub mod error;
+pub mod ip_assignment;
 pub mod network;
 pub mod utils;
 

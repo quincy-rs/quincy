@@ -4,10 +4,7 @@ connection_string = "localhost:55158"
 mode = "noise"
 key_exchange = "Standard"
 server_public_key = "6axLx6XF+CrzWL6WppAr4R5/FO1NCq6yRuG59iqQCQ8="
-
-[authentication]
-username = "test"
-password = "test"
+private_key = "4yAeu1+ralZDWhpXXJ8x1/SejLioeOJpX2MDFFezNG0="
 
 [connection]
 mtu = 1400
