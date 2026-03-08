@@ -91,6 +91,14 @@ iced = { version = "^0.14.0", features = [
     "highlighter",
 ] }
 
+# Metrics
+metrics = "^0.24"
+metrics-exporter-prometheus = "^0.16"
+metrics-util = "^0.19"
+
+# Rate limiting
+governor = "^0.10"
+
 # Alloc
 jemallocator = { version = "0.5" }
 

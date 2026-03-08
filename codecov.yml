@@ -10,3 +10,5 @@ ignore:
   - "quincy/src/error.rs"
   # Command utilities
   - "quincy/src/utils"
+  # Metrics code is behind the "metrics" feature which is not enabled in CI and not really useful for coverage
+  - "quincy-server/src/server/metrics.rs"

@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::fmt;
+use std::str::FromStr;
 
 use crate::certificates::{
     load_certificates_from_file, load_certificates_from_pem, load_private_key_from_file,
@@ -56,24 +58,25 @@ pub struct ServerConfig {
     pub reuse_socket: bool,
     /// The network address of this tunnel (address + mask)
     pub tunnel_network: IpNet,
+    /// Path to the TOML users file for authentication
+    pub users_file: PathBuf,
     /// Whether to isolate clients from each other (default = true)
     #[serde(default = "default_true_fn")]
     pub isolate_clients: bool,
-    /// Whether to reject duplicate sessions for the same identity (default = true)
-    ///
-    /// When enabled, only one active connection per user identity is allowed.
-    /// A second connection attempt from the same identity will be silently closed.
-    #[serde(default = "default_true_fn")]
-    pub reject_duplicate_sessions: bool,
+    /// Default bandwidth limit applied to users without a per-user limit.
+    /// If not set, users without a per-user limit have unlimited bandwidth.
+    #[serde(default)]
+    pub default_bandwidth_limit: Option<Bandwidth>,
     /// Protocol configuration (TLS or Noise)
     pub protocol: ServerProtocolConfig,
-    /// Path to the TOML users file for authentication
-    pub users_file: PathBuf,
     /// Miscellaneous connection configuration
     #[serde(default)]
     pub connection: ConnectionConfig,
     /// Logging configuration
     pub log: LogConfig,
+    /// Prometheus metrics configuration.
+    #[serde(default)]
+    pub metrics: MetricsConfig,
 }
 
 /// Server protocol configuration.
@@ -264,6 +267,191 @@ pub struct LogConfig {
     pub level: String,
 }
 
+/// Prometheus metrics endpoint configuration.
+#[derive(Clone, Debug, Deserialize)]
+pub struct MetricsConfig {
+    /// Whether the metrics endpoint is enabled. Default: false.
+    #[serde(default = "default_false_fn")]
+    pub enabled: bool,
+    /// Address to bind the metrics HTTP server. Default: 127.0.0.1 (loopback).
+    #[serde(default = "default_metrics_address")]
+    pub address: IpAddr,
+    /// Port for the metrics HTTP server. Default: 9090.
+    #[serde(default = "default_metrics_port")]
+    pub port: u16,
+    /// Interval in seconds between per-connection metrics reports. Default: 5.
+    #[serde(default = "default_metrics_reporting_interval_s")]
+    pub reporting_interval_s: u64,
+    /// Idle timeout in seconds for per-connection metrics. Metrics that have
+    /// not been updated within this duration are evicted from the registry on
+    /// the next scrape. Set to 0 to disable eviction. Default: 300 (5 minutes).
+    #[serde(default = "default_metrics_idle_timeout_s")]
+    pub idle_timeout_s: u64,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            address: default_metrics_address(),
+            port: default_metrics_port(),
+            reporting_interval_s: default_metrics_reporting_interval_s(),
+            idle_timeout_s: default_metrics_idle_timeout_s(),
+        }
+    }
+}
+
+/// Bandwidth value stored as bytes per second.
+///
+/// Parsed from human-readable strings like "10 mbps", "500 kbps", "1 gbps".
+/// Supported units (case-insensitive): bps, kbps, mbps, gbps.
+/// The value is converted from bits/sec to bytes/sec during parsing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bandwidth(u64);
+
+impl Bandwidth {
+    /// Creates a new `Bandwidth` from a raw bytes-per-second value.
+    pub const fn from_bytes_per_second(bytes_per_second: u64) -> Self {
+        Self(bytes_per_second)
+    }
+
+    /// Returns the bandwidth in bytes per second.
+    pub fn bytes_per_second(&self) -> u64 {
+        self.0
+    }
+
+    /// Returns the bandwidth in kibibytes per second, with a minimum of 1.
+    pub fn kib_per_second(&self) -> u32 {
+        (self.0 / 1024).max(1) as u32
+    }
+}
+
+impl fmt::Display for Bandwidth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bits_per_second = self.0 * 8;
+
+        if bits_per_second > 0 && bits_per_second % 1_000_000_000 == 0 {
+            write!(f, "{} gbps", bits_per_second / 1_000_000_000)
+        } else if bits_per_second > 0 && bits_per_second % 1_000_000 == 0 {
+            write!(f, "{} mbps", bits_per_second / 1_000_000)
+        } else if bits_per_second > 0 && bits_per_second % 1_000 == 0 {
+            write!(f, "{} kbps", bits_per_second / 1_000)
+        } else {
+            write!(f, "{} bps", bits_per_second)
+        }
+    }
+}
+
+impl FromStr for Bandwidth {
+    type Err = ConfigError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            return Err(ConfigError::InvalidValue {
+                field: "bandwidth".to_string(),
+                reason: "empty bandwidth value".to_string(),
+            });
+        }
+
+        let split_pos = trimmed.find(|c: char| c.is_ascii_alphabetic());
+        let split_pos = split_pos.ok_or_else(|| ConfigError::InvalidValue {
+            field: "bandwidth".to_string(),
+            reason: format!(
+                "missing unit in bandwidth value '{trimmed}', expected bps/kbps/mbps/gbps"
+            ),
+        })?;
+
+        let (num_part, unit_part) = trimmed.split_at(split_pos);
+        let num_part = num_part.trim();
+        let unit_part = unit_part.trim().to_ascii_lowercase();
+
+        let value: f64 = num_part.parse().map_err(|_| ConfigError::InvalidValue {
+            field: "bandwidth".to_string(),
+            reason: format!("invalid numeric value '{num_part}'"),
+        })?;
+
+        if !value.is_finite() {
+            return Err(ConfigError::InvalidValue {
+                field: "bandwidth".to_string(),
+                reason: "bandwidth must be a finite number".to_string(),
+            });
+        }
+
+        if value < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "bandwidth".to_string(),
+                reason: "bandwidth cannot be negative".to_string(),
+            });
+        }
+
+        if value == 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "bandwidth".to_string(),
+                reason: "bandwidth cannot be zero".to_string(),
+            });
+        }
+
+        let multiplier: f64 = match unit_part.as_str() {
+            "bps" => 1.0,
+            "kbps" => 1_000.0,
+            "mbps" => 1_000_000.0,
+            "gbps" => 1_000_000_000.0,
+            _ => {
+                return Err(ConfigError::InvalidValue {
+                    field: "bandwidth".to_string(),
+                    reason: format!("unknown unit '{unit_part}', expected bps/kbps/mbps/gbps"),
+                });
+            }
+        };
+
+        let bits_per_second = value * multiplier;
+        let bytes_per_second = (bits_per_second as u64) / 8;
+
+        // Reject values that would overflow u32 when converted to KiB/s,
+        // since the rate limiter operates with u32 token counts.
+        let max_bytes_per_second = u32::MAX as u64 * 1024;
+        if bytes_per_second > max_bytes_per_second {
+            return Err(ConfigError::InvalidValue {
+                field: "bandwidth".to_string(),
+                reason: format!(
+                    "bandwidth too large ({bytes_per_second} bytes/sec exceeds maximum of {max_bytes_per_second} bytes/sec)"
+                ),
+            });
+        }
+
+        Ok(Bandwidth(bytes_per_second))
+    }
+}
+
+impl<'de> Deserialize<'de> for Bandwidth {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, Visitor};
+
+        struct BandwidthVisitor;
+
+        impl<'de> Visitor<'de> for BandwidthVisitor {
+            type Value = Bandwidth;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a bandwidth string like \"10 mbps\", \"500 kbps\", \"1 gbps\"")
+            }
+
+            fn visit_str<E>(self, v: &str) -> std::result::Result<Bandwidth, E>
+            where
+                E: de::Error,
+            {
+                v.parse::<Bandwidth>().map_err(de::Error::custom)
+            }
+        }
+
+        deserializer.deserialize_str(BandwidthVisitor)
+    }
+}
+
 /// Congestion control algorithm to use for QUIC connections.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub enum CongestionController {
@@ -385,6 +573,22 @@ fn default_true_fn() -> bool {
 
 fn default_false_fn() -> bool {
     false
+}
+
+fn default_metrics_address() -> IpAddr {
+    "127.0.0.1".parse().expect("Loopback address is valid")
+}
+
+fn default_metrics_port() -> u16 {
+    9090
+}
+
+fn default_metrics_reporting_interval_s() -> u64 {
+    5
+}
+
+fn default_metrics_idle_timeout_s() -> u64 {
+    300
 }
 
 fn default_tls_key_exchange() -> TlsKeyExchange {
@@ -1074,5 +1278,141 @@ mod tests {
     fn decode_base64_key_invalid_encoding() {
         let result = decode_base64_key::<32>("not-valid-base64!!!");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_bandwidth_mbps() {
+        assert_eq!(
+            "10 mbps".parse::<Bandwidth>().unwrap(),
+            Bandwidth(1_250_000)
+        );
+    }
+
+    #[test]
+    fn parse_bandwidth_kbps() {
+        assert_eq!("500 kbps".parse::<Bandwidth>().unwrap(), Bandwidth(62_500));
+    }
+
+    #[test]
+    fn parse_bandwidth_gbps() {
+        assert_eq!(
+            "1 gbps".parse::<Bandwidth>().unwrap(),
+            Bandwidth(125_000_000)
+        );
+    }
+
+    #[test]
+    fn parse_bandwidth_bps() {
+        assert_eq!("100 bps".parse::<Bandwidth>().unwrap(), Bandwidth(12));
+    }
+
+    #[test]
+    fn parse_bandwidth_no_space() {
+        assert_eq!("10mbps".parse::<Bandwidth>().unwrap(), Bandwidth(1_250_000));
+    }
+
+    #[test]
+    fn parse_bandwidth_uppercase() {
+        assert_eq!(
+            "10 MBPS".parse::<Bandwidth>().unwrap(),
+            Bandwidth(1_250_000)
+        );
+    }
+
+    #[test]
+    fn parse_bandwidth_rejects_invalid() {
+        assert!("".parse::<Bandwidth>().is_err());
+        assert!("abc".parse::<Bandwidth>().is_err());
+        assert!("10".parse::<Bandwidth>().is_err());
+        assert!("10 xyz".parse::<Bandwidth>().is_err());
+        assert!("-5 mbps".parse::<Bandwidth>().is_err());
+    }
+
+    #[test]
+    fn parse_bandwidth_rejects_oversized_value() {
+        // 35184372088832 bps = 2^32 KiB/s, which overflows u32 in kib_per_second()
+        assert!("35184372088832 bps".parse::<Bandwidth>().is_err());
+        // Just under the limit should still succeed
+        assert!("100 gbps".parse::<Bandwidth>().is_ok());
+    }
+
+    #[test]
+    fn bandwidth_display_roundtrip() {
+        assert_eq!(Bandwidth(1_250_000).to_string(), "10 mbps");
+    }
+
+    #[test]
+    fn bandwidth_kib_per_second() {
+        assert_eq!(Bandwidth(1_250_000).kib_per_second(), 1220);
+    }
+
+    #[test]
+    fn bandwidth_kib_per_second_minimum() {
+        assert_eq!(Bandwidth(100).kib_per_second(), 1);
+    }
+
+    #[test]
+    fn parse_server_config_with_metrics_and_bandwidth() {
+        let toml = r#"
+            name = "quincy-server"
+            tunnel_network = "10.0.0.1/24"
+            users_file = "/path/to/users.toml"
+            default_bandwidth_limit = "50 mbps"
+
+            [protocol]
+            mode = "noise"
+            key_exchange = "Standard"
+            private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+            [metrics]
+            enabled = true
+            address = "0.0.0.0"
+            port = 9100
+            idle_timeout_s = 120
+
+            [log]
+            level = "info"
+        "#;
+
+        let config: ServerConfig = Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("Failed to parse server config");
+
+        assert!(config.metrics.enabled);
+        assert_eq!(config.metrics.address, "0.0.0.0".parse::<IpAddr>().unwrap());
+        assert_eq!(config.metrics.port, 9100);
+        assert_eq!(config.metrics.idle_timeout_s, 120);
+        assert_eq!(
+            config.default_bandwidth_limit,
+            Some(Bandwidth::from_bytes_per_second(6_250_000))
+        );
+    }
+
+    #[test]
+    fn metrics_idle_timeout_defaults_to_300() {
+        let toml = r#"
+            name = "quincy-server"
+            tunnel_network = "10.0.0.1/24"
+            users_file = "/path/to/users.toml"
+
+            [protocol]
+            mode = "noise"
+            key_exchange = "Standard"
+            private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+            [metrics]
+            enabled = true
+
+            [log]
+            level = "info"
+        "#;
+
+        let config: ServerConfig = Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("Failed to parse server config");
+
+        assert_eq!(config.metrics.idle_timeout_s, 300);
     }
 }

@@ -30,6 +30,7 @@ Quincy is a VPN client and server implementation using the [QUIC](https://en.wik
 - [Protocol modes](#protocol-modes)
   - [TLS](#tls)
   - [Noise](#noise)
+- [Metrics](#metrics)
 - [Certificate management](#certificate-management)
   - [Server certificate](#server-certificate)
   - [Client certificate](#client-certificate)
@@ -108,6 +109,7 @@ For more information, see [aws-lc-rs build instructions](https://github.com/aws/
 ### Build features
 - `jemalloc`: Uses the jemalloc memory allocator on UNIX systems for improved performance [default: **enabled**]
 - `offload`: Enables GSO/GRO offload optimization for TUN interfaces on Linux [default: **enabled**]
+- `metrics`: Enables the Prometheus metrics endpoint on the server (see [Metrics](#metrics)) [default: **disabled**]
 
 ## Usage
 Quincy provides a couple of binaries based on their intended use:
@@ -272,6 +274,40 @@ private_key = "<base64 client private key>"
 ```
 
 **Note: The `key_exchange` value must match on both the server and client.**
+
+## Metrics
+The server can expose a Prometheus-compatible metrics endpoint. This feature is optional and requires the `metrics` build feature to be enabled:
+```bash
+cargo build -p quincy-server --features metrics
+```
+
+When built with the feature, the endpoint is still disabled by default. To enable it, add a `[metrics]` section to the server configuration file:
+```toml
+[metrics]
+# Whether the metrics endpoint is active (default: false)
+enabled = true
+# Bind address for the HTTP server (default: 127.0.0.1)
+address = "127.0.0.1"
+# Bind port for the HTTP server (default: 9090)
+port = 9090
+# Seconds between per-connection stats updates (default: 5)
+# reporting_interval_s = 5
+```
+
+Once running, metrics are available at `GET http://<address>:<port>/metrics` in the Prometheus text exposition format.
+
+The following metrics are reported per connection, each labelled with `user` (authenticated username) and `connection` (assigned tunnel IP):
+
+| Metric | Type | Description |
+|---|---|---|
+| `quincy_bytes_tx_total` | Counter | Total bytes transmitted to the client |
+| `quincy_bytes_rx_total` | Counter | Total bytes received from the client |
+| `quincy_datagrams_tx_total` | Counter | Total UDP datagrams transmitted to the client |
+| `quincy_datagrams_rx_total` | Counter | Total UDP datagrams received from the client |
+| `quincy_connection_rtt_seconds` | Gauge | Smoothed round-trip time of the QUIC path |
+| `quincy_connection_duration_seconds` | Gauge | Time since the connection was established |
+
+_Metrics are only available on the server. The client and GUI do not expose a Prometheus endpoint._
 
 ## Certificate management
 TLS mode uses mutual TLS, so both the server and each client need their own certificate and private key.

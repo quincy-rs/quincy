@@ -15,7 +15,7 @@ use reishi_quinn::{PqPublicKey, PublicKey};
 use serde::Deserialize;
 use tracing::warn;
 
-use quincy::config::decode_base64_key;
+use quincy::config::{decode_base64_key, Bandwidth};
 use quincy::error::{AuthError, Result};
 
 /// A parsed users file mapping usernames to their authentication credentials.
@@ -61,6 +61,11 @@ pub struct UserEntry {
     /// Format: `sha256:<hex>`
     #[serde(default)]
     pub authorized_certs: Vec<String>,
+    /// Optional bandwidth limit for this user.
+    /// Overrides the server's `default_bandwidth_limit`.
+    /// Format: human-readable string, e.g. `"10 mbps"`.
+    #[serde(default)]
+    pub bandwidth_limit: Option<Bandwidth>,
 }
 
 impl UsersFile {
@@ -284,6 +289,7 @@ mod tests {
         [users.alice]
         authorized_keys = ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="]
         authorized_certs = ["sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"]
+        bandwidth_limit = "10 mbps"
 
         [users.bob]
         authorized_keys = ["AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="]
@@ -553,6 +559,18 @@ mod tests {
             authorized_certs = ["sha256:0123456789ABCDEF0123456789abcdef0123456789ABCDEF0123456789abcdef"]
         "#;
         assert!(UsersFile::parse(toml).is_ok());
+    }
+
+    #[test]
+    fn parse_user_entry_with_bandwidth_limit() {
+        let users = UsersFile::parse(SAMPLE_USERS_TOML).expect("valid TOML");
+        let alice = users.users.get("alice").expect("alice exists");
+        assert_eq!(
+            alice.bandwidth_limit,
+            Some(Bandwidth::from_bytes_per_second(1_250_000))
+        );
+        let bob = users.users.get("bob").expect("bob exists");
+        assert_eq!(bob.bandwidth_limit, None);
     }
 
     #[test]

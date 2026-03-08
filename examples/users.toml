@@ -15,3 +15,5 @@ authorized_certs = [
     # quincy-identity tls fingerprint --cert client_cert.pem
     # "sha256:hex-fingerprint-here",
 ]
+# Optional bandwidth limit (overrides server's default_bandwidth_limit)
+# bandwidth_limit = "10 mbps"
