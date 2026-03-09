@@ -50,7 +50,7 @@ jobs:
           mkdir -p release
           cp target/release/quincy-client release/
           cp target/release/quincy-server release/
-          cp target/release/quincy-users release/
+          cp target/release/quincy-identity release/
           cp target/release/quincy-client-gui release/
           cp target/release/quincy-client-daemon release/
       - uses: actions/upload-artifact@v4
@@ -131,7 +131,7 @@ jobs:
           mkdir -p release
           cp target/release/quincy-client release/
           cp target/release/quincy-server release/
-          cp target/release/quincy-users release/
+          cp target/release/quincy-identity release/
           cp target/release/quincy-client-gui release/
           cp target/release/quincy-client-daemon release/
       - uses: actions/upload-artifact@v4
@@ -211,7 +211,7 @@ jobs:
           mkdir ./release
           cp target/release/quincy-client.exe release/
           cp target/release/quincy-server.exe release/
-          cp target/release/quincy-users.exe release/
+          cp target/release/quincy-identity.exe release/
           cp target/release/quincy-client-gui.exe release/
           cp target/release/quincy-client-daemon.exe release/
       - uses: actions/upload-artifact@v4
