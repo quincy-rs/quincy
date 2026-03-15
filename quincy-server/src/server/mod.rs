@@ -5,6 +5,7 @@ pub mod session;
 #[cfg(feature = "metrics")]
 mod metrics;
 
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 #[cfg(feature = "metrics")]
@@ -21,11 +22,13 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tracing::{debug, info, warn};
 
-use crate::server::address_pool::AddressPool;
+use crate::server::address_pool::AddressPoolManager;
 use crate::server::connection::{Assigned, QuincyConnection};
 use crate::server::session::{ConnectionSession, UserSessionRegistry};
 use crate::users::UsersFile;
-use quincy::config::{AllowedNoiseKeys, NoiseKeyExchange, ServerConfig, ServerProtocolConfig};
+use quincy::config::{
+    AddressRange, AllowedNoiseKeys, NoiseKeyExchange, ServerConfig, ServerProtocolConfig,
+};
 use quincy::constants::{PACKET_BUFFER_SIZE, PACKET_CHANNEL_SIZE, QUINN_RUNTIME};
 use quincy::network::interface::{Interface, InterfaceIO};
 use quincy::network::packet::Packet;
@@ -46,7 +49,7 @@ struct AssignmentResult {
 pub struct QuincyServer {
     config: ServerConfig,
     connection_queues: ConnectionQueues,
-    address_pool: Arc<AddressPool>,
+    address_pool: Arc<AddressPoolManager>,
     users: Arc<UsersFile>,
     session_registry: Arc<UserSessionRegistry>,
 }
@@ -59,8 +62,16 @@ impl QuincyServer {
     /// ### Arguments
     /// - `config` - the server configuration
     pub fn new(config: ServerConfig) -> Result<Self> {
-        let address_pool = AddressPool::new(config.tunnel_network);
         let users = UsersFile::load(&config.users_file)?;
+
+        let user_pools: HashMap<String, Vec<AddressRange>> = users
+            .users
+            .iter()
+            .filter(|(_, entry)| !entry.address_pool.is_empty())
+            .map(|(name, entry)| (name.clone(), entry.address_pool.clone()))
+            .collect();
+
+        let address_pool = AddressPoolManager::new(config.tunnel_network, user_pools)?;
 
         Ok(Self {
             config,
@@ -242,7 +253,7 @@ impl QuincyServer {
                     let client_address = connection.client_address();
 
                     self.connection_queues.remove(&client_address.addr());
-                    self.address_pool.release_address(&client_address.addr());
+                    self.address_pool.release_address(username, &client_address.addr());
                     session_registry.remove_connection(username, &client_address);
 
                     warn!(

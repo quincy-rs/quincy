@@ -14,7 +14,7 @@ use figment::{
     providers::{Env, Format, Toml},
     Figment,
 };
-use ipnet::IpNet;
+use ipnet::{IpAddrRange, IpNet, Ipv4AddrRange, Ipv6AddrRange};
 use quinn::{
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
     EndpointConfig, TransportConfig,
@@ -449,6 +449,210 @@ impl<'de> Deserialize<'de> for Bandwidth {
         }
 
         deserializer.deserialize_str(BandwidthVisitor)
+    }
+}
+
+/// A contiguous range of IP addresses, parsed from either a CIDR subnet
+/// (e.g. `"10.0.0.100/30"`) or an explicit start–end range
+/// (e.g. `"10.0.0.100 - 10.0.0.103"`).
+///
+/// Thin newtype around [`IpAddrRange`] that adds [`FromStr`] and
+/// [`Deserialize`] support. Use [`Deref`] or [`into_inner()`](Self::into_inner)
+/// to access the underlying `IpAddrRange`.
+///
+/// # Performance
+///
+/// Ranges are stored lazily and only expanded when iterated. However,
+/// validation paths (overlap detection in [`UsersFile`](crate::config) and
+/// containment checks in the address pool manager) iterate every address
+/// eagerly. Very large ranges (e.g. a `/8` with 16 M addresses or any
+/// wide IPv6 prefix) will cause proportional memory and CPU usage at
+/// server startup. Keep per-user pool ranges small — a `/24` or narrower
+/// is typical.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AddressRange(IpAddrRange);
+
+impl AddressRange {
+    /// Returns the underlying `IpAddrRange`.
+    pub fn into_inner(self) -> IpAddrRange {
+        self.0
+    }
+}
+
+impl std::ops::Deref for AddressRange {
+    type Target = IpAddrRange;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<IpAddrRange> for AddressRange {
+    fn from(range: IpAddrRange) -> Self {
+        Self(range)
+    }
+}
+
+impl From<IpNet> for AddressRange {
+    fn from(net: IpNet) -> Self {
+        let range = match net {
+            IpNet::V4(v4) => IpAddrRange::from(Ipv4AddrRange::new(v4.network(), v4.broadcast())),
+            IpNet::V6(v6) => IpAddrRange::from(Ipv6AddrRange::new(v6.network(), v6.broadcast())),
+        };
+        Self(range)
+    }
+}
+
+impl fmt::Display for AddressRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            IpAddrRange::V4(ref range) => {
+                let (start, end) = (range.clone().next(), range.last());
+                match (start, end) {
+                    (Some(start), Some(end)) if start == end => write!(f, "{start}/32"),
+                    (Some(start), Some(end)) => write!(f, "{start} - {end}"),
+                    _ => write!(f, "<empty>"),
+                }
+            }
+            IpAddrRange::V6(ref range) => {
+                let (start, end) = (range.clone().next(), range.last());
+                match (start, end) {
+                    (Some(start), Some(end)) if start == end => write!(f, "{start}/128"),
+                    (Some(start), Some(end)) => write!(f, "{start} - {end}"),
+                    _ => write!(f, "<empty>"),
+                }
+            }
+        }
+    }
+}
+
+/// Returns an error if `addr` is a loopback or unspecified address, which are
+/// never valid in a tunnel address pool.
+fn reject_special_address(addr: IpAddr) -> std::result::Result<(), ConfigError> {
+    if addr.is_loopback() {
+        return Err(ConfigError::InvalidValue {
+            field: "address_range".to_string(),
+            reason: format!("loopback address {addr} is not allowed in an address range"),
+        });
+    }
+    if addr.is_unspecified() {
+        return Err(ConfigError::InvalidValue {
+            field: "address_range".to_string(),
+            reason: format!("unspecified address {addr} is not allowed in an address range"),
+        });
+    }
+    Ok(())
+}
+
+impl FromStr for AddressRange {
+    type Err = ConfigError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let trimmed = s.trim();
+
+        // Try CIDR first (contains '/')
+        if trimmed.contains('/') {
+            let net: IpNet = trimmed.parse().map_err(|_| ConfigError::InvalidValue {
+                field: "address_range".to_string(),
+                reason: format!("invalid CIDR notation: '{trimmed}'"),
+            })?;
+
+            reject_special_address(net.network())?;
+            reject_special_address(net.broadcast())?;
+
+            return Ok(AddressRange::from(net));
+        }
+
+        // Try range format: "start - end"
+        if let Some((left, right)) = trimmed.split_once('-') {
+            let start: IpAddr = left.trim().parse().map_err(|_| ConfigError::InvalidValue {
+                field: "address_range".to_string(),
+                reason: format!("invalid start address in range: '{}'", left.trim()),
+            })?;
+            let end: IpAddr = right
+                .trim()
+                .parse()
+                .map_err(|_| ConfigError::InvalidValue {
+                    field: "address_range".to_string(),
+                    reason: format!("invalid end address in range: '{}'", right.trim()),
+                })?;
+
+            reject_special_address(start)?;
+            reject_special_address(end)?;
+
+            let range = match (start, end) {
+                (IpAddr::V4(start_v4), IpAddr::V4(end_v4)) => {
+                    if start_v4 > end_v4 {
+                        return Err(ConfigError::InvalidValue {
+                            field: "address_range".to_string(),
+                            reason: format!(
+                                "range start ({start_v4}) must not be greater than end ({end_v4})"
+                            ),
+                        });
+                    }
+                    IpAddrRange::from(Ipv4AddrRange::new(start_v4, end_v4))
+                }
+                (IpAddr::V6(start_v6), IpAddr::V6(end_v6)) => {
+                    if start_v6 > end_v6 {
+                        return Err(ConfigError::InvalidValue {
+                            field: "address_range".to_string(),
+                            reason: format!(
+                                "range start ({start_v6}) must not be greater than end ({end_v6})"
+                            ),
+                        });
+                    }
+                    IpAddrRange::from(Ipv6AddrRange::new(start_v6, end_v6))
+                }
+                _ => {
+                    return Err(ConfigError::InvalidValue {
+                        field: "address_range".to_string(),
+                        reason: format!(
+                            "range start ({start}) and end ({end}) must be the same IP family"
+                        ),
+                    });
+                }
+            };
+
+            return Ok(AddressRange(range));
+        }
+
+        Err(ConfigError::InvalidValue {
+            field: "address_range".to_string(),
+            reason: format!(
+                "invalid address range '{trimmed}': expected CIDR (e.g. '10.0.0.0/30') \
+                 or range (e.g. '10.0.0.1 - 10.0.0.5')"
+            ),
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for AddressRange {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, Visitor};
+
+        struct AddressRangeVisitor;
+
+        impl<'de> Visitor<'de> for AddressRangeVisitor {
+            type Value = AddressRange;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str(
+                    "an address range string like \"10.0.0.0/30\" or \"10.0.0.1 - 10.0.0.5\"",
+                )
+            }
+
+            fn visit_str<E>(self, v: &str) -> std::result::Result<AddressRange, E>
+            where
+                E: de::Error,
+            {
+                v.parse::<AddressRange>().map_err(de::Error::custom)
+            }
+        }
+
+        deserializer.deserialize_str(AddressRangeVisitor)
     }
 }
 
@@ -1414,5 +1618,284 @@ mod tests {
             .expect("Failed to parse server config");
 
         assert_eq!(config.metrics.idle_timeout_s, 300);
+    }
+
+    // --- AddressRange tests ---
+
+    #[test]
+    fn parse_address_range_cidr_v4() {
+        let range: AddressRange = "10.0.0.0/30".parse().unwrap();
+        let addrs: Vec<IpAddr> = range.into_inner().collect();
+        assert_eq!(addrs.len(), 4);
+        assert_eq!(addrs[0], "10.0.0.0".parse::<IpAddr>().unwrap());
+        assert_eq!(addrs[3], "10.0.0.3".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn parse_address_range_cidr_single() {
+        let range: AddressRange = "10.0.0.5/32".parse().unwrap();
+        let addrs: Vec<IpAddr> = range.into_inner().collect();
+        assert_eq!(addrs.len(), 1);
+        assert_eq!(addrs[0], "10.0.0.5".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn parse_address_range_explicit_with_spaces() {
+        let range: AddressRange = "10.0.0.1 - 10.0.0.3".parse().unwrap();
+        let addrs: Vec<IpAddr> = range.into_inner().collect();
+        assert_eq!(addrs.len(), 3);
+    }
+
+    #[test]
+    fn parse_address_range_explicit_no_spaces() {
+        let range: AddressRange = "10.0.0.1-10.0.0.3".parse().unwrap();
+        let addrs: Vec<IpAddr> = range.into_inner().collect();
+        assert_eq!(addrs.len(), 3);
+    }
+
+    #[test]
+    fn parse_address_range_single_ip_range() {
+        let range: AddressRange = "10.0.0.5-10.0.0.5".parse().unwrap();
+        let addrs: Vec<IpAddr> = range.into_inner().collect();
+        assert_eq!(addrs.len(), 1);
+    }
+
+    #[test]
+    fn parse_address_range_rejects_start_greater_than_end() {
+        let result = "10.0.0.5 - 10.0.0.1".parse::<AddressRange>();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("must not be greater than end"), "error: {err}");
+    }
+
+    #[test]
+    fn parse_address_range_rejects_mixed_families() {
+        let result = "10.0.0.1 - fd00::1".parse::<AddressRange>();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("same IP family"), "error: {err}");
+    }
+
+    #[test]
+    fn parse_address_range_rejects_invalid_cidr() {
+        let result = "10.0.0.0/33".parse::<AddressRange>();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_address_range_rejects_garbage() {
+        let result = "not-an-address".parse::<AddressRange>();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn address_range_display_range() {
+        let range: AddressRange = "10.0.0.1 - 10.0.0.3".parse().unwrap();
+        assert_eq!(range.to_string(), "10.0.0.1 - 10.0.0.3");
+    }
+
+    #[test]
+    fn address_range_display_single() {
+        let range: AddressRange = "10.0.0.5/32".parse().unwrap();
+        assert_eq!(range.to_string(), "10.0.0.5/32");
+    }
+
+    #[test]
+    fn address_range_serde_roundtrip() {
+        let range: AddressRange = "10.0.0.1 - 10.0.0.3".parse().unwrap();
+        let toml = format!(
+            r#"
+            [users.alice]
+            pool = ["{range}"]
+        "#
+        );
+
+        #[derive(Deserialize)]
+        struct Wrapper {
+            users: std::collections::HashMap<String, PoolEntry>,
+        }
+
+        #[derive(Deserialize)]
+        struct PoolEntry {
+            pool: Vec<AddressRange>,
+        }
+
+        let wrapper: Wrapper = Figment::new()
+            .merge(Toml::string(&toml))
+            .extract()
+            .expect("deserialization failed");
+
+        assert_eq!(wrapper.users["alice"].pool[0], range);
+    }
+
+    #[test]
+    fn parse_address_range_rejects_loopback_cidr() {
+        let result = "127.0.0.0/8".parse::<AddressRange>();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("loopback"), "error: {err}");
+    }
+
+    #[test]
+    fn parse_address_range_rejects_loopback_range() {
+        let result = "127.0.0.1 - 127.0.0.5".parse::<AddressRange>();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("loopback"), "error: {err}");
+    }
+
+    #[test]
+    fn parse_address_range_rejects_unspecified_cidr() {
+        let result = "0.0.0.0/24".parse::<AddressRange>();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unspecified"), "error: {err}");
+    }
+
+    #[test]
+    fn parse_address_range_rejects_unspecified_range() {
+        let result = "0.0.0.0 - 0.0.0.5".parse::<AddressRange>();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unspecified"), "error: {err}");
+    }
+
+    #[test]
+    fn parse_address_range_rejects_v6_loopback() {
+        let result = "::1/128".parse::<AddressRange>();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("loopback"), "error: {err}");
+    }
+
+    #[test]
+    fn parse_address_range_rejects_v6_unspecified() {
+        let result = "::/128".parse::<AddressRange>();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unspecified"), "error: {err}");
+    }
+
+    #[test]
+    fn parse_address_range_v6_cidr() {
+        let range: AddressRange = "fd00::/126".parse().unwrap();
+        let addrs: Vec<IpAddr> = range.into_inner().collect();
+        assert_eq!(addrs.len(), 4);
+        assert_eq!(addrs[0], "fd00::".parse::<IpAddr>().unwrap());
+        assert_eq!(addrs[3], "fd00::3".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn parse_address_range_v6_cidr_single() {
+        let range: AddressRange = "fd00::5/128".parse().unwrap();
+        let addrs: Vec<IpAddr> = range.into_inner().collect();
+        assert_eq!(addrs.len(), 1);
+        assert_eq!(addrs[0], "fd00::5".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn parse_address_range_v6_range() {
+        let range: AddressRange = "fd00::1 - fd00::3".parse().unwrap();
+        let addrs: Vec<IpAddr> = range.into_inner().collect();
+        assert_eq!(addrs.len(), 3);
+        assert_eq!(addrs[0], "fd00::1".parse::<IpAddr>().unwrap());
+        assert_eq!(addrs[2], "fd00::3".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn parse_address_range_v6_single_ip_range() {
+        let range: AddressRange = "fd00::a - fd00::a".parse().unwrap();
+        let addrs: Vec<IpAddr> = range.into_inner().collect();
+        assert_eq!(addrs.len(), 1);
+    }
+
+    #[test]
+    fn parse_address_range_v6_rejects_start_greater_than_end() {
+        let result = "fd00::5 - fd00::1".parse::<AddressRange>();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("must not be greater than end"), "error: {err}");
+    }
+
+    #[test]
+    fn parse_address_range_v6_rejects_loopback_range() {
+        let result = "::1 - ::1".parse::<AddressRange>();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("loopback"), "error: {err}");
+    }
+
+    #[test]
+    fn parse_address_range_v6_rejects_unspecified_range() {
+        let result = ":: - ::".parse::<AddressRange>();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unspecified"), "error: {err}");
+    }
+
+    #[test]
+    fn address_range_display_v6_range() {
+        let range: AddressRange = "fd00::1 - fd00::3".parse().unwrap();
+        assert_eq!(range.to_string(), "fd00::1 - fd00::3");
+    }
+
+    #[test]
+    fn address_range_display_v6_single() {
+        let range: AddressRange = "fd00::5/128".parse().unwrap();
+        assert_eq!(range.to_string(), "fd00::5/128");
+    }
+
+    #[test]
+    fn address_range_from_ipnet_v6() {
+        let net: IpNet = "fd00::1/126".parse().unwrap();
+        let range = AddressRange::from(net);
+        let addrs: Vec<IpAddr> = range.into_inner().collect();
+        // /126 = 4 addresses: fd00::0 through fd00::3
+        assert_eq!(addrs.len(), 4);
+        assert_eq!(addrs[0], "fd00::".parse::<IpAddr>().unwrap());
+        assert_eq!(addrs[3], "fd00::3".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn address_range_v6_range_no_spaces() {
+        let range: AddressRange = "fd00::1-fd00::3".parse().unwrap();
+        let addrs: Vec<IpAddr> = range.into_inner().collect();
+        assert_eq!(addrs.len(), 3);
+    }
+
+    #[test]
+    fn address_range_v6_rejects_mixed_families() {
+        let result = "fd00::1 - 10.0.0.1".parse::<AddressRange>();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("same IP family"), "error: {err}");
+    }
+
+    #[test]
+    fn address_range_v6_serde_roundtrip() {
+        let range: AddressRange = "fd00::1 - fd00::3".parse().unwrap();
+        let toml = format!(
+            r#"
+            [users.alice]
+            pool = ["{range}"]
+        "#
+        );
+
+        #[derive(Deserialize)]
+        struct Wrapper {
+            users: std::collections::HashMap<String, PoolEntry>,
+        }
+
+        #[derive(Deserialize)]
+        struct PoolEntry {
+            pool: Vec<AddressRange>,
+        }
+
+        let wrapper: Wrapper = Figment::new()
+            .merge(Toml::string(&toml))
+            .extract()
+            .expect("deserialization failed");
+
+        assert_eq!(wrapper.users["alice"].pool[0], range);
     }
 }
