@@ -5,6 +5,7 @@
 //! lookup indices for O(1) key and fingerprint resolution.
 
 use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
 use std::path::Path;
 
 use figment::{
@@ -15,7 +16,7 @@ use reishi_quinn::{PqPublicKey, PublicKey};
 use serde::Deserialize;
 use tracing::warn;
 
-use quincy::config::{decode_base64_key, Bandwidth};
+use quincy::config::{decode_base64_key, AddressRange, Bandwidth};
 use quincy::error::{AuthError, Result};
 
 /// A parsed users file mapping usernames to their authentication credentials.
@@ -66,6 +67,14 @@ pub struct UserEntry {
     /// Format: human-readable string, e.g. `"10 mbps"`.
     #[serde(default)]
     pub bandwidth_limit: Option<Bandwidth>,
+    /// Optional per-user address pool. When set, this user can only receive
+    /// tunnel IPs from these ranges, and the addresses are reserved (not
+    /// available to other users).
+    ///
+    /// Keep ranges small (a `/24` or narrower is typical) — overlap validation
+    /// iterates every address eagerly at startup.
+    #[serde(default)]
+    pub address_pool: Vec<AddressRange>,
 }
 
 impl UsersFile {
@@ -208,6 +217,33 @@ impl UsersFile {
                     .into());
                 }
                 cert_fingerprint_to_user.insert(normalized, username.clone());
+            }
+        }
+
+        // Validate per-user address pools: reject overlapping addresses between users
+        let mut all_pool_addresses: HashMap<IpAddr, String> = HashMap::new();
+        for (username, entry) in &raw.users {
+            let mut user_addresses: HashSet<IpAddr> = HashSet::new();
+            for range in &entry.address_pool {
+                for addr in range.into_inner() {
+                    if !user_addresses.insert(addr) {
+                        return Err(AuthError::InvalidUserStore {
+                            reason: format!(
+                                "user '{username}': duplicate address {addr} in address_pool"
+                            ),
+                        }
+                        .into());
+                    }
+                    if let Some(existing) = all_pool_addresses.get(&addr) {
+                        return Err(AuthError::InvalidUserStore {
+                            reason: format!(
+                                "address {addr} claimed by both users '{existing}' and '{username}'"
+                            ),
+                        }
+                        .into());
+                    }
+                    all_pool_addresses.insert(addr, username.clone());
+                }
             }
         }
 
@@ -587,5 +623,58 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("duplicate Noise X25519 key"), "error: {err}");
+    }
+
+    #[test]
+    fn parse_user_entry_with_address_pool() {
+        let toml = r#"
+            [users.alice]
+            authorized_keys = ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="]
+            address_pool = ["10.0.0.100/32", "10.0.0.101 - 10.0.0.103"]
+        "#;
+        let users = UsersFile::parse(toml).expect("valid TOML");
+        let alice = users.users.get("alice").expect("alice exists");
+        assert_eq!(alice.address_pool.len(), 2);
+    }
+
+    #[test]
+    fn parse_user_entry_without_address_pool() {
+        let toml = r#"
+            [users.alice]
+            authorized_keys = ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="]
+        "#;
+        let users = UsersFile::parse(toml).expect("valid TOML");
+        let alice = users.users.get("alice").expect("alice exists");
+        assert!(alice.address_pool.is_empty());
+    }
+
+    #[test]
+    fn overlapping_address_pools_between_users_rejected() {
+        let toml = r#"
+            [users.alice]
+            authorized_keys = ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="]
+            address_pool = ["10.0.0.100/31"]
+
+            [users.bob]
+            authorized_keys = ["AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="]
+            address_pool = ["10.0.0.100 - 10.0.0.101"]
+        "#;
+        let result = UsersFile::parse(toml);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("claimed by both users"), "error: {err}");
+    }
+
+    #[test]
+    fn duplicate_addresses_within_user_pool_rejected() {
+        let toml = r#"
+            [users.alice]
+            authorized_keys = ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="]
+            address_pool = ["10.0.0.100/32", "10.0.0.100/32"]
+        "#;
+        let result = UsersFile::parse(toml);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("duplicate address"), "error: {err}");
     }
 }

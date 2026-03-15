@@ -12,7 +12,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{debug, info};
 
 use crate::identity;
-use crate::server::address_pool::AddressPool;
+use crate::server::address_pool::AddressPoolManager;
 use crate::server::session::BandwidthLimiter;
 use crate::users::UsersFile;
 use quincy::config::ServerProtocolConfig;
@@ -96,20 +96,21 @@ impl QuincyConnection<Identified> {
 
     /// Assigns an IP address and sends the assignment to the client.
     ///
-    /// Allocates an IP from the address pool and sends the assignment
-    /// to the client over a uni-stream. On send failure, the address
-    /// is released back to the pool.
+    /// Allocates an IP from the address pool manager (using the user's
+    /// reserved pool if configured, otherwise the global pool) and sends
+    /// the assignment to the client over a uni-stream. On send failure,
+    /// the address is released back to the appropriate pool.
     ///
     /// ### Arguments
-    /// - `address_pool` - the pool of available client IP addresses
+    /// - `address_pool` - the address pool manager
     /// - `server_address` - the server's tunnel address
     pub async fn assign_ip(
         self,
-        address_pool: &AddressPool,
+        address_pool: &AddressPoolManager,
         server_address: IpNet,
     ) -> Result<QuincyConnection<Assigned>> {
         let client_address = address_pool
-            .next_available_address()
+            .allocate_address(&self.state.username)
             .ok_or(quincy::error::AuthError::AddressPoolExhausted)?;
 
         let assignment = IpAssignment {
@@ -121,7 +122,7 @@ impl QuincyConnection<Identified> {
             ip_assignment::send_ip_assignment(&self.connection, &assignment, IP_ASSIGNMENT_TIMEOUT)
                 .await
         {
-            address_pool.release_address(&client_address.addr());
+            address_pool.release_address(&self.state.username, &client_address.addr());
             return Err(e);
         }
 
