@@ -28,6 +28,7 @@ quinn = { workspace = true }
 # Interfaces and networking
 tun-rs = { workspace = true }
 socket2 = { workspace = true }
+libc = { workspace = true }
 bytes = { workspace = true }
 ipnet = { workspace = true }
 
