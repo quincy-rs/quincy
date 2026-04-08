@@ -13,6 +13,16 @@ pub const PACKET_BUFFER_SIZE: usize = 4;
 /// Packet channel size used for communication between the TUN interface and QUIC tunnels.
 pub const PACKET_CHANNEL_SIZE: usize = 1024 * 1024;
 
+/// Minimum socket buffer size (send/recv) that `bind_socket` will attempt
+/// before giving up and falling back to the OS default.
+///
+/// Some operating systems (FreeBSD) reject `setsockopt(SO_SNDBUF)`
+/// with `ENOBUFS` when the requested size exceeds system limits, rather than
+/// silently clamping like Linux does. The retry loop in `bind_socket` halves
+/// the requested size on each failure but stops once it would drop below this
+/// floor.
+pub const MIN_SOCKET_BUFFER_SIZE: usize = 128 * 1024;
+
 /// Represents the supported TLS protocol versions for Quincy.
 pub static TLS_PROTOCOL_VERSIONS: &[&rustls::SupportedProtocolVersion] = &[&rustls::version::TLS13];
 
