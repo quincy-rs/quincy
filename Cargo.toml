@@ -3,7 +3,7 @@ members = ["quincy", "quincy-client", "quincy-identity", "quincy-server", "quinc
 resolver = "2"
 
 [workspace.package]
-version = "2.0.0"
+version = "2.0.1"
 authors = ["Jakub Kubík <jakub.kubik.it@protonmail.com>"]
 license = "AGPL-3.0-or-later"
 readme = "README.md"
@@ -16,9 +16,9 @@ categories = ["command-line-utilities", "network-programming"]
 
 [workspace.dependencies]
 # Internal crates
-quincy = { path = "quincy", version = "2.0.0" }
-quincy-client = { path = "quincy-client", version = "2.0.0" }
-quincy-server = { path = "quincy-server", version = "2.0.0" }
+quincy = { path = "quincy", version = "2.0.1" }
+quincy-client = { path = "quincy-client", version = "2.0.1" }
+quincy-server = { path = "quincy-server", version = "2.0.1" }
 
 # Quinn
 quinn = { version = "^0.11.8", default-features = false, features = [
