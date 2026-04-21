@@ -61,7 +61,7 @@ rustls-pemfile = "^2.0"
 aws-lc-rs = "^1.16"
 
 # Noise
-reishi-quinn = { version = "^0.2.0", features = ["pq"] }
+reishi-quinn = { version = "^0.3.0", features = ["pq"] }
 base64 = "^0.22"
 
 # Crypto RNG
