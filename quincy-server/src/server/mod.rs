@@ -30,7 +30,7 @@ use quincy::config::{
     AddressRange, AllowedNoiseKeys, NoiseKeyExchange, ServerConfig, ServerProtocolConfig,
 };
 use quincy::constants::{PACKET_BUFFER_SIZE, PACKET_CHANNEL_SIZE, QUINN_RUNTIME};
-use quincy::network::interface::{Interface, InterfaceIO};
+use quincy::network::interface::{ActiveInterface, Interface, InterfaceIO};
 use quincy::network::packet::Packet;
 use quincy::network::socket::bind_socket;
 use quincy::utils::tasks::abort_all;
@@ -91,8 +91,9 @@ impl QuincyServer {
             self.config.interface_name.clone(),
             None,
             None,
+            None,
         )?;
-        let interface = Arc::new(interface);
+        let interface = Arc::new(interface.configure()?);
 
         #[cfg(feature = "metrics")]
         if self.config.metrics.enabled {
@@ -324,7 +325,7 @@ impl QuincyServer {
     /// - `tun_read` - the read half of the TUN interface
     /// - `connection_queues` - the queues for sending data to the QUIC connections
     async fn process_outbound_traffic(
-        interface: Arc<Interface<impl InterfaceIO>>,
+        interface: Arc<ActiveInterface<impl InterfaceIO>>,
         connection_queues: ConnectionQueues,
     ) -> Result<()> {
         debug!("Started tunnel outbound traffic task (interface -> connection queue)");
@@ -369,7 +370,7 @@ impl QuincyServer {
     /// - `isolate_clients` - whether to isolate clients from each other
     async fn process_inbound_traffic(
         connection_queues: ConnectionQueues,
-        interface: Arc<Interface<impl InterfaceIO>>,
+        interface: Arc<ActiveInterface<impl InterfaceIO>>,
         ingress_queue: Receiver<Packet>,
         isolate_clients: bool,
     ) -> Result<()> {
@@ -386,7 +387,7 @@ impl QuincyServer {
 #[inline]
 async fn relay_isolated(
     connection_queues: ConnectionQueues,
-    interface: Arc<Interface<impl InterfaceIO>>,
+    interface: Arc<ActiveInterface<impl InterfaceIO>>,
     mut ingress_queue: Receiver<Packet>,
 ) -> Result<()> {
     loop {
@@ -421,7 +422,7 @@ async fn relay_isolated(
 #[inline]
 async fn relay_unisolated(
     connection_queues: ConnectionQueues,
-    interface: Arc<Interface<impl InterfaceIO>>,
+    interface: Arc<ActiveInterface<impl InterfaceIO>>,
     mut ingress_queue: Receiver<Packet>,
 ) -> Result<()> {
     loop {

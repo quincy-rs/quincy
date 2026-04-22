@@ -1,7 +1,7 @@
 use iced::widget::container as container_widget;
 use iced::widget::container::Style as ContainerStyle;
 use iced::widget::{row, stack, text};
-use iced::{time, window, Background, Element, Length, Size, Subscription, Task, Theme};
+use iced::{Background, Element, Length, Size, Subscription, Task, Theme, time, window};
 
 /// Application icon embedded at compile time (Windows only)
 #[cfg(target_os = "windows")]
@@ -351,7 +351,7 @@ impl QuincyGui {
         };
 
         // Only process .toml files
-        if !config_path.extension().is_some_and(|ext| ext == "toml") {
+        if config_path.extension().is_none_or(|ext| ext != "toml") {
             return None;
         }
 

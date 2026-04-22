@@ -49,7 +49,7 @@ impl QuincyClient {
             return Err(QuincyError::system("Client is already started"));
         }
 
-        let connection = self.connect_to_server().await?;
+        let (connection, server_addr) = self.connect_to_server().await?;
 
         // Receive IP assignment from server (sent over uni-stream after handshake)
         let assignment =
@@ -72,6 +72,7 @@ impl QuincyClient {
             self.config.network.interface_name.clone(),
             Some(self.config.network.routes.clone()),
             Some(self.config.network.dns_servers.clone()),
+            Some(server_addr.ip()),
         )?;
 
         let relayer = ClientRelayer::start(interface, connection)?;
@@ -126,8 +127,8 @@ impl QuincyClient {
     /// Connects to the Quincy server.
     ///
     /// ### Returns
-    /// - `Connection` - a Quinn connection representing the connection to the Quincy server
-    async fn connect_to_server(&self) -> Result<Connection> {
+    /// A tuple of the Quinn connection and the resolved server socket address.
+    async fn connect_to_server(&self) -> Result<(Connection, SocketAddr)> {
         let quinn_config = self.config.quinn_client_config()?;
 
         let (host_part, _port) =
@@ -171,7 +172,7 @@ impl QuincyClient {
 
         info!("Connection established: {}", self.config.connection_string);
 
-        Ok(connection)
+        Ok((connection, server_addr))
     }
 
     /// Creates a Quinn endpoint.

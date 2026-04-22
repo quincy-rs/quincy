@@ -1,7 +1,7 @@
 use bytes::{BufMut, Bytes, BytesMut};
 use etherparse::PacketBuilder;
 use ipnet::IpNet;
-use quincy::network::{interface::InterfaceIO, packet::Packet};
+use quincy::network::{interface::InterfaceIO, packet::Packet, route::InstalledExclusionRoute};
 use std::any::TypeId;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -98,8 +98,6 @@ impl<T: 'static + Send + Sync> InterfaceIO for TestInterface<T> {
         _mtu: u16,
         _tunnel_gateway: Option<IpAddr>,
         _interface_name: Option<&str>,
-        _routes: Option<&[IpNet]>,
-        _dns_servers: Option<&[IpAddr]>,
     ) -> quincy::Result<Self> {
         let (tx, rx) = CHANNEL_REGISTRY.with(|registry| {
             registry
@@ -111,17 +109,16 @@ impl<T: 'static + Send + Sync> InterfaceIO for TestInterface<T> {
     }
 
     /// No-op for test interfaces.
-    fn configure_routes(&self, _routes: &[IpNet]) -> quincy::Result<()> {
-        Ok(())
+    fn configure_routes(
+        &self,
+        _routes: &[IpNet],
+        _remote_address: Option<IpAddr>,
+    ) -> quincy::Result<Option<InstalledExclusionRoute>> {
+        Ok(None)
     }
 
     /// No-op for test interfaces.
     fn configure_dns(&self, _dns_servers: &[IpAddr]) -> quincy::Result<()> {
-        Ok(())
-    }
-
-    /// No-op for test interfaces.
-    fn cleanup_routes(&self, _routes: &[IpNet]) -> quincy::Result<()> {
         Ok(())
     }
 
