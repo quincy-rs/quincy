@@ -276,7 +276,8 @@ fn reader_task(
                 .await
                 .inspect_err(|e| error!("failed to receive packet: {}", e))?;
 
-            let packet = packet_buf.split_to(size).into();
+            packet_buf.truncate(size);
+            let packet = packet_buf.into();
 
             if reader_channel_tx.is_closed() {
                 break;
@@ -330,7 +331,6 @@ fn reader_task(
     reader_channel_tx: Sender<Packet>,
     mtu: usize,
 ) -> JoinHandle<Result<()>> {
-    use std::io::ErrorKind;
     use std::iter;
     use tun_rs::{IDEAL_BATCH_SIZE, VIRTIO_NET_HDR_LEN};
 
@@ -339,14 +339,18 @@ fn reader_task(
     let mut original_buffer = [0; VIRTIO_NET_HDR_LEN + u16::MAX as usize];
     let mut sizes = vec![0; batch_size];
 
+    // Allocate bufs once — only consumed entries are replaced each iteration
+    let mut bufs = iter::repeat_with(|| unsafe {
+        // SAFETY: the data is written to before it resized and read
+        uninitialized_bytes_mut(mtu)
+    })
+    .take(batch_size)
+    .collect::<Vec<_>>();
+
     tokio::spawn(async move {
         loop {
-            let mut bufs = iter::repeat_with(|| unsafe {
-                // SAFETY: the data is written to before it resized and read
-                uninitialized_bytes_mut(mtu)
-            })
-            .take(batch_size)
-            .collect::<Vec<_>>();
+            // Reset sizes to prevent stale values from being used on error
+            sizes.fill(0);
 
             let num_packets = interface
                 .recv_multiple(&mut original_buffer, &mut bufs, &mut sizes, 0)
@@ -354,7 +358,9 @@ fn reader_task(
 
             let num_packets = match num_packets {
                 Ok(num_packets) => Ok(num_packets),
-                Err(e) if e.kind() == ErrorKind::Other => Ok(batch_size),
+                // gso_split returns ErrTooManySegments after all batch_size output
+                // slots have been filled — the first batch_size segments are valid.
+                Err(e) if e.to_string() == "ErrTooManySegments" => Ok(batch_size),
                 Err(e) => Err(e),
             }
             .inspect_err(|e| error!("failed to receive packets from interface: {e}"))?;
@@ -365,7 +371,16 @@ fn reader_task(
 
             for idx in 0..num_packets {
                 let size = sizes[idx];
-                let packet = bufs[idx].split_to(size).into();
+
+                // Swap out the consumed buf with a fresh allocation;
+                // bufs beyond num_packets are untouched by recv_multiple and reused as-is.
+                let mut buf = std::mem::replace(&mut bufs[idx], unsafe {
+                    // SAFETY: the data is written to before it resized and read
+                    uninitialized_bytes_mut(mtu)
+                });
+
+                buf.truncate(size);
+                let packet: Packet = buf.into();
 
                 let send_res = reader_channel_tx.send(packet).await;
 
@@ -396,9 +411,16 @@ fn writer_task(
     let mut send_buf = BytesMut::with_capacity(send_buf_size);
 
     tokio::spawn(async move {
+        let mut packet_buf: Vec<Packet> = Vec::with_capacity(batch_size);
+        let mut send_bufs: Vec<BytesMut> = Vec::with_capacity(batch_size);
+
         loop {
+            // Release previous send_bufs to free refcounts before reserving
+            send_bufs.clear();
+            packet_buf.clear();
+
+            // Reserve capacity for batch_size packets in send_buf
             send_buf.reserve(send_buf_size);
-            let mut packet_buf = Vec::with_capacity(batch_size);
 
             let num_packets = writer_channel_rx
                 .recv_many(&mut packet_buf, batch_size)
@@ -408,14 +430,11 @@ fn writer_task(
                 break;
             }
 
-            let mut send_bufs = packet_buf
-                .into_iter()
-                .map(|packet| {
-                    send_buf.resize(VIRTIO_NET_HDR_LEN, 0);
-                    send_buf.extend_from_slice(&packet);
-                    send_buf.split()
-                })
-                .collect::<Vec<_>>();
+            for packet in packet_buf.drain(..) {
+                send_buf.resize(VIRTIO_NET_HDR_LEN, 0);
+                send_buf.extend_from_slice(&packet);
+                send_bufs.push(send_buf.split());
+            }
 
             interface
                 .send_multiple(&mut gro_table, &mut send_bufs, VIRTIO_NET_HDR_LEN)
