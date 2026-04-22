@@ -267,7 +267,8 @@ fn reader_task(
     tokio::spawn(async move {
         loop {
             let mut packet_buf = unsafe {
-                // SAFETY: the data is written to before it resized and read
+                // SAFETY: recv writes packet data into this buffer before any
+                // read-like use of the bytes, including truncate/into on the consumed buf.
                 uninitialized_bytes_mut(mtu)
             };
 
@@ -372,10 +373,16 @@ fn reader_task(
             for idx in 0..num_packets {
                 let size = sizes[idx];
 
+                if size > mtu {
+                    error!("packet size from TUN offload {size} B exceeds MTU {mtu} B");
+                    continue;
+                }
+
                 // Swap out the consumed buf with a fresh allocation;
                 // bufs beyond num_packets are untouched by recv_multiple and reused as-is.
                 let mut buf = std::mem::replace(&mut bufs[idx], unsafe {
-                    // SAFETY: the data is written to before it resized and read
+                    // SAFETY: recv_multiple writes packet data into this buffer before any
+                    // read-like use of the bytes, including truncate/into on the consumed buf.
                     uninitialized_bytes_mut(mtu)
                 });
 
