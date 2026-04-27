@@ -1,7 +1,7 @@
+use crate::Result;
 use crate::error::RouteError;
 use crate::network::route::{InstalledExclusionRoute, NextHop};
 use crate::utils::command::run_command;
-use crate::Result;
 use ipnet::IpNet;
 use serde::Deserialize;
 use std::net::IpAddr;

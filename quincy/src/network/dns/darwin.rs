@@ -1,6 +1,6 @@
+use crate::Result;
 use crate::error::DnsError;
 use crate::utils::command::run_command;
-use crate::Result;
 use dashmap::DashMap;
 use std::net::IpAddr;
 use std::str::FromStr;

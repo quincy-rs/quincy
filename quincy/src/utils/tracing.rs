@@ -1,6 +1,6 @@
 use tracing::Subscriber;
-use tracing_subscriber::fmt::SubscriberBuilder;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt::SubscriberBuilder;
 
 /// Returns a new `tracing` subscriber with the specified log level.
 ///

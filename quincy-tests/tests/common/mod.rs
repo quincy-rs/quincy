@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 pub type TestSender = Arc<Mutex<UnboundedSender<Bytes>>>;
 pub type TestReceiver = Arc<Mutex<UnboundedReceiver<Bytes>>>;

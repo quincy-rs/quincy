@@ -1,5 +1,5 @@
-use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use futures::stream::FuturesUnordered;
 use tokio::task::JoinHandle;
 
 use crate::error::Result;

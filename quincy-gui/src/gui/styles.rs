@@ -1,7 +1,7 @@
 use iced::widget::button::{self, Status, Style as ButtonStyle};
 use iced::widget::container;
 use iced::widget::text_input::{self, Style as TextInputStyle};
-use iced::{border, Background, Border, Color, Shadow, Theme, Vector};
+use iced::{Background, Border, Color, Shadow, Theme, Vector, border};
 
 /// Typography scale for consistent font sizes across the application.
 pub struct Typography;

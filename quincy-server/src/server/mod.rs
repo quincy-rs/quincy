@@ -14,18 +14,19 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use dashmap::DashMap;
-use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use futures::stream::FuturesUnordered;
 use quinn::{Endpoint, VarInt};
 use tokio::signal;
 use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tracing::{debug, info, warn};
 
 use crate::server::address_pool::AddressPoolManager;
 use crate::server::connection::{Assigned, QuincyConnection};
 use crate::server::session::{ConnectionSession, UserSessionRegistry};
 use crate::users::UsersFile;
+use quincy::Result;
 use quincy::config::{
     AddressRange, AllowedNoiseKeys, NoiseKeyExchange, ServerConfig, ServerProtocolConfig,
 };
@@ -34,7 +35,6 @@ use quincy::network::interface::{ActiveInterface, Interface, InterfaceIO};
 use quincy::network::packet::Packet;
 use quincy::network::socket::bind_socket;
 use quincy::utils::tasks::abort_all;
-use quincy::Result;
 
 /// Map of connection addresses to their TX channel.
 type ConnectionQueues = Arc<DashMap<IpAddr, Sender<Bytes>>>;

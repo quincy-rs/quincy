@@ -397,10 +397,6 @@ pub enum RouteError {
     #[error("Platform routing error: {message}")]
     PlatformError { message: String },
 
-    /// Route-to-server lookup failed to find a next-hop
-    #[error("No route to server: could not determine next-hop gateway")]
-    GatewayNotFound,
-
     /// An exclusion route is required but could not be installed, and the
     /// configured routes would cover the VPN server address (routing loop risk)
     #[error("Exclusion route required for server {server} but could not be installed")]

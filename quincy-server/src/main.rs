@@ -2,10 +2,10 @@ use std::path::PathBuf;
 use std::process::exit;
 
 use clap::Parser;
+use quincy::Result;
 use quincy::config::{FromPath, ServerConfig};
 use quincy::network::interface::tun_rs::TunRsInterface;
 use quincy::utils::tracing::log_subscriber;
-use quincy::Result;
 use quincy_server::server::QuincyServer;
 use tracing::error;
 

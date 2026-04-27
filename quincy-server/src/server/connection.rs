@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use futures::stream::FuturesUnordered;
 use governor::Jitter;
 use ipnet::IpNet;
 use quinn::Connection;

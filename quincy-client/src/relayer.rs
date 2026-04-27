@@ -1,5 +1,5 @@
-use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use futures::stream::FuturesUnordered;
 use quincy::network::interface::{ActiveInterface, Interface, InterfaceIO};
 use quincy::utils::tasks::abort_all;
 use quincy::{QuincyError, Result};

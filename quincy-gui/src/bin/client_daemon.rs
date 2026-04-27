@@ -10,7 +10,7 @@ use quincy_gui::ipc::{ClientStatus, ConnectionMetrics, ConnectionStatus, IpcClie
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{broadcast, oneshot, Mutex};
+use tokio::sync::{Mutex, broadcast, oneshot};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;

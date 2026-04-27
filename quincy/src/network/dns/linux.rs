@@ -1,6 +1,6 @@
+use crate::Result;
 use crate::error::DnsError;
 use crate::utils::command::run_command;
-use crate::Result;
 use std::io::Write;
 use std::net::IpAddr;
 
