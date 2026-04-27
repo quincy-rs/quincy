@@ -6,13 +6,8 @@ use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::LazyLock;
 
-/// Absolute path to the macOS `networksetup` utility.
-///
-/// Hard-coded to avoid `PATH`-based resolution: DNS configuration runs
-/// under elevated privileges and must not be influenced by a caller-supplied
-/// or inherited `PATH`.  `/usr/sbin/networksetup` is the fixed system
-/// location on every supported macOS release.
-const NETWORK_SETUP_COMMAND: &str = "/usr/sbin/networksetup";
+/// Command name for the macOS `networksetup` utility.
+const NETWORK_SETUP_COMMAND: &str = "networksetup";
 const DNS_GET_ARG: &str = "-getdnsservers";
 const DNS_SET_ARG: &str = "-setdnsservers";
 const SERVICES_GET_ARG: &str = "-listallnetworkservices";

@@ -9,14 +9,8 @@ use std::process::Output;
 use std::str::FromStr;
 use tracing::warn;
 
-/// Absolute path to Windows PowerShell.
-///
-/// Hard-coded to avoid `PATH`-based resolution: the callers run with
-/// administrative privileges during route installation and must not be
-/// influenced by a caller-supplied or inherited `PATH`.  Windows PowerShell
-/// 5.1 ships with every supported Windows version at this fixed location
-/// under `%SystemRoot%` and is not relocatable.
-const POWERSHELL_COMMAND: &str = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+/// Command name for Windows PowerShell.
+const POWERSHELL_COMMAND: &str = "powershell.exe";
 
 /// Adds a list of routes to the routing table, optionally installing an
 /// exclusion host-route for the VPN server first.
@@ -183,10 +177,14 @@ fn escape_ps_single_quoted(value: &str) -> String {
 
 /// Resolves a Windows network adapter name to its interface index.
 ///
-/// Runs `Get-NetAdapter -Name '<name>'` and extracts the `ifIndex` property.
+/// Runs `Get-NetAdapter -Name '<name>' -ErrorAction Stop` and extracts the
+/// `ifIndex` property.
 fn resolve_interface_index(interface_name: &str) -> Result<u32> {
     let safe_name = escape_ps_single_quoted(interface_name);
-    let ps_script = format!("(Get-NetAdapter -Name '{}').ifIndex", safe_name);
+    let ps_script = format!(
+        "$ErrorActionPreference = 'Stop'; (Get-NetAdapter -Name '{}' -ErrorAction Stop).ifIndex",
+        safe_name
+    );
     let args = vec!["-NoProfile", "-NonInteractive", "-Command", &ps_script];
 
     let output = run_command(POWERSHELL_COMMAND, &args)
@@ -1311,8 +1309,14 @@ mod tests {
             // Verify the composed script uses the escaped name, not the raw input.
             let name = "Adapter'Foo";
             let safe = escape_ps_single_quoted(name);
-            let script = format!("(Get-NetAdapter -Name '{}').ifIndex", safe);
-            assert_eq!(script, "(Get-NetAdapter -Name 'Adapter''Foo').ifIndex");
+            let script = format!(
+                "$ErrorActionPreference = 'Stop'; (Get-NetAdapter -Name '{}' -ErrorAction Stop).ifIndex",
+                safe
+            );
+            assert_eq!(
+                script,
+                "$ErrorActionPreference = 'Stop'; (Get-NetAdapter -Name 'Adapter''Foo' -ErrorAction Stop).ifIndex"
+            );
         }
 
         #[test]

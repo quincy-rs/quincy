@@ -4,15 +4,8 @@ use crate::utils::command::run_command;
 use std::io::Write;
 use std::net::IpAddr;
 
-/// Absolute path to the `resolvconf` utility.
-///
-/// Hard-coded to avoid `PATH`-based resolution: this runs during tunnel
-/// setup under elevated privileges and must not be influenced by a
-/// caller-supplied or inherited `PATH`.  `/sbin/resolvconf` is the standard
-/// install location on Debian/Ubuntu (the primary distributions shipping
-/// this helper); on systems where `/sbin` is a symlink into `/usr/sbin`,
-/// the path still resolves transparently.
-const RESOLVCONF_COMMAND: &str = "/sbin/resolvconf";
+/// Command name for the `resolvconf` utility.
+const RESOLVCONF_COMMAND: &str = "resolvconf";
 
 /// Adds a list of DNS servers to the given interface.
 ///

@@ -8,22 +8,13 @@ use std::process::Output;
 use std::str::FromStr;
 use tracing::warn;
 
-/// Absolute path to the Linux `ip` utility.
-///
-/// Hard-coded to avoid `PATH`-based resolution: the callers run as root
-/// during route installation and must not be influenced by a caller-supplied
-/// or inherited `PATH`.  `/sbin/ip` is the canonical iproute2 location on
-/// every supported distribution; on systems that have merged `/sbin` into
-/// `/usr/sbin`, `/sbin` is a symlink and the path resolves transparently.
+/// Command name for the Linux `ip` utility.
 #[cfg(target_os = "linux")]
-const IP_COMMAND: &str = "/sbin/ip";
+const IP_COMMAND: &str = "ip";
 
-/// Absolute path to the `route` utility.
-///
-/// Hard-coded to avoid `PATH`-based resolution.  `/sbin/route` is the
-/// canonical location on Linux (net-tools), macOS, and FreeBSD.
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
-const ROUTE_COMMAND: &str = "/sbin/route";
+/// Command name for the BSD `route` utility.
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+const ROUTE_COMMAND: &str = "route";
 
 /// Adds a list of routes to the routing table, optionally installing an
 /// exclusion host-route for the VPN server first.
@@ -220,27 +211,21 @@ fn add_route(network: &IpNet, gateway: &IpAddr) -> Result<()> {
 /// immediately auditable at the call site.
 #[cfg(target_os = "linux")]
 fn user_route_add_args(network: &IpNet, gateway: &IpAddr) -> Vec<String> {
-    match network {
-        IpNet::V4(_) => vec![
-            ROUTE_COMMAND.to_string(),
-            "add".to_string(),
-            "-net".to_string(),
-            network.addr().to_string(),
-            "netmask".to_string(),
-            network.netmask().to_string(),
-            "gw".to_string(),
-            gateway.to_string(),
-        ],
-        IpNet::V6(_) => vec![
-            ROUTE_COMMAND.to_string(),
-            "-A".to_string(),
-            "inet6".to_string(),
-            "add".to_string(),
-            format!("{}/{}", network.addr(), network.prefix_len()),
-            "gw".to_string(),
-            gateway.to_string(),
-        ],
+    let prefix = format!("{}/{}", network.addr(), network.prefix_len());
+    let mut args = vec![IP_COMMAND.to_string()];
+
+    if matches!(network, IpNet::V6(_)) {
+        args.push("-6".to_string());
     }
+
+    args.extend([
+        "route".to_string(),
+        "add".to_string(),
+        prefix,
+        "via".to_string(),
+        gateway.to_string(),
+    ]);
+    args
 }
 
 /// Builds the argv for a user-route add command on macOS.
@@ -2021,13 +2006,11 @@ destination: default
             assert_eq!(
                 args,
                 [
-                    ROUTE_COMMAND,
+                    IP_COMMAND,
+                    "route",
                     "add",
-                    "-net",
-                    "10.0.0.0",
-                    "netmask",
-                    "255.255.255.0",
-                    "gw",
+                    "10.0.0.0/24",
+                    "via",
                     "192.168.1.1"
                 ]
             );
@@ -2041,12 +2024,12 @@ destination: default
             assert_eq!(
                 args,
                 [
-                    ROUTE_COMMAND,
-                    "-A",
-                    "inet6",
+                    IP_COMMAND,
+                    "-6",
+                    "route",
                     "add",
                     "2001:db8::/32",
-                    "gw",
+                    "via",
                     "2001:db8::1"
                 ]
             );
