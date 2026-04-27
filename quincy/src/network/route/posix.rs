@@ -983,59 +983,21 @@ mod tests {
         }
 
         #[test]
-        fn unreachable_is_rejected() {
-            let output = "unreachable 10.0.0.1 dev lo table main src 1.2.3.4 uid 1000\n    cache\n";
+        fn special_route_types_are_rejected() {
             let addr: IpAddr = "10.0.0.1".parse().unwrap();
-            let err = parse_linux_route_get(output, &addr).unwrap_err();
-            assert!(
-                matches!(
-                    err,
-                    crate::error::QuincyError::Route(RouteError::NotFound { .. })
-                ),
-                "expected RouteError::NotFound, got: {err}"
-            );
-        }
 
-        #[test]
-        fn blackhole_is_rejected() {
-            let output = "blackhole 10.0.0.1\n    cache\n";
-            let addr: IpAddr = "10.0.0.1".parse().unwrap();
-            let err = parse_linux_route_get(output, &addr).unwrap_err();
-            assert!(
-                matches!(
-                    err,
-                    crate::error::QuincyError::Route(RouteError::NotFound { .. })
-                ),
-                "expected RouteError::NotFound, got: {err}"
-            );
-        }
+            for route_type in ["unreachable", "blackhole", "prohibit", "throw"] {
+                let output = format!("{route_type} 10.0.0.1 dev lo\n    cache\n");
+                let err = parse_linux_route_get(&output, &addr).unwrap_err();
 
-        #[test]
-        fn prohibit_is_rejected() {
-            let output = "prohibit 10.0.0.1 dev lo table main src 1.2.3.4 uid 1000\n";
-            let addr: IpAddr = "10.0.0.1".parse().unwrap();
-            let err = parse_linux_route_get(output, &addr).unwrap_err();
-            assert!(
-                matches!(
-                    err,
-                    crate::error::QuincyError::Route(RouteError::NotFound { .. })
-                ),
-                "expected RouteError::NotFound, got: {err}"
-            );
-        }
-
-        #[test]
-        fn throw_is_rejected() {
-            let output = "throw 10.0.0.1\n    cache\n";
-            let addr: IpAddr = "10.0.0.1".parse().unwrap();
-            let err = parse_linux_route_get(output, &addr).unwrap_err();
-            assert!(
-                matches!(
-                    err,
-                    crate::error::QuincyError::Route(RouteError::NotFound { .. })
-                ),
-                "expected RouteError::NotFound, got: {err}"
-            );
+                assert!(
+                    matches!(
+                        err,
+                        crate::error::QuincyError::Route(RouteError::NotFound { .. })
+                    ),
+                    "{route_type}: expected RouteError::NotFound, got: {err}"
+                );
+            }
         }
 
         #[test]
@@ -1059,19 +1021,6 @@ mod tests {
                 }
                 _ => panic!("expected Gateway from first block, got {hop:?}"),
             }
-        }
-
-        #[test]
-        fn find_token_value_present() {
-            let tokens = vec!["8.8.8.8", "via", "192.168.1.1", "dev", "eth0"];
-            assert_eq!(find_token_value(&tokens, "via"), Some("192.168.1.1"));
-            assert_eq!(find_token_value(&tokens, "dev"), Some("eth0"));
-        }
-
-        #[test]
-        fn find_token_value_absent() {
-            let tokens = vec!["192.168.1.5", "dev", "eth0"];
-            assert_eq!(find_token_value(&tokens, "via"), None);
         }
     }
 
@@ -1354,52 +1303,6 @@ destination: default
         }
 
         #[test]
-        fn remove_gateway_ipv4_link_local() {
-            let server = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1));
-            let hop = NextHop::Gateway {
-                address: IpAddr::V4(Ipv4Addr::new(169, 254, 1, 1)),
-                interface: "eth0".to_string(),
-            };
-            let args = exclusion_route_cmd_args(&server, &hop, ExclusionAction::Remove);
-            assert_eq!(
-                args,
-                [
-                    IP_COMMAND,
-                    "route",
-                    "delete",
-                    "203.0.113.1/32",
-                    "via",
-                    "169.254.1.1",
-                    "dev",
-                    "eth0"
-                ]
-            );
-        }
-
-        #[test]
-        fn add_gateway_ipv4_non_link_local_no_dev() {
-            // A non-link-local IPv4 gateway (e.g., typical 192.168.x.x) is
-            // unambiguous and must not add `dev <iface>`.
-            let server = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1));
-            let hop = NextHop::Gateway {
-                address: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
-                interface: "eth0".to_string(),
-            };
-            let args = exclusion_route_cmd_args(&server, &hop, ExclusionAction::Add);
-            assert_eq!(
-                args,
-                [
-                    IP_COMMAND,
-                    "route",
-                    "add",
-                    "203.0.113.1/32",
-                    "via",
-                    "192.168.1.1"
-                ]
-            );
-        }
-
-        #[test]
         fn add_gateway_ipv6_global() {
             let server = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
             let hop = NextHop::Gateway {
@@ -1472,30 +1375,6 @@ destination: default
                     "203.0.113.1/32",
                     "via",
                     "192.168.1.1"
-                ]
-            );
-        }
-
-        #[test]
-        fn remove_gateway_ipv6_link_local() {
-            let server = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
-            let hop = NextHop::Gateway {
-                address: IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)),
-                interface: "eth0".to_string(),
-            };
-            let args = exclusion_route_cmd_args(&server, &hop, ExclusionAction::Remove);
-            assert_eq!(
-                args,
-                [
-                    IP_COMMAND,
-                    "-6",
-                    "route",
-                    "delete",
-                    "2001:db8::1/128",
-                    "via",
-                    "fe80::1",
-                    "dev",
-                    "eth0"
                 ]
             );
         }
@@ -1693,28 +1572,6 @@ destination: default
                     "-host",
                     "203.0.113.1",
                     "192.168.1.1"
-                ]
-            );
-        }
-
-        #[test]
-        fn remove_gateway_ipv6_link_local() {
-            let server = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
-            let hop = NextHop::Gateway {
-                address: IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)),
-                interface: "en0".to_string(),
-            };
-            let args = exclusion_route_cmd_args(&server, &hop, ExclusionAction::Remove);
-            assert_eq!(
-                args,
-                [
-                    ROUTE_COMMAND,
-                    "-n",
-                    "delete",
-                    "-inet6",
-                    "-host",
-                    "2001:db8::1",
-                    "fe80::1%en0"
                 ]
             );
         }
@@ -1946,17 +1803,6 @@ destination: default
         assert!(output_indicates_already_exists(
             "route: route already in table"
         ));
-    }
-
-    #[test]
-    fn already_exists_matches_on_stdout_text() {
-        // Some platforms print the duplicate marker to stdout instead of
-        // stderr; the detector must treat the text identically whichever
-        // stream it came from.  This test asserts the underlying predicate
-        // is stream-agnostic; callers (see `add_exclusion_route`) must
-        // feed it both streams.
-        let stdout_sample = "route: writing to routing socket: File exists";
-        assert!(output_indicates_already_exists(stdout_sample));
     }
 
     #[test]

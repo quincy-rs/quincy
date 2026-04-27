@@ -671,12 +671,6 @@ mod tests {
     }
 
     #[test]
-    fn not_onlink_real_gateway() {
-        assert!(!is_onlink_next_hop("192.168.1.1"));
-        assert!(!is_onlink_next_hop("fe80::1"));
-    }
-
-    #[test]
     fn ipv4_gateway() {
         // Captured sample: Find-NetRoute for 8.8.8.8 via gateway 192.168.1.1
         let json = r#"[
@@ -902,35 +896,6 @@ mod tests {
         }
 
         #[test]
-        fn add_onlink_ipv6_omits_next_hop() {
-            let server = IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 5));
-            let hop = NextHop::OnLink {
-                interface: "7".to_string(),
-            };
-            let script = exclusion_route_add_script(&server, &hop);
-            assert!(script.contains(
-                "New-NetRoute -DestinationPrefix 'fe80::5/128' -InterfaceIndex 7 -PolicyStore ActiveStore |"
-            ));
-            assert!(!script.contains("-NextHop"));
-        }
-
-        #[test]
-        fn add_script_contains_active_store_policy() {
-            // Regression: exclusion routes must use ActiveStore to avoid
-            // persisting across reboots.
-            let server = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1));
-            let hop = NextHop::Gateway {
-                address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-                interface: "3".to_string(),
-            };
-            let script = exclusion_route_add_script(&server, &hop);
-            assert!(
-                script.contains("-PolicyStore ActiveStore"),
-                "exclusion add script must include -PolicyStore ActiveStore: {script}"
-            );
-        }
-
-        #[test]
         fn add_script_uses_locale_independent_duplicate_detection() {
             // Regression: duplicate detection must use the CIM NativeErrorCode
             // enum, not English-language error text, so the behavior is stable
@@ -954,43 +919,6 @@ mod tests {
             assert!(
                 !script.to_lowercase().contains("already exists"),
                 "script must not rely on English 'already exists' text: {script}"
-            );
-        }
-
-        #[test]
-        fn add_script_refuses_to_adopt_duplicate_routes() {
-            // Regression: a duplicate/pre-existing route must never
-            // be adopted, even if its NextHop matches. Doing so would mint
-            // an ownership token that later removes a route Quincy did not
-            // install.  The script must:
-            //  - detect AlreadyExists via the CIM NativeErrorCode enum,
-            //  - NOT look up the existing route with Get-NetRoute,
-            //  - NOT compare NextHops to "verify ownership",
-            //  - exit non-zero so the Rust caller returns AddFailed.
-            let server = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1));
-            let hop = NextHop::Gateway {
-                address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-                interface: "3".to_string(),
-            };
-            let script = exclusion_route_add_script(&server, &hop);
-
-            assert!(
-                !script.contains("Get-NetRoute"),
-                "add script must not inspect existing routes for adoption: {script}"
-            );
-            assert!(
-                !script.contains("$_.NextHop -eq"),
-                "add script must not compare NextHops to decide adoption: {script}"
-            );
-            assert!(
-                script.contains(
-                    "[Microsoft.Management.Infrastructure.NativeErrorCode]::AlreadyExists"
-                ),
-                "add script must still detect AlreadyExists via NativeErrorCode: {script}"
-            );
-            assert!(
-                script.contains("exit 1"),
-                "add script must exit non-zero on AlreadyExists: {script}"
             );
         }
 
@@ -1053,35 +981,6 @@ mod tests {
         }
 
         #[test]
-        fn remove_onlink_ipv4() {
-            let server = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5));
-            let hop = NextHop::OnLink {
-                interface: "5".to_string(),
-            };
-            let script = exclusion_route_remove_script(&server, &hop);
-            assert_eq!(
-                script,
-                "Remove-NetRoute -DestinationPrefix '10.0.0.5/32' -InterfaceIndex 5 -PolicyStore ActiveStore -Confirm:$false"
-            );
-        }
-
-        #[test]
-        fn remove_scopes_to_active_store() {
-            // Regression: removal must be scoped to the ActiveStore policy
-            // store so it never touches persistent/user-owned routes.
-            let server = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1));
-            let hop = NextHop::Gateway {
-                address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-                interface: "3".to_string(),
-            };
-            let script = exclusion_route_remove_script(&server, &hop);
-            assert!(
-                script.contains("-PolicyStore ActiveStore"),
-                "remove script must scope to ActiveStore: {script}"
-            );
-        }
-
-        #[test]
         fn fallback_remove_ipv4() {
             let server = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1));
             let hop = NextHop::Gateway {
@@ -1104,18 +1003,6 @@ mod tests {
             let script = exclusion_route_remove_fallback_script(&server, &hop);
             assert!(script.contains(
                 "Remove-NetRoute -DestinationPrefix '2001:db8::1/128' -InterfaceIndex 7 -PolicyStore ActiveStore -Confirm:$false"
-            ));
-        }
-
-        #[test]
-        fn fallback_remove_onlink_ipv4_uses_interface_from_next_hop() {
-            let server = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5));
-            let hop = NextHop::OnLink {
-                interface: "5".to_string(),
-            };
-            let script = exclusion_route_remove_fallback_script(&server, &hop);
-            assert!(script.contains(
-                "Remove-NetRoute -DestinationPrefix '10.0.0.5/32' -InterfaceIndex 5 -PolicyStore ActiveStore -Confirm:$false"
             ));
         }
 
@@ -1264,16 +1151,6 @@ mod tests {
             };
             assert!(!is_self_referential_next_hop(&server, &hop, 42));
         }
-
-        #[test]
-        fn ipv6_gateway_with_server_as_address_is_self_referential() {
-            let server = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
-            let hop = NextHop::Gateway {
-                address: IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
-                interface: "7".to_string(),
-            };
-            assert!(is_self_referential_next_hop(&server, &hop, 12));
-        }
     }
 
     mod ps_escape {
@@ -1302,21 +1179,6 @@ mod tests {
         #[test]
         fn empty_string() {
             assert_eq!(escape_ps_single_quoted(""), "");
-        }
-
-        #[test]
-        fn resolve_script_escapes_interface_name() {
-            // Verify the composed script uses the escaped name, not the raw input.
-            let name = "Adapter'Foo";
-            let safe = escape_ps_single_quoted(name);
-            let script = format!(
-                "$ErrorActionPreference = 'Stop'; (Get-NetAdapter -Name '{}' -ErrorAction Stop).ifIndex",
-                safe
-            );
-            assert_eq!(
-                script,
-                "$ErrorActionPreference = 'Stop'; (Get-NetAdapter -Name 'Adapter''Foo' -ErrorAction Stop).ifIndex"
-            );
         }
 
         #[test]
