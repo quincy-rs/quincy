@@ -9,27 +9,27 @@ use crate::constants::{
     QUIC_MTU_OVERHEAD, TLS_ALPN_PROTOCOLS, TLS_INITIAL_CIPHER_SUITE, TLS_PROTOCOL_VERSIONS,
 };
 use crate::error::{ConfigError, NoiseError, Result};
-use base64::{prelude::*, DecodeSliceError};
+use base64::{DecodeSliceError, prelude::*};
 use figment::{
-    providers::{Env, Format, Toml},
     Figment,
+    providers::{Env, Format, Toml},
 };
 use ipnet::{IpAddrRange, IpNet, Ipv4AddrRange, Ipv6AddrRange};
 use quinn::{
-    crypto::rustls::{QuicClientConfig, QuicServerConfig},
     EndpointConfig, TransportConfig,
+    crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
 use reishi_quinn::{
-    noise_handshake_token_key, noise_hmac_key, KeyPair, NoiseConfigBuilder, PqKeyPair,
-    PqNoiseConfigBuilder, PqPublicKey, PqStaticSecret, PublicKey, StaticSecret,
-    REISHI_PQ_V1_QUIC_V1, REISHI_V1_QUIC_V1,
+    KeyPair, NoiseConfigBuilder, PqKeyPair, PqNoiseConfigBuilder, PqPublicKey, PqStaticSecret,
+    PublicKey, REISHI_PQ_V1_QUIC_V1, REISHI_V1_QUIC_V1, StaticSecret, noise_handshake_token_key,
+    noise_hmac_key,
 };
 use rustls::crypto::aws_lc_rs::kx_group::{MLKEM768, X25519MLKEM768};
-use rustls::crypto::{aws_lc_rs, CryptoProvider};
+use rustls::crypto::{CryptoProvider, aws_lc_rs};
 use rustls::{CipherSuite, RootCertStore};
 use secrecy::{ExposeSecret, SecretString};
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

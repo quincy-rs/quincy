@@ -1,9 +1,10 @@
+use crate::Result;
 use crate::error::DnsError;
 use crate::utils::command::run_command;
-use crate::Result;
 use std::io::Write;
 use std::net::IpAddr;
 
+/// Command name for the `resolvconf` utility.
 const RESOLVCONF_COMMAND: &str = "resolvconf";
 
 /// Adds a list of DNS servers to the given interface.

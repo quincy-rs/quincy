@@ -1,8 +1,8 @@
 use std::sync::{Arc, LazyLock};
 
 use quinn::Runtime;
-use rustls::crypto::aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256;
 use rustls::SupportedCipherSuite;
+use rustls::crypto::aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256;
 
 /// Represents the maximum MTU overhead for QUIC, since the QUIC header is variable in size.
 pub const QUIC_MTU_OVERHEAD: u16 = 50;

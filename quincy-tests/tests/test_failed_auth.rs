@@ -1,6 +1,6 @@
 mod common;
 
-use common::{setup_interface, TestInterface};
+use common::{TestInterface, setup_interface};
 use quincy::config::{ClientConfig, ClientProtocolConfig, FromPath, ServerConfig};
 use quincy_client::client::QuincyClient;
 use quincy_server::server::QuincyServer;

@@ -3,7 +3,7 @@
 use clap::Parser;
 use iced::application;
 use quincy::{QuincyError, Result};
-use quincy_gui::gui::{expand_path, QuincyGui};
+use quincy_gui::gui::{QuincyGui, expand_path};
 use std::path::PathBuf;
 use tracing::info;
 use tracing_subscriber::EnvFilter;

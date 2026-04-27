@@ -1,6 +1,6 @@
-use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use quincy::network::interface::{Interface, InterfaceIO};
+use futures::stream::FuturesUnordered;
+use quincy::network::interface::{ActiveInterface, Interface, InterfaceIO};
 use quincy::utils::tasks::abort_all;
 use quincy::{QuincyError, Result};
 use quinn::{Connection, VarInt};
@@ -21,10 +21,11 @@ impl ClientRelayer {
     /// the TUN interface and the QUIC connection.
     pub fn start(interface: Interface<impl InterfaceIO>, connection: Connection) -> Result<Self> {
         let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
-        let interface = Arc::new(interface);
+        let active = interface.configure()?;
+        let active = Arc::new(active);
 
         let relayer_task = tokio::spawn(Self::relay_packets(
-            interface.clone(),
+            active.clone(),
             connection.clone(),
             shutdown_rx,
         ));
@@ -62,9 +63,9 @@ impl ClientRelayer {
     ///
     /// ### Arguments
     /// - `connection` - a Quinn connection representing the connection to the Quincy server
-    /// - `interface` - the TUN interface
+    /// - `interface` - the active TUN interface
     async fn relay_packets(
-        interface: Arc<Interface<impl InterfaceIO>>,
+        interface: Arc<ActiveInterface<impl InterfaceIO>>,
         connection: Connection,
         mut shutdown_rx: broadcast::Receiver<()>,
     ) -> Result<()> {
@@ -80,8 +81,6 @@ impl ClientRelayer {
                 interface.clone(),
             )),
         ]);
-
-        interface.configure()?;
 
         let result = tokio::select! {
             Some(task_result) = tasks.next() => task_result?,
@@ -111,7 +110,7 @@ impl ClientRelayer {
     /// - `interface` - TUN interface
     async fn process_outgoing_traffic(
         connection: Connection,
-        interface: Arc<Interface<impl InterfaceIO>>,
+        interface: Arc<ActiveInterface<impl InterfaceIO>>,
     ) -> Result<()> {
         debug!("Started outgoing traffic task (interface -> QUIC tunnel)");
 
@@ -133,7 +132,7 @@ impl ClientRelayer {
     /// - `interface` - TUN interface
     async fn process_inbound_traffic(
         connection: Connection,
-        interface: Arc<Interface<impl InterfaceIO>>,
+        interface: Arc<ActiveInterface<impl InterfaceIO>>,
     ) -> Result<()> {
         debug!("Started inbound traffic task (QUIC tunnel -> interface)");
 

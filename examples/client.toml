@@ -19,6 +19,10 @@ client_certificate_key_file = "examples/cert/client_key.pem"
 mtu = 1400
 
 [network]
+# Routes to send through the VPN tunnel.
+# Use "0.0.0.0/0" (and/or "::/0") for full-tunnel mode to route all traffic
+# through the VPN. When a default route is configured, an exclusion route for
+# the server endpoint is installed automatically to prevent routing loops.
 routes = [
     "10.0.1.0/24",
     "10.11.12.0/24"

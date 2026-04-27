@@ -1,5 +1,5 @@
-use iced::widget::text_editor;
 use iced::Task;
+use iced::widget::text_editor;
 use quincy::config::{ClientConfig, FromPath};
 use std::fs;
 use std::path::Path;

@@ -5,7 +5,7 @@ use iced::widget::{
     button as button_widget, container as container_widget, text_input as text_input_widget,
 };
 use iced::widget::{column, opaque, row, scrollable, stack, text, text_editor};
-use iced::{border, Alignment, Background, Border, Element, Font, Length};
+use iced::{Alignment, Background, Border, Element, Font, Length, border};
 use quincy::config::ClientProtocolConfig;
 
 use super::app::QuincyGui;

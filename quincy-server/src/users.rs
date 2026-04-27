@@ -9,14 +9,14 @@ use std::net::IpAddr;
 use std::path::Path;
 
 use figment::{
-    providers::{Format, Toml},
     Figment,
+    providers::{Format, Toml},
 };
 use reishi_quinn::{PqPublicKey, PublicKey};
 use serde::Deserialize;
 use tracing::warn;
 
-use quincy::config::{decode_base64_key, AddressRange, Bandwidth};
+use quincy::config::{AddressRange, Bandwidth, decode_base64_key};
 use quincy::error::{AuthError, Result};
 
 /// A parsed users file mapping usernames to their authentication credentials.

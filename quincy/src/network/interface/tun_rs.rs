@@ -1,18 +1,19 @@
+use crate::Result;
 use crate::constants::PACKET_CHANNEL_SIZE;
 use crate::error::InterfaceError;
 use crate::network::dns::{add_dns_servers, delete_dns_servers};
 use crate::network::interface::InterfaceIO;
 use crate::network::packet::Packet;
-use crate::network::route::add_routes;
-use crate::Result;
+use crate::network::route::{InstalledExclusionRoute, add_routes};
 use bytes::BytesMut;
 use ipnet::IpNet;
 use std::net::IpAddr;
 use std::sync::Arc;
-use tokio::sync::mpsc::{Receiver, Sender};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use tun_rs::{AsyncDevice, DeviceBuilder, ToIpv4Address};
 
 pub struct TunRsInterface {
@@ -23,6 +24,7 @@ pub struct TunRsInterface {
     writer_task: JoinHandle<Result<()>>,
     mtu: u16,
     gateway: Option<IpAddr>,
+    torn_down: AtomicBool,
 }
 
 impl InterfaceIO for TunRsInterface {
@@ -31,8 +33,6 @@ impl InterfaceIO for TunRsInterface {
         mtu: u16,
         tunnel_gateway: Option<IpAddr>,
         interface_name: Option<&str>,
-        _routes: Option<&[IpNet]>,
-        _dns_servers: Option<&[IpAddr]>,
     ) -> Result<Self>
     where
         Self: Sized,
@@ -95,11 +95,16 @@ impl InterfaceIO for TunRsInterface {
             writer_task: writer_handle,
             mtu,
             gateway: tunnel_gateway,
+            torn_down: AtomicBool::new(false),
         })
     }
 
-    fn configure_routes(&self, routes: &[IpNet]) -> Result<()> {
-        add_routes(
+    fn configure_routes(
+        &self,
+        routes: &[IpNet],
+        remote_address: Option<IpAddr>,
+    ) -> Result<Option<InstalledExclusionRoute>> {
+        let exclusion_token = add_routes(
             routes,
             &self
                 .gateway
@@ -111,10 +116,11 @@ impl InterfaceIO for TunRsInterface {
                 .ok_or_else(|| InterfaceError::ConfigurationFailed {
                     reason: "Missing interface name on client".to_string(),
                 })?,
+            remote_address,
         )?;
         info!("Added routes: {routes:?}");
 
-        Ok(())
+        Ok(exclusion_token)
     }
 
     fn configure_dns(&self, dns_servers: &[IpAddr]) -> Result<()> {
@@ -132,12 +138,6 @@ impl InterfaceIO for TunRsInterface {
         Ok(())
     }
 
-    fn cleanup_routes(&self, routes: &[IpNet]) -> Result<()> {
-        info!("Cleaned up routes: {:?}", routes);
-
-        Ok(())
-    }
-
     fn cleanup_dns(&self, dns_servers: &[IpAddr]) -> Result<()> {
         delete_dns_servers()?;
 
@@ -147,21 +147,7 @@ impl InterfaceIO for TunRsInterface {
     }
 
     fn down(&self) -> Result<()> {
-        self.reader_task.abort();
-        self.writer_task.abort();
-
-        self.inner
-            .enabled(false)
-            .map_err(|e| InterfaceError::ConfigurationFailed {
-                reason: format!("failed to bring down TUN interface: {e}"),
-            })?;
-
-        info!(
-            "TUN interface {} is down",
-            self.name().unwrap_or("Unknown".to_string())
-        );
-
-        Ok(())
+        self.teardown()
     }
 
     fn mtu(&self) -> u16 {
@@ -258,6 +244,40 @@ impl InterfaceIO for TunRsInterface {
     }
 }
 
+impl TunRsInterface {
+    /// Idempotent teardown shared by `InterfaceIO::down()` and `Drop`: aborts
+    /// the I/O tasks and disables the TUN device. Subsequent calls are no-ops.
+    fn teardown(&self) -> Result<()> {
+        if self.torn_down.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+
+        self.reader_task.abort();
+        self.writer_task.abort();
+
+        self.inner
+            .enabled(false)
+            .map_err(|e| InterfaceError::ConfigurationFailed {
+                reason: format!("failed to bring down TUN interface: {e}"),
+            })?;
+
+        info!(
+            "TUN interface {} is down",
+            self.name().unwrap_or("Unknown".to_string())
+        );
+
+        Ok(())
+    }
+}
+
+impl Drop for TunRsInterface {
+    fn drop(&mut self) {
+        if let Err(e) = self.teardown() {
+            warn!("TUN teardown during drop failed: {e}");
+        }
+    }
+}
+
 #[cfg(any(not(target_os = "linux"), not(feature = "offload")))]
 fn reader_task(
     interface: Arc<AsyncDevice>,
@@ -340,7 +360,7 @@ fn reader_task(
     let mut original_buffer = [0; VIRTIO_NET_HDR_LEN + u16::MAX as usize];
     let mut sizes = vec![0; batch_size];
 
-    // Allocate bufs once — only consumed entries are replaced each iteration
+    // Allocate bufs once; only consumed entries are replaced each iteration.
     let mut bufs = iter::repeat_with(|| unsafe {
         // SAFETY: the data is written to before it resized and read
         uninitialized_bytes_mut(mtu)
@@ -360,7 +380,7 @@ fn reader_task(
             let num_packets = match num_packets {
                 Ok(num_packets) => Ok(num_packets),
                 // gso_split returns ErrTooManySegments after all batch_size output
-                // slots have been filled — the first batch_size segments are valid.
+                // slots have been filled; the first batch_size segments are valid.
                 Err(e) if e.to_string() == "ErrTooManySegments" => Ok(batch_size),
                 Err(e) => Err(e),
             }
@@ -392,7 +412,6 @@ fn reader_task(
                 let send_res = reader_channel_tx.send(packet).await;
 
                 if send_res.is_err() {
-                    // Receiver has been dropped, exit the task
                     break;
                 }
             }
@@ -422,11 +441,10 @@ fn writer_task(
         let mut send_bufs: Vec<BytesMut> = Vec::with_capacity(batch_size);
 
         loop {
-            // Release previous send_bufs to free refcounts before reserving
+            // Release previous send_bufs to free refcounts before reserving.
             send_bufs.clear();
             packet_buf.clear();
 
-            // Reserve capacity for batch_size packets in send_buf
             send_buf.reserve(send_buf_size);
 
             let num_packets = writer_channel_rx
@@ -463,7 +481,7 @@ unsafe fn uninitialized_bytes_mut(capacity: usize) -> BytesMut {
 
     // SAFETY: the data is being written to and then resized
     // so no uninitialized data is being read
-    buf.set_len(capacity);
+    unsafe { buf.set_len(capacity) };
 
     buf
 }

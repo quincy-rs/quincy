@@ -1,11 +1,12 @@
+use crate::Result;
 use crate::error::DnsError;
 use crate::utils::command::run_command;
-use crate::Result;
 use dashmap::DashMap;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::LazyLock;
 
+/// Command name for the macOS `networksetup` utility.
 const NETWORK_SETUP_COMMAND: &str = "networksetup";
 const DNS_GET_ARG: &str = "-getdnsservers";
 const DNS_SET_ARG: &str = "-setdnsservers";

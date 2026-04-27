@@ -1,5 +1,5 @@
-use crate::error::NetworkError;
 use crate::Result;
+use crate::error::NetworkError;
 use bytes::{Bytes, BytesMut};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::{Deref, DerefMut};

@@ -10,8 +10,8 @@ use tracing::{error, info, warn};
 
 use super::types::QuincyInstance;
 use crate::ipc::{
-    get_ipc_socket_path, get_log_file_path, ConnectionMetrics, ConnectionStatus, IpcMessage,
-    IpcServer,
+    ConnectionMetrics, ConnectionStatus, IpcMessage, IpcServer, get_ipc_socket_path,
+    get_log_file_path,
 };
 use crate::validation;
 
