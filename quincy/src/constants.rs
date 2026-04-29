@@ -8,7 +8,7 @@ use rustls::crypto::aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256;
 pub const QUIC_MTU_OVERHEAD: u16 = 50;
 
 /// Packet buffer size for operations on the TUN interface.
-pub const PACKET_BUFFER_SIZE: usize = 4;
+pub const PACKET_BUFFER_SIZE: usize = 32;
 
 /// Packet channel size used for communication between the TUN interface and QUIC tunnels.
 pub const PACKET_CHANNEL_SIZE: usize = 1024 * 1024;

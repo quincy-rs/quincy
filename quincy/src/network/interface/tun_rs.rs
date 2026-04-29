@@ -229,13 +229,21 @@ impl InterfaceIO for TunRsInterface {
     async fn write_packets(&self, packets: Vec<Packet>) -> Result<()> {
         let packets_len = packets.len();
 
-        for packet in packets {
-            self.writer_channel
-                .send(packet)
-                .await
-                .map_err(|_| InterfaceError::IoError {
-                    operation: "failed to send packet to writer channel".to_string(),
-                })?;
+        if packets_len == 0 {
+            debug!("TUN sent packets: {packets_len}");
+            return Ok(());
+        }
+
+        let permits = self
+            .writer_channel
+            .reserve_many(packets_len)
+            .await
+            .map_err(|_| InterfaceError::IoError {
+                operation: "failed to reserve writer channel capacity".to_string(),
+            })?;
+
+        for (permit, packet) in permits.zip(packets) {
+            permit.send(packet);
         }
 
         debug!("TUN sent packets: {packets_len}");

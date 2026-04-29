@@ -331,34 +331,48 @@ impl QuincyServer {
         debug!("Started tunnel outbound traffic task (interface -> connection queue)");
 
         loop {
-            let packet = interface.read_packet().await?;
-            let dest_addr = match packet.destination() {
-                Ok(addr) => addr,
-                Err(e) => {
-                    warn!("Received packet with malformed header structure: {e}");
-                    continue;
-                }
-            };
+            let packets = interface.read_packets().await?;
 
-            debug!("Destination address for packet: {dest_addr}");
-
-            let connection_queue = match connection_queues.get(&dest_addr) {
-                Some(connection_queue) => connection_queue,
-                None => continue,
-            };
-
-            debug!("Found connection for IP {dest_addr}");
-
-            match connection_queue.try_send(packet.into()) {
-                Ok(()) => {}
-                Err(TrySendError::Full(_)) => {
-                    debug!("Dropping outbound packet for {dest_addr}: per-client queue full");
-                }
-                Err(TrySendError::Closed(_)) => {
-                    debug!("Dropping outbound packet for {dest_addr}: connection closed");
-                }
+            for packet in packets {
+                Self::process_outbound_packet(packet, &connection_queues);
             }
         }
+    }
+
+    /// Processes an outbound packet by sending it to the appropriate connection queue.
+    ///
+    /// If no connection queue is found for the packet's destination, the packet is dropped.
+    ///
+    /// # Arguments
+    /// - `packet` - the packet to send
+    /// - `connection_queues` - the queues for sending data to the QUIC connections
+    fn process_outbound_packet(packet: Packet, connection_queues: &ConnectionQueues) {
+        let dest_addr = match packet.destination() {
+            Ok(addr) => addr,
+            Err(e) => {
+                warn!("Received packet with malformed header structure: {e}");
+                return;
+            }
+        };
+
+        debug!("Destination address for packet: {dest_addr}");
+
+        let connection_queue = match connection_queues.get(&dest_addr) {
+            Some(connection_queue) => connection_queue,
+            None => return,
+        };
+
+        debug!("Found connection for IP {dest_addr}");
+
+        match connection_queue.try_send(packet.into()) {
+            Ok(_) => {}
+            Err(TrySendError::Full(_)) => {
+                debug!("Dropping outbound packet for {dest_addr}: per-client queue full");
+            }
+            Err(TrySendError::Closed(_)) => {
+                debug!("Dropping outbound packet for {dest_addr}: connection closed");
+            }
+        };
     }
 
     /// Reads data from the QUIC connection and sends it to the TUN interface worker.
@@ -427,6 +441,7 @@ async fn relay_unisolated(
 ) -> Result<()> {
     loop {
         let mut packets = Vec::with_capacity(PACKET_BUFFER_SIZE);
+        let mut interface_packets = Vec::with_capacity(PACKET_BUFFER_SIZE);
 
         let count = ingress_queue
             .recv_many(&mut packets, PACKET_BUFFER_SIZE)
@@ -460,8 +475,12 @@ async fn relay_unisolated(
                     }
                 },
                 // Send the packet to the TUN interface
-                None => interface.write_packet(packet).await?,
+                None => interface_packets.push(packet),
             }
+        }
+
+        if !interface_packets.is_empty() {
+            interface.write_packets(interface_packets).await?;
         }
     }
 }
