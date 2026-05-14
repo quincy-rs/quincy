@@ -6,11 +6,13 @@ tunnel_network = "10.0.0.1/24"
 users_file = "examples/users.toml"
 
 [protocol]
-mode = "tls"
-# Path to the certificate used for TLS
-certificate_file = "examples/cert/server_cert.pem"
-# Path to the certificate key used for TLS
-certificate_key_file = "examples/cert/server_key.pem"
+mode = "noise"
+# The Noise key exchange algorithm. Must match the client configuration.
+key_exchange = "standard"
+# Base64-encoded server Noise private key.
+# Generate a new key with:
+#   quincy-identity noise genkey
+private_key = "HsRUK7PIxaIYVu+GQvfEL2OQM4Q6SJ+udEfmdQFd8TI="
 
 [connection]
 # The MTU used by the QUIC tunnel and the spawned TUN interface

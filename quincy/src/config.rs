@@ -4,6 +4,7 @@ use std::str::FromStr;
 
 use crate::certificates::{
     load_certificates_from_file, load_certificates_from_pem, load_private_key_from_file,
+    load_private_key_from_pem,
 };
 use crate::constants::{
     QUIC_MTU_OVERHEAD, TLS_ALPN_PROTOCOLS, TLS_INITIAL_CIPHER_SUITE, TLS_PROTOCOL_VERSIONS,
@@ -26,6 +27,7 @@ use reishi_quinn::{
 };
 use rustls::crypto::aws_lc_rs::kx_group::{MLKEM768, X25519MLKEM768};
 use rustls::crypto::{CryptoProvider, aws_lc_rs};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{CipherSuite, RootCertStore};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
@@ -92,15 +94,23 @@ pub enum ServerProtocolConfig {
 }
 
 /// Server TLS protocol configuration.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ServerTlsConfig {
     /// The key exchange algorithm to use (default = Hybrid)
     #[serde(default = "default_tls_key_exchange")]
     pub key_exchange: TlsKeyExchange,
     /// The certificate to use for the tunnel
-    pub certificate_file: PathBuf,
+    #[serde(default)]
+    pub certificate_file: Option<PathBuf>,
+    /// PEM-encoded certificate chain to use for the tunnel
+    #[serde(default)]
+    pub certificate: Option<String>,
     /// The certificate private key to use for the tunnel
-    pub certificate_key_file: PathBuf,
+    #[serde(default)]
+    pub certificate_key_file: Option<PathBuf>,
+    /// PEM-encoded certificate private key to use for the tunnel
+    #[serde(default)]
+    pub certificate_key: Option<SecretString>,
 }
 
 /// Server Noise protocol configuration.
@@ -166,9 +176,17 @@ pub struct ClientTlsConfig {
     #[serde(default)]
     pub trusted_certificates: Vec<String>,
     /// Path to the client certificate file for mutual TLS authentication
-    pub client_certificate_file: PathBuf,
+    #[serde(default)]
+    pub client_certificate_file: Option<PathBuf>,
+    /// PEM-encoded client certificate chain for mutual TLS authentication
+    #[serde(default)]
+    pub client_certificate: Option<String>,
     /// Path to the client certificate private key file
-    pub client_certificate_key_file: PathBuf,
+    #[serde(default)]
+    pub client_certificate_key_file: Option<PathBuf>,
+    /// PEM-encoded client certificate private key
+    #[serde(default)]
+    pub client_certificate_key: Option<SecretString>,
 }
 
 /// Client Noise protocol configuration.
@@ -829,6 +847,52 @@ fn tls_crypto_provider(key_exchange: &TlsKeyExchange) -> CryptoProvider {
     }
 }
 
+fn load_identity_certificates(
+    file: Option<&PathBuf>,
+    pem: Option<&str>,
+    file_field: &str,
+    pem_field: &str,
+) -> Result<Vec<CertificateDer<'static>>> {
+    let mut certs = Vec::new();
+
+    if let Some(path) = file {
+        certs.extend(load_certificates_from_file(path)?);
+    }
+
+    if let Some(pem_data) = pem {
+        certs.extend(load_certificates_from_pem(pem_data)?);
+    }
+
+    if certs.is_empty() {
+        return Err(ConfigError::MissingField {
+            field: format!("{file_field} or {pem_field}"),
+        }
+        .into());
+    }
+
+    Ok(certs)
+}
+
+fn load_identity_private_key(
+    file: Option<&PathBuf>,
+    pem: Option<&str>,
+    file_field: &str,
+    pem_field: &str,
+) -> Result<PrivateKeyDer<'static>> {
+    match (file, pem) {
+        (Some(_), Some(_)) => Err(ConfigError::Conflict {
+            conflict: format!("Specify only one of {file_field} or {pem_field}"),
+        }
+        .into()),
+        (Some(path), None) => load_private_key_from_file(path),
+        (None, Some(pem_data)) => load_private_key_from_pem(pem_data),
+        (None, None) => Err(ConfigError::MissingField {
+            field: format!("{file_field} or {pem_field}"),
+        }
+        .into()),
+    }
+}
+
 // --- Client config builders ---
 
 impl ClientConfig {
@@ -857,8 +921,20 @@ impl ClientConfig {
             cert_store.add_parsable_certificates(certs);
         }
 
-        let client_certs = load_certificates_from_file(&tls.client_certificate_file)?;
-        let client_key = load_private_key_from_file(&tls.client_certificate_key_file)?;
+        let client_certs = load_identity_certificates(
+            tls.client_certificate_file.as_ref(),
+            tls.client_certificate.as_deref(),
+            "protocol.client_certificate_file",
+            "protocol.client_certificate",
+        )?;
+        let client_key = load_identity_private_key(
+            tls.client_certificate_key_file.as_ref(),
+            tls.client_certificate_key
+                .as_ref()
+                .map(|key| key.expose_secret()),
+            "protocol.client_certificate_key_file",
+            "protocol.client_certificate_key",
+        )?;
 
         let crypto_provider = Arc::from(tls_crypto_provider(&tls.key_exchange));
 
@@ -988,8 +1064,18 @@ impl ServerConfig {
         tls: &ServerTlsConfig,
         allowed_fingerprints: HashSet<String>,
     ) -> Result<quinn::ServerConfig> {
-        let key = load_private_key_from_file(&tls.certificate_key_file)?;
-        let certs = load_certificates_from_file(&tls.certificate_file)?;
+        let key = load_identity_private_key(
+            tls.certificate_key_file.as_ref(),
+            tls.certificate_key.as_ref().map(|key| key.expose_secret()),
+            "protocol.certificate_key_file",
+            "protocol.certificate_key",
+        )?;
+        let certs = load_identity_certificates(
+            tls.certificate_file.as_ref(),
+            tls.certificate.as_deref(),
+            "protocol.certificate_file",
+            "protocol.certificate",
+        )?;
 
         let crypto_provider = Arc::from(tls_crypto_provider(&tls.key_exchange));
 
@@ -1236,6 +1322,13 @@ mod tests {
     use super::*;
     use figment::providers::{Format, Toml};
 
+    const SERVER_CERT_PEM: &str =
+        include_str!("../../quincy-tests/tests/static/server_cert_pkcs8.pem");
+    const SERVER_KEY_PEM: &str =
+        include_str!("../../quincy-tests/tests/static/server_key_pkcs8.pem");
+    const CLIENT_CERT_PEM: &str = include_str!("../../quincy-tests/tests/static/client_cert.pem");
+    const CLIENT_KEY_PEM: &str = include_str!("../../quincy-tests/tests/static/client_key.pem");
+
     #[test]
     fn parse_server_config_tls() {
         let toml = r#"
@@ -1296,8 +1389,16 @@ mod tests {
         match &config.protocol {
             ServerProtocolConfig::Tls(tls) => {
                 assert_eq!(tls.key_exchange, TlsKeyExchange::PostQuantum);
-                assert_eq!(tls.certificate_file, PathBuf::from("/path/to/cert.pem"));
-                assert_eq!(tls.certificate_key_file, PathBuf::from("/path/to/key.pem"));
+                assert_eq!(
+                    tls.certificate_file,
+                    Some(PathBuf::from("/path/to/cert.pem"))
+                );
+                assert_eq!(tls.certificate, None);
+                assert_eq!(
+                    tls.certificate_key_file,
+                    Some(PathBuf::from("/path/to/key.pem"))
+                );
+                assert!(tls.certificate_key.is_none());
             }
             _ => panic!("Expected TLS protocol config"),
         }
@@ -1335,6 +1436,41 @@ mod tests {
                 );
             }
             _ => panic!("Expected Noise protocol config"),
+        }
+    }
+
+    #[test]
+    fn parse_server_config_tls_inline_identity() {
+        let toml = r#"
+            name = "quincy-server"
+            tunnel_network = "10.0.0.1/24"
+            users_file = "/path/to/users.toml"
+
+            [protocol]
+            mode = "tls"
+            certificate = "inline cert"
+            certificate_key = "inline key"
+
+            [log]
+            level = "info"
+        "#;
+
+        let config: ServerConfig = Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("Failed to parse server config");
+
+        match &config.protocol {
+            ServerProtocolConfig::Tls(tls) => {
+                assert_eq!(tls.certificate_file, None);
+                assert_eq!(tls.certificate, Some("inline cert".to_string()));
+                assert_eq!(tls.certificate_key_file, None);
+                assert_eq!(
+                    tls.certificate_key.as_ref().map(|key| key.expose_secret()),
+                    Some("inline key")
+                );
+            }
+            _ => panic!("Expected TLS protocol config"),
         }
     }
 
@@ -1390,12 +1526,14 @@ mod tests {
                 );
                 assert_eq!(
                     tls.client_certificate_file,
-                    PathBuf::from("/path/to/client_cert.pem")
+                    Some(PathBuf::from("/path/to/client_cert.pem"))
                 );
+                assert_eq!(tls.client_certificate, None);
                 assert_eq!(
                     tls.client_certificate_key_file,
-                    PathBuf::from("/path/to/client_key.pem")
+                    Some(PathBuf::from("/path/to/client_key.pem"))
                 );
+                assert!(tls.client_certificate_key.is_none());
             }
             _ => panic!("Expected TLS protocol config"),
         }
@@ -1424,6 +1562,50 @@ mod tests {
             ]
         );
         assert_eq!(config.log.level, "trace");
+    }
+
+    #[test]
+    fn parse_client_config_tls_inline_identity() {
+        let toml = r#"
+            connection_string = "example.com:55555"
+
+            [protocol]
+            mode = "tls"
+            trusted_certificates = ["inline trusted cert"]
+            client_certificate = "inline client cert"
+            client_certificate_key = "inline client key"
+
+            [log]
+            level = "info"
+        "#;
+
+        let config: ClientConfig = Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("Failed to parse client config");
+
+        match &config.protocol {
+            ClientProtocolConfig::Tls(tls) => {
+                assert!(tls.trusted_certificate_paths.is_empty());
+                assert_eq!(
+                    tls.trusted_certificates,
+                    vec!["inline trusted cert".to_string()]
+                );
+                assert_eq!(tls.client_certificate_file, None);
+                assert_eq!(
+                    tls.client_certificate,
+                    Some("inline client cert".to_string())
+                );
+                assert_eq!(tls.client_certificate_key_file, None);
+                assert_eq!(
+                    tls.client_certificate_key
+                        .as_ref()
+                        .map(|key| key.expose_secret()),
+                    Some("inline client key")
+                );
+            }
+            _ => panic!("Expected TLS protocol config"),
+        }
     }
 
     #[test]
@@ -1460,6 +1642,73 @@ mod tests {
             }
             _ => panic!("Expected Noise protocol config"),
         }
+    }
+
+    #[test]
+    fn build_server_tls_config_with_inline_certificate_and_key() {
+        let config = ServerConfig {
+            name: "quincy-server".to_string(),
+            interface_name: None,
+            bind_address: "127.0.0.1".parse().unwrap(),
+            bind_port: 55555,
+            reuse_socket: false,
+            tunnel_network: "10.0.0.1/24".parse().unwrap(),
+            users_file: PathBuf::from("users.toml"),
+            isolate_clients: true,
+            default_bandwidth_limit: None,
+            protocol: ServerProtocolConfig::Tls(ServerTlsConfig {
+                key_exchange: TlsKeyExchange::Standard,
+                certificate_file: None,
+                certificate: Some(SERVER_CERT_PEM.to_string()),
+                certificate_key_file: None,
+                certificate_key: Some(SecretString::from(SERVER_KEY_PEM)),
+            }),
+            connection: ConnectionConfig::default(),
+            log: LogConfig {
+                level: "info".to_string(),
+            },
+            metrics: MetricsConfig::default(),
+        };
+
+        assert!(config.as_quinn_server_config(None, None).is_ok());
+    }
+
+    #[test]
+    fn build_client_tls_config_with_inline_certificate_and_key() {
+        let config = ClientConfig {
+            connection_string: "example.com:55555".to_string(),
+            protocol: ClientProtocolConfig::Tls(ClientTlsConfig {
+                key_exchange: TlsKeyExchange::Standard,
+                trusted_certificate_paths: Vec::new(),
+                trusted_certificates: vec![SERVER_CERT_PEM.to_string()],
+                client_certificate_file: None,
+                client_certificate: Some(CLIENT_CERT_PEM.to_string()),
+                client_certificate_key_file: None,
+                client_certificate_key: Some(SecretString::from(CLIENT_KEY_PEM)),
+            }),
+            connection: ConnectionConfig::default(),
+            network: NetworkConfig::default(),
+            log: LogConfig {
+                level: "info".to_string(),
+            },
+        };
+
+        assert!(config.quinn_client_config().is_ok());
+    }
+
+    #[test]
+    fn build_tls_config_rejects_conflicting_inline_and_file_private_key() {
+        let result = load_identity_private_key(
+            Some(&PathBuf::from("/path/to/key.pem")),
+            Some(SERVER_KEY_PEM),
+            "protocol.certificate_key_file",
+            "protocol.certificate_key",
+        );
+
+        assert!(matches!(
+            result,
+            Err(crate::QuincyError::Config(ConfigError::Conflict { .. }))
+        ));
     }
 
     #[test]

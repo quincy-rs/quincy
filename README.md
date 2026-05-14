@@ -211,6 +211,7 @@ TLS 1.3 is the default protocol mode. It uses mutual TLS (mTLS) for both server 
 - `PostQuantum`: ML-KEM-768
 
 TLS mode requires a certificate and private key on both the server and the client. The server verifies client identity by matching the client certificate's SHA-256 fingerprint against the entries in the [users file](#users). See [Certificate management](#certificate-management) for details on generating and configuring certificates.
+Certificates and keys can be loaded from files or supplied as PEM strings directly in the config. TOML multi-line basic strings (`"""..."""`) are a good fit for PEM data when you want the config to show the certificate on multiple lines.
 
 **Server**
 ```toml
@@ -219,6 +220,17 @@ mode = "tls"
 key_exchange = "hybrid"
 certificate_file = "server_cert.pem"
 certificate_key_file = "server_key.pem"
+# Or use inline PEM strings:
+# certificate = """
+# -----BEGIN CERTIFICATE-----
+# ...
+# -----END CERTIFICATE-----
+# """
+# certificate_key = """
+# -----BEGIN PRIVATE KEY-----
+# ...
+# -----END PRIVATE KEY-----
+# """
 ```
 
 **Client**
@@ -227,8 +239,27 @@ certificate_key_file = "server_key.pem"
 mode = "tls"
 key_exchange = "hybrid"
 trusted_certificate_paths = ["server_cert.pem"]
+# Or trust inline PEM strings:
+# trusted_certificates = [
+# """
+# -----BEGIN CERTIFICATE-----
+# ...
+# -----END CERTIFICATE-----
+# """
+# ]
 client_certificate_file = "client_cert.pem"
 client_certificate_key_file = "client_key.pem"
+# Or use inline PEM strings:
+# client_certificate = """
+# -----BEGIN CERTIFICATE-----
+# ...
+# -----END CERTIFICATE-----
+# """
+# client_certificate_key = """
+# -----BEGIN PRIVATE KEY-----
+# ...
+# -----END PRIVATE KEY-----
+# """
 ```
 
 ### Noise
@@ -384,8 +415,20 @@ openssl x509 -req -in cert.csr -signkey <your_certificate_key_file> -out <your_c
 mode = "tls"
 # Path to the certificate used for TLS
 certificate_file = "server_cert.pem"
+# Or a PEM-encoded certificate chain
+# certificate = """
+# -----BEGIN CERTIFICATE-----
+# ...
+# -----END CERTIFICATE-----
+# """
 # Path to the certificate key used for TLS
 certificate_key_file = "server_key.pem"
+# Or a PEM-encoded private key
+# certificate_key = """
+# -----BEGIN PRIVATE KEY-----
+# ...
+# -----END PRIVATE KEY-----
+# """
 ```
 
 ### Client certificate
@@ -407,8 +450,28 @@ Add the certificate and key to the client configuration file, along with the ser
 mode = "tls"
 # A list of trusted certificate file paths the server can use or have its certificate signed by
 trusted_certificate_paths = ["server_cert.pem"]
+# A list of trusted certificates as PEM strings
+# trusted_certificates = [
+# """
+# -----BEGIN CERTIFICATE-----
+# ...
+# -----END CERTIFICATE-----
+# """
+# ]
 # Path to the client certificate for mutual TLS authentication
 client_certificate_file = "client_cert.pem"
+# Or a PEM-encoded client certificate chain
+# client_certificate = """
+# -----BEGIN CERTIFICATE-----
+# ...
+# -----END CERTIFICATE-----
+# """
 # Path to the client certificate private key
 client_certificate_key_file = "client_key.pem"
+# Or a PEM-encoded private key
+# client_certificate_key = """
+# -----BEGIN PRIVATE KEY-----
+# ...
+# -----END PRIVATE KEY-----
+# """
 ```

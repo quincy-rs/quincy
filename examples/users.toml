@@ -8,7 +8,7 @@
 # Base64-encoded Noise public keys authorized for this user
 authorized_keys = [
     # quincy-identity noise genkey | quincy-identity noise pubkey
-    # "base64-encoded-x25519-public-key-here",
+    "bcHh+SkqIZS06B5I9DDbrxvSryROjU4MX8i/u1M7Vyw=",
 ]
 # TLS certificate fingerprints authorized for this user
 authorized_certs = [

@@ -87,6 +87,23 @@ pub fn load_private_key_from_file(path: &Path) -> Result<PrivateKeyDer<'static>>
     })
 }
 
+/// Loads a private key from a PEM string.
+///
+/// Automatically detects and parses private keys in any supported format:
+/// - PKCS8
+/// - RSA PKCS1
+/// - EC SEC1
+///
+/// ### Arguments
+/// - `pem_data` - PEM-encoded private key data as a string.
+///
+/// ### Returns
+/// - `PrivateKeyDer` - The loaded private key.
+pub fn load_private_key_from_pem(pem_data: &str) -> Result<PrivateKeyDer<'static>> {
+    PrivateKeyDer::from_pem_slice(pem_data.as_bytes())
+        .map_err(|_| CertificateError::UnsupportedFormat.into())
+}
+
 /// Computes the SHA-256 fingerprint of a DER-encoded certificate.
 ///
 /// Returns a string in the format `sha256:<lowercase-hex>`.
@@ -356,6 +373,23 @@ mod tests {
     #[test]
     fn load_private_key_from_file_nonexistent() {
         let result = load_private_key_from_file(Path::new("/nonexistent/path/key.pem"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_private_key_from_pem_valid_pkcs8() {
+        let result = load_private_key_from_pem(VALID_KEY_PEM_PKCS8);
+        assert!(result.is_ok());
+        if let Ok(PrivateKeyDer::Pkcs8(_)) = result {
+            // Success
+        } else {
+            panic!("Expected PKCS8 key format");
+        }
+    }
+
+    #[test]
+    fn load_private_key_from_pem_invalid_pem() {
+        let result = load_private_key_from_pem("not a valid pem");
         assert!(result.is_err());
     }
 

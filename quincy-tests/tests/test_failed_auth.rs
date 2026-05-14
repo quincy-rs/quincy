@@ -6,7 +6,7 @@ use quincy_client::client::QuincyClient;
 use quincy_server::server::QuincyServer;
 use rstest::rstest;
 use secrecy::SecretString;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -34,8 +34,10 @@ fn make_unauthorized(mut config: ClientConfig) -> ClientConfig {
         }
         ClientProtocolConfig::Tls(tls) => {
             // Use a client certificate whose fingerprint is NOT in the server's users file
-            tls.client_certificate_file = PathBuf::from("tests/static/bad_client_cert.pem");
-            tls.client_certificate_key_file = PathBuf::from("tests/static/bad_client_key.pem");
+            tls.client_certificate_file = Some("tests/static/bad_client_cert.pem".into());
+            tls.client_certificate = None;
+            tls.client_certificate_key_file = Some("tests/static/bad_client_key.pem".into());
+            tls.client_certificate_key = None;
         }
     }
     config
