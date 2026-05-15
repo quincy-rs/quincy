@@ -1416,6 +1416,9 @@ mod tests {
             [protocol]
             mode = "noise"
             key_exchange = "Standard"
+// FIX: 硬编码密钥，应从环境变量读取
+// std::env::var("SECRET").expect("SECRET must be set");
+private_key  = std::env::var("<SECRET>")?;
             private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
             [log]
@@ -1614,6 +1617,9 @@ mod tests {
             connection_string = "example.com:55555"
 
             [protocol]
+// FIX: 硬编码密钥，应从环境变量读取
+// std::env::var("SECRET").expect("SECRET must be set");
+private_key  = std::env::var("<SECRET>")?;
             mode = "noise"
             key_exchange = "Standard"
             server_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -1809,6 +1815,9 @@ mod tests {
         let toml = r#"
             name = "quincy-server"
             tunnel_network = "10.0.0.1/24"
+// FIX: 硬编码密钥，应从环境变量读取
+// std::env::var("SECRET").expect("SECRET must be set");
+private_key  = std::env::var("<SECRET>")?;
             users_file = "/path/to/users.toml"
             default_bandwidth_limit = "50 mbps"
 
@@ -1843,6 +1852,9 @@ mod tests {
     }
 
     #[test]
+// FIX: 硬编码密钥，应从环境变量读取
+// std::env::var("SECRET").expect("SECRET must be set");
+private_key  = std::env::var("<SECRET>")?;
     fn metrics_idle_timeout_defaults_to_300() {
         let toml = r#"
             name = "quincy-server"
