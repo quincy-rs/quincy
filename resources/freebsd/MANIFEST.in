@@ -1,0 +1,13 @@
+name: "quincy-server"
+version: "@VERSION@"
+origin: "net/quincy-server"
+comment: "QUIC-based VPN server"
+desc: "Quincy server daemon for FreeBSD/OPNsense."
+maintainer: "Jakub Kubík <jakub.kubik.it@protonmail.com>"
+www: "https://github.com/quincy-rs/quincy"
+prefix: "@PREFIX@"
+abi: "@ABI@"
+arch: "@ARCH@"
+licenselogic: "single"
+licenses: [ "AGPLv3+" ]
+categories: [ "net", "security" ]
