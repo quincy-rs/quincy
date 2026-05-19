@@ -152,6 +152,9 @@ impl QuincyServer {
         let mut assignment_tasks = FuturesUnordered::new();
         let mut connection_tasks = FuturesUnordered::new();
 
+        let shutdown = shutdown_signal();
+        tokio::pin!(shutdown);
+
         loop {
             tokio::select! {
                 // New connections
@@ -264,7 +267,9 @@ impl QuincyServer {
                 }
 
                 // Shutdown
-                _ = signal::ctrl_c() => {
+                shutdown_result = &mut shutdown => {
+                    shutdown_result?;
+
                     info!("Received shutdown signal, shutting down");
                     let _ = abort_all(connection_tasks).await;
 
@@ -382,6 +387,25 @@ impl QuincyServer {
             relay_unisolated(connection_queues, interface, ingress_queue).await
         }
     }
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() -> Result<()> {
+    let mut interrupt = signal::unix::signal(signal::unix::SignalKind::interrupt())?;
+    let mut terminate = signal::unix::signal(signal::unix::SignalKind::terminate())?;
+
+    tokio::select! {
+        _ = interrupt.recv() => {}
+        _ = terminate.recv() => {}
+    }
+
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> Result<()> {
+    signal::ctrl_c().await?;
+    Ok(())
 }
 
 #[inline]
