@@ -42,7 +42,11 @@ Quincy is a VPN client and server implementation using the [QUIC](https://en.wik
 - [X] MacOS (aarch64)
 
 ## Installation
-Binaries and installers are available for Windows, Linux (x86_64) and macOS (aarch64) for every official release.
+Binaries and installers are available for:
+- Windows (x86_64)
+- Linux (x86_64)
+- FreeBSD (x86_64)
+- MacOS (aarch64)
 
 ### Cargo
 Using cargo, installation of any published version can be done with a simple command:
