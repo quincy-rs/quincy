@@ -326,14 +326,12 @@ jobs:
           run: |
             . "$HOME/.cargo/env"
             export PATH="/usr/local/bin:${PATH}"
-            cargo build --locked --release --workspace --exclude quincy-tests --features jemalloc
+            cargo build --locked --release -p quincy-client -p quincy-server -p quincy-identity --features jemalloc
 
             mkdir -p release artifacts
             cp target/release/quincy-client release/
             cp target/release/quincy-server release/
             cp target/release/quincy-identity release/
-            cp target/release/quincy-client-gui release/
-            cp target/release/quincy-client-daemon release/
             tar zcf "artifacts/quincy-${{ env.ARTIFACT_VERSION }}-freebsd-x86_64.tar.gz" -C release .
 
             if [ "${{ github.event_name }}" = "release" ]; then
