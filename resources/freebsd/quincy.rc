@@ -1,0 +1,31 @@
+#!/bin/sh
+#
+# PROVIDE: quincy
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+#
+# Add the following lines to /etc/rc.conf or /etc/rc.conf.local to enable:
+#
+# quincy_enable="YES"
+# quincy_config="/usr/local/etc/quincy/server.toml"
+#
+
+. /etc/rc.subr
+
+name="quincy"
+rcvar="quincy_enable"
+
+load_rc_config "${name}"
+
+: ${quincy_enable:="NO"}
+: ${quincy_user:="root"}
+: ${quincy_config:="/usr/local/etc/quincy/server.toml"}
+: ${quincy_flags:="--config-path ${quincy_config}"}
+
+pidfile="/var/run/${name}.pid"
+procname="/usr/local/bin/quincy-server"
+command="/usr/sbin/daemon"
+command_args="-f -p ${pidfile} -u ${quincy_user} ${procname} ${quincy_flags}"
+required_files="${quincy_config}"
+
+run_rc_command "$1"

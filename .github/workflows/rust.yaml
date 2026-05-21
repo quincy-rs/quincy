@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ['main']
+    branches: ["main"]
   pull_request:
 
 jobs:
@@ -11,7 +11,16 @@ jobs:
 
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            codecov_flag: linux
+            coverage_file: lcov-linux.info
+          - os: windows-latest
+            codecov_flag: windows
+            coverage_file: lcov-windows.info
+          - os: macos-latest
+            codecov_flag: macos
+            coverage_file: lcov-macos.info
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -26,14 +35,16 @@ jobs:
         name: Install cargo llvm-cov
       - uses: Swatinem/rust-cache@v2
         name: Cache toolchain and dependencies
-      - run: cargo llvm-cov --no-default-features --features=jemalloc --workspace --no-cfg-coverage --lcov --output-path lcov.info
+      - run: cargo llvm-cov --no-default-features --features=jemalloc --workspace --no-cfg-coverage --lcov --output-path ${{ matrix.coverage_file }}
         name: Test with coverage
       - uses: codecov/codecov-action@v4
         name: Upload coverage to Codecov
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          files: lcov.info
+          files: ${{ matrix.coverage_file }}
+          flags: ${{ matrix.codecov_flag }}
+          name: ${{ matrix.codecov_flag }}
           fail_ci_if_error: true
 
   lint:

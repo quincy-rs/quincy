@@ -275,6 +275,75 @@ jobs:
         with:
           files: artifacts/*
 
+  build-and-package-freebsd:
+    name: Build & Package FreeBSD
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        name: Checkout repository
+      - uses: vmactions/freebsd-vm@v1
+        name: Build and package FreeBSD artifacts
+        with:
+          release: "14.2"
+          usesh: true
+          prepare: |
+            pkg install -y curl git cmake gmake pkgconf perl5
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o rustup-init.sh
+            sh rustup-init.sh -y --profile minimal --default-toolchain stable
+          run: |
+            . "$HOME/.cargo/env"
+            export PATH="/usr/local/bin:${PATH}"
+            cargo build --locked --release -p quincy-client -p quincy-server -p quincy-identity --features jemalloc
+
+            mkdir -p release artifacts
+            cp target/release/quincy-client release/
+            cp target/release/quincy-server release/
+            cp target/release/quincy-identity release/
+            tar zcf "artifacts/quincy-${{ github.ref_name }}-freebsd-x86_64.tar.gz" -C release .
+
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+            PREFIX="/usr/local"
+            STAGE_DIR="target/freebsd-server-pkg"
+            MANIFEST="target/freebsd-server-pkg.manifest"
+            ABI="$(pkg config ABI)"
+            ARCH="$(printf '%s' "${ABI}" | awk -F: '{ os=tolower($1); if ($3 == "amd64") print os ":" $2 ":x86:64"; else if ($3 == "arm64") print os ":" $2 ":aarch64"; else print tolower($0) }')"
+
+            rm -rf "${STAGE_DIR}"
+            mkdir -p \
+              "${STAGE_DIR}${PREFIX}/bin" \
+              "${STAGE_DIR}${PREFIX}/etc/rc.d" \
+              "${STAGE_DIR}${PREFIX}/etc/quincy"
+
+            install -m 0555 target/release/quincy-server "${STAGE_DIR}${PREFIX}/bin/quincy-server"
+            install -m 0555 resources/freebsd/quincy.rc "${STAGE_DIR}${PREFIX}/etc/rc.d/quincy"
+            sed 's|^users_file = "examples/users.toml"|users_file = "/usr/local/etc/quincy/users.toml"|' \
+              examples/server.toml > "${STAGE_DIR}${PREFIX}/etc/quincy/server.toml.sample"
+            chmod 0644 "${STAGE_DIR}${PREFIX}/etc/quincy/server.toml.sample"
+            install -m 0644 examples/users.toml "${STAGE_DIR}${PREFIX}/etc/quincy/users.toml.sample"
+
+            sed \
+              -e "s|@VERSION@|${VERSION}|g" \
+              -e "s|@PREFIX@|${PREFIX}|g" \
+              -e "s|@ABI@|${ABI}|g" \
+              -e "s|@ARCH@|${ARCH}|g" \
+              resources/freebsd/MANIFEST.in > "${MANIFEST}"
+
+            pkg create -M "${MANIFEST}" -r "${STAGE_DIR}" -o artifacts
+            rm -f "${MANIFEST}"
+            mv "artifacts/quincy-server-${VERSION}.pkg" "artifacts/quincy-server-${{ github.ref_name }}-freebsd-x86_64.pkg"
+
+            chmod -R a+rX artifacts
+      - uses: softprops/action-gh-release@v1
+        name: Add FreeBSD artifacts to release
+        with:
+          files: artifacts/*
+
   build-docker-image:
     name: Build Docker image
 
