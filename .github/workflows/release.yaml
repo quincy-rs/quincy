@@ -3,21 +3,11 @@ name: Publish release
 on:
   release:
     types: [created]
-  workflow_dispatch:
-    inputs:
-      artifact_version:
-        description: Version/suffix to use in generated artifact filenames (no slashes)
-        required: false
-        default: manual
-
-env:
-  ARTIFACT_VERSION: ${{ github.event_name == 'release' && github.ref_name || inputs.artifact_version }}
 
 jobs:
   publish-crate:
     name: Publish crate
 
-    if: github.event_name == 'release'
     runs-on: ubuntu-latest
 
     environment: release
@@ -99,7 +89,7 @@ jobs:
         run: |
           mkdir -p release
           cp target/release/* release/
-          tar zcf quincy-${{ env.ARTIFACT_VERSION }}-linux-x86_64.tar.gz -C release .
+          tar zcf quincy-${{ github.ref_name }}-linux-x86_64.tar.gz -C release .
       - name: Install AppImage dependencies
         run: sudo apt-get update && sudo apt-get install -y libfuse2
       - name: Install cargo-packager
@@ -115,19 +105,13 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p artifacts
-          mv quincy-${{ env.ARTIFACT_VERSION }}-linux-x86_64.tar.gz artifacts/
-          mv target/release/*.deb artifacts/quincy-${{ env.ARTIFACT_VERSION }}-linux-x86_64.deb
-          mv target/release/*.AppImage artifacts/quincy-${{ env.ARTIFACT_VERSION }}-linux-x86_64.AppImage
+          mv quincy-${{ github.ref_name }}-linux-x86_64.tar.gz artifacts/
+          mv target/release/*.deb artifacts/quincy-${{ github.ref_name }}-linux-x86_64.deb
+          mv target/release/*.AppImage artifacts/quincy-${{ github.ref_name }}-linux-x86_64.AppImage
       - uses: softprops/action-gh-release@v1
-        if: github.event_name == 'release'
         name: Add artifacts to release
         with:
           files: artifacts/*
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch'
-        name: linux-release-artifacts
-        with:
-          path: artifacts/*
 
   build-macos:
     name: Build macOS
@@ -186,7 +170,7 @@ jobs:
         run: |
           mkdir -p release
           cp target/release/* release/
-          tar zcf quincy-${{ env.ARTIFACT_VERSION }}-macos-arm64.tar.gz -C release .
+          tar zcf quincy-${{ github.ref_name }}-macos-arm64.tar.gz -C release .
       - name: Install cargo-packager
         run: cargo install cargo-packager --locked
       - name: Inject version into packager config
@@ -200,18 +184,12 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p artifacts
-          mv quincy-${{ env.ARTIFACT_VERSION }}-macos-arm64.tar.gz artifacts/
-          mv target/release/*.dmg artifacts/quincy-${{ env.ARTIFACT_VERSION }}-macos-arm64.dmg
+          mv quincy-${{ github.ref_name }}-macos-arm64.tar.gz artifacts/
+          mv target/release/*.dmg artifacts/quincy-${{ github.ref_name }}-macos-arm64.dmg
       - uses: softprops/action-gh-release@v1
-        if: github.event_name == 'release'
         name: Add artifacts to release
         with:
           files: artifacts/*
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch'
-        name: macos-release-artifacts
-        with:
-          path: artifacts/*
 
   build-windows:
     name: Build Windows
@@ -275,7 +253,7 @@ jobs:
         run: |
           mkdir ./release
           cp target/release/* release/
-          Compress-Archive -Path release/* -DestinationPath quincy-${{ env.ARTIFACT_VERSION }}-windows-x86_64.zip
+          Compress-Archive -Path release/* -DestinationPath quincy-${{ github.ref_name }}-windows-x86_64.zip
       - name: Install cargo-packager
         run: cargo install cargo-packager --locked
       - name: Inject version into packager config
@@ -290,21 +268,15 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir artifacts
-          Move-Item quincy-${{ env.ARTIFACT_VERSION }}-windows-x86_64.zip artifacts/
-          Move-Item target/release/*-setup.exe artifacts/quincy-${{ env.ARTIFACT_VERSION }}-windows-x86_64-setup.exe
+          Move-Item quincy-${{ github.ref_name }}-windows-x86_64.zip artifacts/
+          Move-Item target/release/*-setup.exe artifacts/quincy-${{ github.ref_name }}-windows-x86_64-setup.exe
       - uses: softprops/action-gh-release@v1
-        if: github.event_name == 'release'
         name: Add artifacts to release
         with:
           files: artifacts/*
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch'
-        name: windows-release-artifacts
-        with:
-          path: artifacts/*
 
   build-and-package-freebsd:
-    name: Package FreeBSD
+    name: Build & Package FreeBSD
 
     runs-on: ubuntu-latest
 
@@ -332,14 +304,10 @@ jobs:
             cp target/release/quincy-client release/
             cp target/release/quincy-server release/
             cp target/release/quincy-identity release/
-            tar zcf "artifacts/quincy-${{ env.ARTIFACT_VERSION }}-freebsd-x86_64.tar.gz" -C release .
+            tar zcf "artifacts/quincy-${{ github.ref_name }}-freebsd-x86_64.tar.gz" -C release .
 
-            if [ "${{ github.event_name }}" = "release" ]; then
-              VERSION="${ARTIFACT_VERSION}"
-              VERSION="${VERSION#v}"
-            else
-              VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
-            fi
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
             PREFIX="/usr/local"
             STAGE_DIR="target/freebsd-server-pkg"
             MANIFEST="target/freebsd-server-pkg.manifest"
@@ -368,24 +336,17 @@ jobs:
 
             pkg create -M "${MANIFEST}" -r "${STAGE_DIR}" -o artifacts
             rm -f "${MANIFEST}"
-            mv "artifacts/quincy-server-${VERSION}.pkg" "artifacts/quincy-server-${{ env.ARTIFACT_VERSION }}-freebsd-x86_64.pkg"
+            mv "artifacts/quincy-server-${VERSION}.pkg" "artifacts/quincy-server-${{ github.ref_name }}-freebsd-x86_64.pkg"
 
             chmod -R a+rX artifacts
       - uses: softprops/action-gh-release@v1
-        if: github.event_name == 'release'
         name: Add FreeBSD artifacts to release
         with:
           files: artifacts/*
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch'
-        name: freebsd-release-artifacts
-        with:
-          path: artifacts/*
 
   build-docker-image:
     name: Build Docker image
 
-    if: github.event_name == 'release'
     runs-on: ubuntu-latest
 
     steps:
