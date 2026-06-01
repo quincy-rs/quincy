@@ -310,15 +310,17 @@ jobs:
             VERSION="${VERSION#v}"
             PREFIX="/usr/local"
             STAGE_DIR="target/freebsd-server-pkg"
-            MANIFEST="target/freebsd-server-pkg.manifest"
+            METADATA_DIR="target/freebsd-server-metadata"
+            PLIST="target/freebsd-server-pkg.plist"
             ABI="$(pkg config ABI)"
             ARCH="$(printf '%s' "${ABI}" | awk -F: '{ os=tolower($1); if ($3 == "amd64") print os ":" $2 ":x86:64"; else if ($3 == "arm64") print os ":" $2 ":aarch64"; else print tolower($0) }')"
 
-            rm -rf "${STAGE_DIR}"
+            rm -rf "${STAGE_DIR}" "${METADATA_DIR}" "${PLIST}"
             mkdir -p \
               "${STAGE_DIR}${PREFIX}/bin" \
               "${STAGE_DIR}${PREFIX}/etc/rc.d" \
-              "${STAGE_DIR}${PREFIX}/etc/quincy"
+              "${STAGE_DIR}${PREFIX}/etc/quincy" \
+              "${METADATA_DIR}"
 
             install -m 0555 target/release/quincy-server "${STAGE_DIR}${PREFIX}/bin/quincy-server"
             install -m 0555 resources/freebsd/quincy.rc "${STAGE_DIR}${PREFIX}/etc/rc.d/quincy"
@@ -332,11 +334,40 @@ jobs:
               -e "s|@PREFIX@|${PREFIX}|g" \
               -e "s|@ABI@|${ABI}|g" \
               -e "s|@ARCH@|${ARCH}|g" \
-              resources/freebsd/MANIFEST.in > "${MANIFEST}"
+              resources/freebsd/MANIFEST.in > "${METADATA_DIR}/+MANIFEST"
 
-            pkg create -M "${MANIFEST}" -r "${STAGE_DIR}" -o artifacts
-            rm -f "${MANIFEST}"
-            mv "artifacts/quincy-server-${VERSION}.pkg" "artifacts/quincy-server-${{ github.ref_name }}-freebsd-x86_64.pkg"
+            printf '%s\n' \
+              'bin/quincy-server' \
+              'etc/rc.d/quincy' \
+              'etc/quincy/server.toml.sample' \
+              'etc/quincy/users.toml.sample' \
+              > "${PLIST}"
+
+            pkg create -t 0 -m "${METADATA_DIR}" -p "${PLIST}" -r "${STAGE_DIR}" -o artifacts
+
+            SERVER_PKG="artifacts/quincy-server-${VERSION}.pkg"
+            REPACK_DIR="target/freebsd-server-pkg-repack"
+            rm -rf "${REPACK_DIR}"
+            mkdir -p "${REPACK_DIR}"
+            tar -xf "${SERVER_PKG}" -C "${REPACK_DIR}"
+            sed -E 's/"sum":"1\$([0-9a-f]{64})"/"sum":"\1"/g' \
+              "${REPACK_DIR}/+MANIFEST" > "${REPACK_DIR}/+MANIFEST.fixed"
+            mv "${REPACK_DIR}/+MANIFEST.fixed" "${REPACK_DIR}/+MANIFEST"
+            (cd "${REPACK_DIR}" && tar --uid 0 --gid 0 --uname root --gname wheel -P -s '|^usr|/usr|' -cJf "../quincy-server-${VERSION}.pkg" \
+              +COMPACT_MANIFEST \
+              +MANIFEST \
+              usr/local/bin/quincy-server \
+              usr/local/etc/quincy/server.toml.sample \
+              usr/local/etc/quincy/users.toml.sample \
+              usr/local/etc/rc.d/quincy)
+            mv "target/quincy-server-${VERSION}.pkg" "${SERVER_PKG}"
+            if tar -xOf "${SERVER_PKG}" +MANIFEST | grep -Eq '"mtime"|"sum":"1\$'; then
+              echo "FreeBSD package manifest is not compatible with pkg 2.3.1" >&2
+              exit 1
+            fi
+
+            mv "${SERVER_PKG}" "artifacts/quincy-server-${{ github.ref_name }}-freebsd-x86_64.pkg"
+            pkg info -l -F "artifacts/quincy-server-${{ github.ref_name }}-freebsd-x86_64.pkg" | grep '/usr/local/bin/quincy-server'
 
             chmod -R a+rX artifacts
       - uses: softprops/action-gh-release@v1
