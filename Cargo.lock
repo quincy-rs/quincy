@@ -3993,7 +3993,7 @@ dependencies = [
 
 [[package]]
 name = "quincy"
-version = "2.1.1"
+version = "2.2.0"
 dependencies = [
  "aws-lc-rs",
  "base64",
@@ -4027,7 +4027,7 @@ dependencies = [
 
 [[package]]
 name = "quincy-client"
-version = "2.1.1"
+version = "2.2.0"
 dependencies = [
  "clap",
  "futures",
@@ -4040,7 +4040,7 @@ dependencies = [
 
 [[package]]
 name = "quincy-gui"
-version = "2.1.1"
+version = "2.2.0"
 dependencies = [
  "clap",
  "embed-resource",
@@ -4062,7 +4062,7 @@ dependencies = [
 
 [[package]]
 name = "quincy-identity"
-version = "2.1.1"
+version = "2.2.0"
 dependencies = [
  "base64",
  "clap",
@@ -4076,7 +4076,7 @@ dependencies = [
 
 [[package]]
 name = "quincy-server"
-version = "2.1.1"
+version = "2.2.0"
 dependencies = [
  "bytes",
  "clap",
@@ -4099,7 +4099,7 @@ dependencies = [
 
 [[package]]
 name = "quincy-tests"
-version = "2.1.1"
+version = "2.2.0"
 dependencies = [
  "bytes",
  "etherparse",
