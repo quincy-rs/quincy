@@ -8,6 +8,7 @@
 #
 # quincy_enable="YES"
 # quincy_config="/usr/local/etc/quincy/server.toml"
+# quincy_args="--config-path /usr/local/etc/quincy/server.toml"
 #
 
 . /etc/rc.subr
@@ -20,12 +21,13 @@ load_rc_config "${name}"
 : ${quincy_enable:="NO"}
 : ${quincy_user:="root"}
 : ${quincy_config:="/usr/local/etc/quincy/server.toml"}
-: ${quincy_flags:="--config-path ${quincy_config}"}
+: ${quincy_args:="--config-path ${quincy_config}"}
+: ${quincy_flags:=""}
 
 pidfile="/var/run/${name}.pid"
 procname="/usr/local/bin/quincy-server"
 command="/usr/sbin/daemon"
-command_args="-f -p ${pidfile} -u ${quincy_user} ${procname} ${quincy_flags}"
+command_args="-f -p ${pidfile} -u ${quincy_user} ${procname} ${quincy_args}"
 required_files="${quincy_config}"
 
 run_rc_command "$1"
