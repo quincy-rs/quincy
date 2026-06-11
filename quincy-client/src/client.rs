@@ -1,4 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+#[cfg(all(unix, not(target_os = "macos")))]
+use std::os::fd::RawFd;
 use std::time::Duration;
 
 use ipnet::IpNet;
@@ -9,6 +11,8 @@ use quincy::config::ClientConfig;
 use quincy::constants::QUINN_RUNTIME;
 use quincy::error::ConfigError;
 use quincy::ip_assignment;
+#[cfg(all(unix, not(target_os = "macos")))]
+use quincy::network::interface::tun_rs::TunRsInterface;
 use quincy::network::interface::{Interface, InterfaceIO};
 use quincy::network::socket::bind_socket;
 use quincy::{QuincyError, Result};
@@ -17,6 +21,19 @@ use crate::relayer::ClientRelayer;
 
 /// Default timeout for receiving IP assignment from server.
 const IP_ASSIGNMENT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Parameters available when creating the client-side tunnel interface.
+#[derive(Clone, Debug)]
+pub struct ClientInterfaceConfig {
+    pub client_address: IpNet,
+    pub server_address: IpNet,
+    pub mtu: u16,
+    pub tunnel_gateway: Option<IpAddr>,
+    pub interface_name: Option<String>,
+    pub routes: Vec<IpNet>,
+    pub dns_servers: Vec<IpAddr>,
+    pub remote_address: IpAddr,
+}
 
 /// Represents a Quincy client that connects to a server and relays packets between the server and a TUN interface.
 pub struct QuincyClient {
@@ -45,6 +62,29 @@ impl QuincyClient {
     /// Authentication happens during the QUIC handshake (Noise allowed-keys or TLS mTLS).
     /// After the handshake, the server sends the IP assignment over a uni-stream.
     pub async fn start<I: InterfaceIO>(&mut self) -> Result<()> {
+        self.start_with_interface::<I, _>(|interface_config| {
+            Interface::create(
+                interface_config.client_address,
+                interface_config.mtu,
+                interface_config.tunnel_gateway,
+                interface_config.interface_name,
+                Some(interface_config.routes),
+                Some(interface_config.dns_servers),
+                Some(interface_config.remote_address),
+            )
+        })
+        .await
+    }
+
+    /// Connects to the Quincy server and starts the client using a caller-created interface.
+    ///
+    /// This is intended for platforms where the system creates the TUN device
+    /// and gives Quincy an existing handle, such as Android's VPN APIs.
+    pub async fn start_with_interface<I, F>(&mut self, create_interface: F) -> Result<()>
+    where
+        I: InterfaceIO,
+        F: FnOnce(ClientInterfaceConfig) -> Result<Interface<I>>,
+    {
         if self.relayer.is_some() {
             return Err(QuincyError::system("Client is already started"));
         }
@@ -65,20 +105,52 @@ impl QuincyClient {
         self.client_address = Some(client_address);
         self.server_address = Some(server_address);
 
-        let interface: Interface<I> = Interface::create(
+        let interface_config = ClientInterfaceConfig {
             client_address,
-            self.config.connection.mtu,
-            Some(server_address.addr()),
-            self.config.network.interface_name.clone(),
-            Some(self.config.network.routes.clone()),
-            Some(self.config.network.dns_servers.clone()),
-            Some(server_addr.ip()),
-        )?;
+            server_address,
+            mtu: self.config.connection.mtu,
+            tunnel_gateway: Some(server_address.addr()),
+            interface_name: self.config.network.interface_name.clone(),
+            routes: self.config.network.routes.clone(),
+            dns_servers: self.config.network.dns_servers.clone(),
+            remote_address: server_addr.ip(),
+        };
+
+        let interface = create_interface(interface_config)?;
 
         let relayer = ClientRelayer::start(interface, connection)?;
         self.relayer.replace(relayer);
 
         Ok(())
+    }
+
+    /// Starts the client using an already-created TUN file descriptor.
+    ///
+    /// Intended for platforms such as Android where the system VPN API creates
+    /// and configures the TUN device. The fd path therefore does not apply
+    /// Quincy's route or DNS configuration; callers should configure those
+    /// through the platform VPN API before passing the descriptor in.
+    ///
+    /// # Safety
+    ///
+    /// `fd` must be a valid TUN file descriptor compatible with `tun-rs`, and
+    /// the caller must not close or otherwise use it after ownership is passed
+    /// to this function.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub async unsafe fn start_with_tun_fd(&mut self, fd: RawFd) -> Result<()> {
+        self.start_with_interface::<TunRsInterface, _>(|interface_config| {
+            let interface = unsafe {
+                TunRsInterface::from_fd(fd, interface_config.mtu, interface_config.tunnel_gateway)?
+            };
+
+            Ok(Interface::from_io(
+                interface,
+                None,
+                None,
+                Some(interface_config.remote_address),
+            ))
+        })
+        .await
     }
 
     /// Returns whether the client is currently running.

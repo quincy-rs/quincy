@@ -8,6 +8,8 @@ use crate::network::route::{InstalledExclusionRoute, add_routes};
 use bytes::BytesMut;
 use ipnet::IpNet;
 use std::net::IpAddr;
+#[cfg(all(unix, not(target_os = "macos")))]
+use std::os::fd::RawFd;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
@@ -25,6 +27,48 @@ pub struct TunRsInterface {
     mtu: u16,
     gateway: Option<IpAddr>,
     torn_down: AtomicBool,
+}
+
+impl TunRsInterface {
+    fn from_async_device(interface: AsyncDevice, mtu: u16, tunnel_gateway: Option<IpAddr>) -> Self {
+        let interface = Arc::new(interface);
+
+        let (reader_channel_tx, reader_channel_rx) =
+            tokio::sync::mpsc::channel(PACKET_CHANNEL_SIZE);
+        let (writer_channel_tx, writer_channel_rx) =
+            tokio::sync::mpsc::channel::<Packet>(PACKET_CHANNEL_SIZE);
+
+        let reader_handle = reader_task(interface.clone(), reader_channel_tx, mtu as usize);
+        let writer_handle = writer_task(interface.clone(), writer_channel_rx, mtu as usize);
+
+        Self {
+            inner: interface,
+            reader_channel: Mutex::new(reader_channel_rx),
+            writer_channel: writer_channel_tx,
+            reader_task: reader_handle,
+            writer_task: writer_handle,
+            mtu,
+            gateway: tunnel_gateway,
+            torn_down: AtomicBool::new(false),
+        }
+    }
+
+    /// Creates a TUN interface wrapper from an already-open file descriptor.
+    ///
+    /// The returned interface takes ownership of `fd`.
+    ///
+    /// # Safety
+    ///
+    /// `fd` must be a valid TUN file descriptor compatible with `tun-rs`, and
+    /// the caller must not close or otherwise use it after ownership is passed
+    /// to this function.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub unsafe fn from_fd(fd: RawFd, mtu: u16, tunnel_gateway: Option<IpAddr>) -> Result<Self> {
+        let interface =
+            unsafe { AsyncDevice::from_fd(fd) }.map_err(|_| InterfaceError::CreationFailed)?;
+
+        Ok(Self::from_async_device(interface, mtu, tunnel_gateway))
+    }
 }
 
 impl InterfaceIO for TunRsInterface {
@@ -72,31 +116,13 @@ impl InterfaceIO for TunRsInterface {
         let interface = builder
             .build_async()
             .map_err(|_| InterfaceError::CreationFailed)?;
-        let interface = Arc::new(interface);
 
         info!(
             "Created interface: {}",
             interface.name().unwrap_or("Unknown".to_string())
         );
 
-        let (reader_channel_tx, reader_channel_rx) =
-            tokio::sync::mpsc::channel(PACKET_CHANNEL_SIZE);
-        let (writer_channel_tx, writer_channel_rx) =
-            tokio::sync::mpsc::channel::<Packet>(PACKET_CHANNEL_SIZE);
-
-        let reader_handle = reader_task(interface.clone(), reader_channel_tx, mtu as usize);
-        let writer_handle = writer_task(interface.clone(), writer_channel_rx, mtu as usize);
-
-        Ok(Self {
-            inner: interface,
-            reader_channel: Mutex::new(reader_channel_rx),
-            writer_channel: writer_channel_tx,
-            reader_task: reader_handle,
-            writer_task: writer_handle,
-            mtu,
-            gateway: tunnel_gateway,
-            torn_down: AtomicBool::new(false),
-        })
+        Ok(Self::from_async_device(interface, mtu, tunnel_gateway))
     }
 
     fn configure_routes(
