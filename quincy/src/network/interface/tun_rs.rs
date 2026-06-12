@@ -75,7 +75,8 @@ impl TunRsInterface {
     pub unsafe fn from_fd(fd: OwnedFd, mtu: u16, tunnel_gateway: Option<IpAddr>) -> Result<Self> {
         // SAFETY: the caller guarantees that `fd` is a valid, exclusively-owned
         // TUN fd. `into_raw_fd` transfers that ownership to `tun-rs`, which
-        // closes it when the resulting device is dropped.
+        // wraps the fd before fallible async registration and closes it on
+        // either construction failure or eventual device drop.
         let interface = unsafe { AsyncDevice::from_fd(fd.into_raw_fd()) }
             .map_err(|_| InterfaceError::CreationFailed)?;
 
@@ -327,6 +328,31 @@ impl Drop for TunRsInterface {
         if let Err(e) = self.teardown() {
             warn!("TUN teardown during drop failed: {e}");
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::os::fd::AsRawFd;
+
+    #[test]
+    fn from_fd_closes_fd_when_async_device_rejects_it() {
+        let file = File::open("/dev/null").expect("open /dev/null");
+        let raw_fd = file.as_raw_fd();
+        let fd: OwnedFd = file.into();
+
+        // SAFETY: this intentionally passes a non-TUN fd to exercise the
+        // rejection path after ownership has moved into `from_fd`.
+        let result = unsafe { TunRsInterface::from_fd(fd, 1500, None) };
+        assert!(result.is_err());
+
+        // SAFETY: `raw_fd` is only used to verify that the descriptor number no
+        // longer refers to an open fd after the failed construction path.
+        let flags = unsafe { libc::fcntl(raw_fd, libc::F_GETFD) };
+        assert_eq!(flags, -1);
     }
 }
 
