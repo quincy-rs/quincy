@@ -331,31 +331,6 @@ impl Drop for TunRsInterface {
     }
 }
 
-#[cfg(test)]
-#[cfg(target_os = "linux")]
-mod tests {
-    use super::*;
-    use std::fs::File;
-    use std::os::fd::AsRawFd;
-
-    #[test]
-    fn from_fd_closes_fd_when_async_device_rejects_it() {
-        let file = File::open("/dev/null").expect("open /dev/null");
-        let raw_fd = file.as_raw_fd();
-        let fd: OwnedFd = file.into();
-
-        // SAFETY: this intentionally passes a non-TUN fd to exercise the
-        // rejection path after ownership has moved into `from_fd`.
-        let result = unsafe { TunRsInterface::from_fd(fd, 1500, None) };
-        assert!(result.is_err());
-
-        // SAFETY: `raw_fd` is only used to verify that the descriptor number no
-        // longer refers to an open fd after the failed construction path.
-        let flags = unsafe { libc::fcntl(raw_fd, libc::F_GETFD) };
-        assert_eq!(flags, -1);
-    }
-}
-
 #[cfg(any(not(target_os = "linux"), not(feature = "offload")))]
 fn reader_task(
     interface: Arc<AsyncDevice>,
@@ -562,4 +537,29 @@ unsafe fn uninitialized_bytes_mut(capacity: usize) -> BytesMut {
     unsafe { buf.set_len(capacity) };
 
     buf
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::os::fd::AsRawFd;
+
+    #[tokio::test]
+    async fn from_fd_closes_fd_when_async_device_rejects_it() {
+        let file = File::open("/dev/null").expect("open /dev/null");
+        let raw_fd = file.as_raw_fd();
+        let fd: OwnedFd = file.into();
+
+        // SAFETY: this intentionally passes a non-TUN fd to exercise the
+        // rejection path after ownership has moved into `from_fd`.
+        let result = unsafe { TunRsInterface::from_fd(fd, 1500, None) };
+        assert!(result.is_err());
+
+        // SAFETY: `raw_fd` is only used to verify that the descriptor number no
+        // longer refers to an open fd after the failed construction path.
+        let flags = unsafe { libc::fcntl(raw_fd, libc::F_GETFD) };
+        assert_eq!(flags, -1);
+    }
 }
