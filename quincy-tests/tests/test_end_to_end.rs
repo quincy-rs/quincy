@@ -1,7 +1,9 @@
 mod common;
 
 use common::{TestInterface, dummy_packet, setup_interface};
+use quincy::QuincyError;
 use quincy::config::{ClientConfig, FromPath, ServerConfig};
+use quincy::network::interface::Interface;
 use quincy_client::client::QuincyClient;
 use quincy_server::server::QuincyServer;
 use rstest::rstest;
@@ -53,4 +55,54 @@ async fn test_end_to_end_communication(#[case] config_dir: &str) {
     let recv_packet = client_ch.rx.lock().await.recv().await.unwrap();
 
     assert_eq!(test_packet, recv_packet);
+}
+
+#[tokio::test]
+async fn test_start_with_interface_failure_leaves_client_stopped() {
+    struct Client;
+    struct Server;
+
+    let _server_ch = setup_interface::<Server>();
+
+    let mut client_config = ClientConfig::from_path(
+        Path::new("tests/static/configs/tls_standard/client.toml"),
+        "QUINCY_",
+    )
+    .unwrap();
+    let mut server_config = ServerConfig::from_path(
+        Path::new("tests/static/configs/tls_standard/server.toml"),
+        "QUINCY_",
+    )
+    .unwrap();
+
+    server_config.bind_port = 55165;
+    client_config.connection_string = "localhost:55165".to_string();
+
+    let mut client = QuincyClient::new(client_config);
+    let server = QuincyServer::new(server_config).unwrap();
+
+    tokio::spawn(async move { server.run::<TestInterface<Server>>().await.unwrap() });
+
+    let result = client
+        .start_with_interface::<TestInterface<Client>, _>(|interface_config| {
+            assert_eq!(
+                interface_config.client_address.addr().to_string(),
+                "10.0.0.2"
+            );
+            assert_eq!(
+                interface_config.server_address.addr().to_string(),
+                "10.0.0.1"
+            );
+            assert_eq!(interface_config.mtu, 1400);
+
+            Err::<Interface<TestInterface<Client>>, _>(QuincyError::system(
+                "forced interface creation failure",
+            ))
+        })
+        .await;
+
+    assert!(result.is_err());
+    assert!(!client.is_running());
+    assert_eq!(client.client_address(), None);
+    assert_eq!(client.server_address(), None);
 }

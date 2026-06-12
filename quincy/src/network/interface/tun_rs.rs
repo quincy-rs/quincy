@@ -8,8 +8,8 @@ use crate::network::route::{InstalledExclusionRoute, add_routes};
 use bytes::BytesMut;
 use ipnet::IpNet;
 use std::net::IpAddr;
-#[cfg(all(unix, not(target_os = "macos")))]
-use std::os::fd::RawFd;
+#[cfg(unix)]
+use std::os::fd::{IntoRawFd, OwnedFd};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
@@ -27,10 +27,16 @@ pub struct TunRsInterface {
     mtu: u16,
     gateway: Option<IpAddr>,
     torn_down: AtomicBool,
+    disable_on_teardown: bool,
 }
 
 impl TunRsInterface {
-    fn from_async_device(interface: AsyncDevice, mtu: u16, tunnel_gateway: Option<IpAddr>) -> Self {
+    fn from_async_device(
+        interface: AsyncDevice,
+        mtu: u16,
+        tunnel_gateway: Option<IpAddr>,
+        disable_on_teardown: bool,
+    ) -> Self {
         let interface = Arc::new(interface);
 
         let (reader_channel_tx, reader_channel_rx) =
@@ -50,24 +56,35 @@ impl TunRsInterface {
             mtu,
             gateway: tunnel_gateway,
             torn_down: AtomicBool::new(false),
+            disable_on_teardown,
         }
     }
 
-    /// Creates a TUN interface wrapper from an already-open file descriptor.
+    /// Creates a TUN interface wrapper from an owned file descriptor.
     ///
-    /// The returned interface takes ownership of `fd`.
+    /// The returned interface takes ownership of `fd`. Runtime route and DNS
+    /// configuration should be handled by the platform code that created the
+    /// fd; Quincy only owns packet I/O and closes the fd during teardown.
     ///
     /// # Safety
     ///
     /// `fd` must be a valid TUN file descriptor compatible with `tun-rs`, and
-    /// the caller must not close or otherwise use it after ownership is passed
+    /// must not be owned by any other platform object after ownership is passed
     /// to this function.
-    #[cfg(all(unix, not(target_os = "macos")))]
-    pub unsafe fn from_fd(fd: RawFd, mtu: u16, tunnel_gateway: Option<IpAddr>) -> Result<Self> {
-        let interface =
-            unsafe { AsyncDevice::from_fd(fd) }.map_err(|_| InterfaceError::CreationFailed)?;
+    #[cfg(unix)]
+    pub unsafe fn from_fd(fd: OwnedFd, mtu: u16, tunnel_gateway: Option<IpAddr>) -> Result<Self> {
+        // SAFETY: the caller guarantees that `fd` is a valid, exclusively-owned
+        // TUN fd. `into_raw_fd` transfers that ownership to `tun-rs`, which
+        // closes it when the resulting device is dropped.
+        let interface = unsafe { AsyncDevice::from_fd(fd.into_raw_fd()) }
+            .map_err(|_| InterfaceError::CreationFailed)?;
 
-        Ok(Self::from_async_device(interface, mtu, tunnel_gateway))
+        Ok(Self::from_async_device(
+            interface,
+            mtu,
+            tunnel_gateway,
+            false,
+        ))
     }
 }
 
@@ -122,7 +139,12 @@ impl InterfaceIO for TunRsInterface {
             interface.name().unwrap_or("Unknown".to_string())
         );
 
-        Ok(Self::from_async_device(interface, mtu, tunnel_gateway))
+        Ok(Self::from_async_device(
+            interface,
+            mtu,
+            tunnel_gateway,
+            true,
+        ))
     }
 
     fn configure_routes(
@@ -281,16 +303,20 @@ impl TunRsInterface {
         self.reader_task.abort();
         self.writer_task.abort();
 
-        self.inner
-            .enabled(false)
-            .map_err(|e| InterfaceError::ConfigurationFailed {
-                reason: format!("failed to bring down TUN interface: {e}"),
-            })?;
+        if self.disable_on_teardown {
+            self.inner
+                .enabled(false)
+                .map_err(|e| InterfaceError::ConfigurationFailed {
+                    reason: format!("failed to bring down TUN interface: {e}"),
+                })?;
 
-        info!(
-            "TUN interface {} is down",
-            self.name().unwrap_or("Unknown".to_string())
-        );
+            info!(
+                "TUN interface {} is down",
+                self.name().unwrap_or("Unknown".to_string())
+            );
+        } else {
+            info!("TUN interface fd wrapper is down");
+        }
 
         Ok(())
     }

@@ -1,6 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
-#[cfg(all(unix, not(target_os = "macos")))]
-use std::os::fd::RawFd;
+#[cfg(unix)]
+use std::os::fd::OwnedFd;
 use std::time::Duration;
 
 use ipnet::IpNet;
@@ -11,7 +11,7 @@ use quincy::config::ClientConfig;
 use quincy::constants::QUINN_RUNTIME;
 use quincy::error::ConfigError;
 use quincy::ip_assignment;
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 use quincy::network::interface::tun_rs::TunRsInterface;
 use quincy::network::interface::{Interface, InterfaceIO};
 use quincy::network::socket::bind_socket;
@@ -101,10 +101,6 @@ impl QuincyClient {
         info!("Received client address: {client_address}");
         info!("Received server address: {server_address}");
 
-        // Store the addresses for later access
-        self.client_address = Some(client_address);
-        self.server_address = Some(server_address);
-
         let interface_config = ClientInterfaceConfig {
             client_address,
             server_address,
@@ -119,35 +115,50 @@ impl QuincyClient {
         let interface = create_interface(interface_config)?;
 
         let relayer = ClientRelayer::start(interface, connection)?;
+        self.client_address = Some(client_address);
+        self.server_address = Some(server_address);
         self.relayer.replace(relayer);
 
         Ok(())
     }
 
-    /// Starts the client using an already-created TUN file descriptor.
+    /// Starts the client using a platform-created TUN file descriptor.
     ///
-    /// Intended for platforms such as Android where the system VPN API creates
-    /// and configures the TUN device. The fd path therefore does not apply
-    /// Quincy's route or DNS configuration; callers should configure those
-    /// through the platform VPN API before passing the descriptor in.
+    /// `create_tun_fd` is called after the server sends the client IP assignment.
+    /// This lets platforms such as Android configure the system VPN interface
+    /// with Quincy's assigned address, MTU, routes, and DNS servers before
+    /// handing the resulting fd to the packet relayer. The fd path does not
+    /// apply Quincy's route or DNS configuration; platform VPN configuration and
+    /// cleanup remain the caller's responsibility.
     ///
     /// # Safety
     ///
-    /// `fd` must be a valid TUN file descriptor compatible with `tun-rs`, and
-    /// the caller must not close or otherwise use it after ownership is passed
-    /// to this function.
-    #[cfg(all(unix, not(target_os = "macos")))]
-    pub async unsafe fn start_with_tun_fd(&mut self, fd: RawFd) -> Result<()> {
-        self.start_with_interface::<TunRsInterface, _>(|interface_config| {
+    /// `create_tun_fd` must return a valid TUN file descriptor compatible with
+    /// `tun-rs`. The returned fd must not be owned by any platform SDK object
+    /// after it is returned to Quincy.
+    #[cfg(unix)]
+    pub async unsafe fn start_with_tun_fd<F>(&mut self, create_tun_fd: F) -> Result<()>
+    where
+        F: FnOnce(ClientInterfaceConfig) -> Result<OwnedFd>,
+    {
+        self.start_with_interface::<TunRsInterface, _>(move |interface_config| {
+            let mtu = interface_config.mtu;
+            let tunnel_gateway = interface_config.tunnel_gateway;
+            let remote_address = interface_config.remote_address;
+            let fd = create_tun_fd(interface_config)?;
+
             let interface = unsafe {
-                TunRsInterface::from_fd(fd, interface_config.mtu, interface_config.tunnel_gateway)?
+                // SAFETY: `create_tun_fd` runs inside this unsafe API and must
+                // return an exclusively-owned TUN fd that satisfies
+                // `TunRsInterface::from_fd`'s safety contract.
+                TunRsInterface::from_fd(fd, mtu, tunnel_gateway)?
             };
 
             Ok(Interface::from_io(
                 interface,
                 None,
                 None,
-                Some(interface_config.remote_address),
+                Some(remote_address),
             ))
         })
         .await
