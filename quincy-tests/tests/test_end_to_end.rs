@@ -1,12 +1,42 @@
 mod common;
 
 use common::{TestInterface, dummy_packet, setup_interface};
+use quincy::QuincyError;
 use quincy::config::{ClientConfig, FromPath, ServerConfig};
+use quincy::network::interface::Interface;
 use quincy_client::client::QuincyClient;
 use quincy_server::server::QuincyServer;
 use rstest::rstest;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::path::Path;
+
+fn use_ephemeral_server_port(client_config: &mut ClientConfig, server_config: &mut ServerConfig) {
+    let listener = TcpListener::bind(SocketAddr::new(server_config.bind_address, 0))
+        .expect("reserve ephemeral server port");
+    let port = listener
+        .local_addr()
+        .expect("read reserved server port")
+        .port();
+
+    server_config.bind_port = port;
+    client_config.connection_string = format!("localhost:{port}");
+}
+
+#[cfg(unix)]
+fn assert_fd_closed(raw_fd: std::os::fd::RawFd) {
+    assert_ne!(
+        raw_fd, -1,
+        "test did not capture a descriptor before ownership transfer"
+    );
+
+    // SAFETY: this only queries whether the captured descriptor number still
+    // refers to an open fd after ownership moved into the failed construction path.
+    let flags = unsafe { libc::fcntl(raw_fd, libc::F_GETFD) };
+    let errno = std::io::Error::last_os_error().raw_os_error();
+
+    assert_eq!(flags, -1);
+    assert_eq!(errno, Some(libc::EBADF));
+}
 
 #[rstest]
 #[case("tests/static/configs/tls_standard")]
@@ -36,6 +66,15 @@ async fn test_end_to_end_communication(#[case] config_dir: &str) {
     tokio::spawn(async move { server.run::<TestInterface<Server>>().await.unwrap() });
     client.start::<TestInterface<Client>>().await.unwrap();
 
+    assert_eq!(
+        client.client_address().map(|addr| addr.addr()),
+        Some(IpAddr::V4(ip_client))
+    );
+    assert_eq!(
+        client.server_address().map(|addr| addr.addr()),
+        Some(IpAddr::V4(ip_server))
+    );
+
     // Test client -> server
     let test_packet = dummy_packet(ip_client, ip_server);
 
@@ -53,4 +92,115 @@ async fn test_end_to_end_communication(#[case] config_dir: &str) {
     let recv_packet = client_ch.rx.lock().await.recv().await.unwrap();
 
     assert_eq!(test_packet, recv_packet);
+}
+
+#[tokio::test]
+async fn test_start_with_interface_failure_leaves_client_stopped() {
+    use std::cell::Cell;
+
+    struct Client;
+    struct Server;
+
+    let _server_ch = setup_interface::<Server>();
+
+    let mut client_config = ClientConfig::from_path(
+        Path::new("tests/static/configs/tls_standard/client.toml"),
+        "QUINCY_",
+    )
+    .unwrap();
+    let mut server_config = ServerConfig::from_path(
+        Path::new("tests/static/configs/tls_standard/server.toml"),
+        "QUINCY_",
+    )
+    .unwrap();
+
+    use_ephemeral_server_port(&mut client_config, &mut server_config);
+
+    let mut client = QuincyClient::new(client_config);
+    let server = QuincyServer::new(server_config).unwrap();
+    let create_called = Cell::new(false);
+
+    tokio::spawn(async move { server.run::<TestInterface<Server>>().await.unwrap() });
+
+    let result = client
+        .start_with_interface::<TestInterface<Client>, _>(|interface_config| {
+            create_called.set(true);
+
+            assert_eq!(
+                interface_config.client_address.addr().to_string(),
+                "10.0.0.2"
+            );
+            assert_eq!(
+                interface_config.server_address.addr().to_string(),
+                "10.0.0.1"
+            );
+            assert_eq!(interface_config.mtu, 1400);
+
+            Err::<Interface<TestInterface<Client>>, _>(QuincyError::system(
+                "forced interface creation failure",
+            ))
+        })
+        .await;
+
+    assert!(result.is_err());
+    assert!(create_called.get());
+    assert!(!client.is_running());
+    assert_eq!(client.client_address(), None);
+    assert_eq!(client.server_address(), None);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_start_with_tun_fd_failure_closes_fd_and_leaves_client_stopped() {
+    use std::cell::Cell;
+    use std::fs::File;
+    use std::os::fd::{AsRawFd, OwnedFd};
+
+    struct Server;
+
+    let _server_ch = setup_interface::<Server>();
+
+    let mut client_config = ClientConfig::from_path(
+        Path::new("tests/static/configs/tls_standard/client.toml"),
+        "QUINCY_",
+    )
+    .unwrap();
+    let mut server_config = ServerConfig::from_path(
+        Path::new("tests/static/configs/tls_standard/server.toml"),
+        "QUINCY_",
+    )
+    .unwrap();
+
+    use_ephemeral_server_port(&mut client_config, &mut server_config);
+
+    let mut client = QuincyClient::new(client_config);
+    let server = QuincyServer::new(server_config).unwrap();
+    let raw_fd = Cell::new(-1);
+
+    tokio::spawn(async move { server.run::<TestInterface<Server>>().await.unwrap() });
+
+    // SAFETY: the callback returns an owned fd, intentionally using a non-TUN
+    // fd to exercise the rejected construction path.
+    let result = unsafe {
+        client
+            .start_with_tun_fd(|interface_config| {
+                assert_eq!(
+                    interface_config.client_address.addr().to_string(),
+                    "10.0.0.2"
+                );
+                assert_eq!(interface_config.mtu, 1400);
+
+                let file = File::open("/dev/null").expect("open /dev/null");
+                raw_fd.set(file.as_raw_fd());
+                Ok::<OwnedFd, QuincyError>(file.into())
+            })
+            .await
+    };
+
+    assert!(result.is_err());
+    assert!(!client.is_running());
+    assert_eq!(client.client_address(), None);
+    assert_eq!(client.server_address(), None);
+
+    assert_fd_closed(raw_fd.get());
 }

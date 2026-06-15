@@ -8,6 +8,8 @@ use crate::network::route::{InstalledExclusionRoute, add_routes};
 use bytes::BytesMut;
 use ipnet::IpNet;
 use std::net::IpAddr;
+#[cfg(unix)]
+use std::os::fd::{IntoRawFd, OwnedFd};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
@@ -25,6 +27,66 @@ pub struct TunRsInterface {
     mtu: u16,
     gateway: Option<IpAddr>,
     torn_down: AtomicBool,
+    disable_on_teardown: bool,
+}
+
+impl TunRsInterface {
+    fn from_async_device(
+        interface: AsyncDevice,
+        mtu: u16,
+        tunnel_gateway: Option<IpAddr>,
+        disable_on_teardown: bool,
+    ) -> Self {
+        let interface = Arc::new(interface);
+
+        let (reader_channel_tx, reader_channel_rx) =
+            tokio::sync::mpsc::channel(PACKET_CHANNEL_SIZE);
+        let (writer_channel_tx, writer_channel_rx) =
+            tokio::sync::mpsc::channel::<Packet>(PACKET_CHANNEL_SIZE);
+
+        let reader_handle = reader_task(interface.clone(), reader_channel_tx, mtu as usize);
+        let writer_handle = writer_task(interface.clone(), writer_channel_rx, mtu as usize);
+
+        Self {
+            inner: interface,
+            reader_channel: Mutex::new(reader_channel_rx),
+            writer_channel: writer_channel_tx,
+            reader_task: reader_handle,
+            writer_task: writer_handle,
+            mtu,
+            gateway: tunnel_gateway,
+            torn_down: AtomicBool::new(false),
+            disable_on_teardown,
+        }
+    }
+
+    /// Creates a TUN interface wrapper from an owned file descriptor.
+    ///
+    /// The returned interface takes ownership of `fd`. Runtime route and DNS
+    /// configuration should be handled by the platform code that created the
+    /// fd; Quincy only owns packet I/O and closes the fd during teardown.
+    ///
+    /// # Safety
+    ///
+    /// `fd` must be a valid TUN file descriptor compatible with `tun-rs`, and
+    /// must not be owned by any other platform object after ownership is passed
+    /// to this function.
+    #[cfg(unix)]
+    pub unsafe fn from_fd(fd: OwnedFd, mtu: u16, tunnel_gateway: Option<IpAddr>) -> Result<Self> {
+        // SAFETY: the caller guarantees that `fd` is a valid, exclusively-owned
+        // TUN fd. `into_raw_fd` transfers that ownership to `tun-rs`, which
+        // wraps the fd before fallible async registration and closes it on
+        // either construction failure or eventual device drop.
+        let interface = unsafe { AsyncDevice::from_fd(fd.into_raw_fd()) }
+            .map_err(|_| InterfaceError::CreationFailed)?;
+
+        Ok(Self::from_async_device(
+            interface,
+            mtu,
+            tunnel_gateway,
+            false,
+        ))
+    }
 }
 
 impl InterfaceIO for TunRsInterface {
@@ -72,31 +134,18 @@ impl InterfaceIO for TunRsInterface {
         let interface = builder
             .build_async()
             .map_err(|_| InterfaceError::CreationFailed)?;
-        let interface = Arc::new(interface);
 
         info!(
             "Created interface: {}",
             interface.name().unwrap_or("Unknown".to_string())
         );
 
-        let (reader_channel_tx, reader_channel_rx) =
-            tokio::sync::mpsc::channel(PACKET_CHANNEL_SIZE);
-        let (writer_channel_tx, writer_channel_rx) =
-            tokio::sync::mpsc::channel::<Packet>(PACKET_CHANNEL_SIZE);
-
-        let reader_handle = reader_task(interface.clone(), reader_channel_tx, mtu as usize);
-        let writer_handle = writer_task(interface.clone(), writer_channel_rx, mtu as usize);
-
-        Ok(Self {
-            inner: interface,
-            reader_channel: Mutex::new(reader_channel_rx),
-            writer_channel: writer_channel_tx,
-            reader_task: reader_handle,
-            writer_task: writer_handle,
+        Ok(Self::from_async_device(
+            interface,
             mtu,
-            gateway: tunnel_gateway,
-            torn_down: AtomicBool::new(false),
-        })
+            tunnel_gateway,
+            true,
+        ))
     }
 
     fn configure_routes(
@@ -255,16 +304,20 @@ impl TunRsInterface {
         self.reader_task.abort();
         self.writer_task.abort();
 
-        self.inner
-            .enabled(false)
-            .map_err(|e| InterfaceError::ConfigurationFailed {
-                reason: format!("failed to bring down TUN interface: {e}"),
-            })?;
+        if self.disable_on_teardown {
+            self.inner
+                .enabled(false)
+                .map_err(|e| InterfaceError::ConfigurationFailed {
+                    reason: format!("failed to bring down TUN interface: {e}"),
+                })?;
 
-        info!(
-            "TUN interface {} is down",
-            self.name().unwrap_or("Unknown".to_string())
-        );
+            info!(
+                "TUN interface {} is down",
+                self.name().unwrap_or("Unknown".to_string())
+            );
+        } else {
+            info!("TUN interface fd wrapper is down");
+        }
 
         Ok(())
     }
@@ -484,4 +537,41 @@ unsafe fn uninitialized_bytes_mut(capacity: usize) -> BytesMut {
     unsafe { buf.set_len(capacity) };
 
     buf
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::os::fd::{AsRawFd, RawFd};
+
+    fn assert_fd_closed(raw_fd: RawFd) {
+        assert_ne!(
+            raw_fd, -1,
+            "test did not capture a descriptor before ownership transfer"
+        );
+
+        // SAFETY: this only queries whether the captured descriptor number still
+        // refers to an open fd after ownership moved into `TunRsInterface::from_fd`.
+        let flags = unsafe { libc::fcntl(raw_fd, libc::F_GETFD) };
+        let errno = std::io::Error::last_os_error().raw_os_error();
+
+        assert_eq!(flags, -1);
+        assert_eq!(errno, Some(libc::EBADF));
+    }
+
+    #[tokio::test]
+    async fn from_fd_closes_fd_when_async_device_rejects_it() {
+        let file = File::open("/dev/null").expect("open /dev/null");
+        let raw_fd = file.as_raw_fd();
+        let fd: OwnedFd = file.into();
+
+        // SAFETY: this intentionally passes a non-TUN fd to exercise the
+        // rejection path after ownership has moved into `from_fd`.
+        let result = unsafe { TunRsInterface::from_fd(fd, 1500, None) };
+        assert!(result.is_err());
+
+        assert_fd_closed(raw_fd);
+    }
 }
