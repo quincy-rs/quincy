@@ -544,7 +544,22 @@ unsafe fn uninitialized_bytes_mut(capacity: usize) -> BytesMut {
 mod tests {
     use super::*;
     use std::fs::File;
-    use std::os::fd::AsRawFd;
+    use std::os::fd::{AsRawFd, RawFd};
+
+    fn assert_fd_closed(raw_fd: RawFd) {
+        assert_ne!(
+            raw_fd, -1,
+            "test did not capture a descriptor before ownership transfer"
+        );
+
+        // SAFETY: this only queries whether the captured descriptor number still
+        // refers to an open fd after ownership moved into `TunRsInterface::from_fd`.
+        let flags = unsafe { libc::fcntl(raw_fd, libc::F_GETFD) };
+        let errno = std::io::Error::last_os_error().raw_os_error();
+
+        assert_eq!(flags, -1);
+        assert_eq!(errno, Some(libc::EBADF));
+    }
 
     #[tokio::test]
     async fn from_fd_closes_fd_when_async_device_rejects_it() {
@@ -557,9 +572,6 @@ mod tests {
         let result = unsafe { TunRsInterface::from_fd(fd, 1500, None) };
         assert!(result.is_err());
 
-        // SAFETY: `raw_fd` is only used to verify that the descriptor number no
-        // longer refers to an open fd after the failed construction path.
-        let flags = unsafe { libc::fcntl(raw_fd, libc::F_GETFD) };
-        assert_eq!(flags, -1);
+        assert_fd_closed(raw_fd);
     }
 }

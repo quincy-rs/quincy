@@ -7,8 +7,36 @@ use quincy::network::interface::Interface;
 use quincy_client::client::QuincyClient;
 use quincy_server::server::QuincyServer;
 use rstest::rstest;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::path::Path;
+
+fn use_ephemeral_server_port(client_config: &mut ClientConfig, server_config: &mut ServerConfig) {
+    let listener = TcpListener::bind(SocketAddr::new(server_config.bind_address, 0))
+        .expect("reserve ephemeral server port");
+    let port = listener
+        .local_addr()
+        .expect("read reserved server port")
+        .port();
+
+    server_config.bind_port = port;
+    client_config.connection_string = format!("localhost:{port}");
+}
+
+#[cfg(unix)]
+fn assert_fd_closed(raw_fd: std::os::fd::RawFd) {
+    assert_ne!(
+        raw_fd, -1,
+        "test did not capture a descriptor before ownership transfer"
+    );
+
+    // SAFETY: this only queries whether the captured descriptor number still
+    // refers to an open fd after ownership moved into the failed construction path.
+    let flags = unsafe { libc::fcntl(raw_fd, libc::F_GETFD) };
+    let errno = std::io::Error::last_os_error().raw_os_error();
+
+    assert_eq!(flags, -1);
+    assert_eq!(errno, Some(libc::EBADF));
+}
 
 #[rstest]
 #[case("tests/static/configs/tls_standard")]
@@ -68,6 +96,8 @@ async fn test_end_to_end_communication(#[case] config_dir: &str) {
 
 #[tokio::test]
 async fn test_start_with_interface_failure_leaves_client_stopped() {
+    use std::cell::Cell;
+
     struct Client;
     struct Server;
 
@@ -84,16 +114,18 @@ async fn test_start_with_interface_failure_leaves_client_stopped() {
     )
     .unwrap();
 
-    server_config.bind_port = 55165;
-    client_config.connection_string = "localhost:55165".to_string();
+    use_ephemeral_server_port(&mut client_config, &mut server_config);
 
     let mut client = QuincyClient::new(client_config);
     let server = QuincyServer::new(server_config).unwrap();
+    let create_called = Cell::new(false);
 
     tokio::spawn(async move { server.run::<TestInterface<Server>>().await.unwrap() });
 
     let result = client
         .start_with_interface::<TestInterface<Client>, _>(|interface_config| {
+            create_called.set(true);
+
             assert_eq!(
                 interface_config.client_address.addr().to_string(),
                 "10.0.0.2"
@@ -111,6 +143,7 @@ async fn test_start_with_interface_failure_leaves_client_stopped() {
         .await;
 
     assert!(result.is_err());
+    assert!(create_called.get());
     assert!(!client.is_running());
     assert_eq!(client.client_address(), None);
     assert_eq!(client.server_address(), None);
@@ -138,8 +171,7 @@ async fn test_start_with_tun_fd_failure_closes_fd_and_leaves_client_stopped() {
     )
     .unwrap();
 
-    server_config.bind_port = 55166;
-    client_config.connection_string = "localhost:55166".to_string();
+    use_ephemeral_server_port(&mut client_config, &mut server_config);
 
     let mut client = QuincyClient::new(client_config);
     let server = QuincyServer::new(server_config).unwrap();
@@ -170,8 +202,5 @@ async fn test_start_with_tun_fd_failure_closes_fd_and_leaves_client_stopped() {
     assert_eq!(client.client_address(), None);
     assert_eq!(client.server_address(), None);
 
-    // SAFETY: the descriptor number is only inspected after ownership moved
-    // into `start_with_tun_fd` and construction failed.
-    let flags = unsafe { libc::fcntl(raw_fd.get(), libc::F_GETFD) };
-    assert_eq!(flags, -1);
+    assert_fd_closed(raw_fd.get());
 }
