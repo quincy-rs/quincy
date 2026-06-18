@@ -152,12 +152,7 @@ impl QuincyClient {
             // `TunRsInterface::from_fd`'s safety contract.
             let interface = unsafe { TunRsInterface::from_fd(fd, mtu, tunnel_gateway)? };
 
-            Ok(Interface::from_io(
-                interface,
-                None,
-                None,
-                Some(remote_address),
-            ))
+            Ok(Interface::from_io(interface, None, None, Some(remote_address)))
         })
         .await
     }
