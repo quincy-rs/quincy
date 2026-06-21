@@ -144,7 +144,7 @@ impl QuincyClient {
         self.start_with_interface::<TunRsInterface, _>(move |interface_config| {
             let mtu = interface_config.mtu;
             let tunnel_gateway = interface_config.tunnel_gateway;
-            let remote_address = interface_config.remote_address;
+            let remote_address = Some(interface_config.remote_address);
             let fd = create_tun_fd(interface_config)?;
 
             // SAFETY: `create_tun_fd` runs inside this unsafe API and must
@@ -152,12 +152,7 @@ impl QuincyClient {
             // `TunRsInterface::from_fd`'s safety contract.
             let interface = unsafe { TunRsInterface::from_fd(fd, mtu, tunnel_gateway)? };
 
-            Ok(Interface::from_io(
-                interface,
-                None,
-                None,
-                Some(remote_address),
-            ))
+            Ok(Interface::from_io(interface, None, None, remote_address))
         })
         .await
     }
