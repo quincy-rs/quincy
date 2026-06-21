@@ -204,6 +204,8 @@ impl InterfaceIO for TunRsInterface {
     }
 
     fn name(&self) -> Option<String> {
+        // TODO(android): add Android support for `AsyncDevice::name()` before
+        // treating this interface implementation as buildable there.
         self.inner
             .name()
             .map_err(|e| error!("Failed to get interface name: {e}"))
