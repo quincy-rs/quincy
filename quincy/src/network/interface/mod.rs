@@ -205,6 +205,22 @@ impl<I: InterfaceIO> Interface<I> {
         })
     }
 
+    /// Wraps an already-created interface implementation with deferred route
+    /// and DNS configuration.
+    pub fn from_io(
+        inner: I,
+        routes: Option<Vec<IpNet>>,
+        dns_servers: Option<Vec<IpAddr>>,
+        remote_address: Option<IpAddr>,
+    ) -> Self {
+        Interface {
+            inner,
+            routes,
+            dns_servers,
+            remote_address,
+        }
+    }
+
     /// Applies deferred route and DNS configuration, consuming this
     /// `Interface` and returning an [`ActiveInterface`] that owns packet
     /// I/O and cleanup.
@@ -589,6 +605,27 @@ mod tests {
             1,
             "DNS must be cleaned up when ActiveInterface is dropped"
         );
+        assert_eq!(mock.down_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn from_io_preserves_deferred_configuration() {
+        let mock = Arc::new(MockInterface::default());
+        let interface = Interface::from_io(
+            SharedMock(mock.clone()),
+            Some(vec!["0.0.0.0/0".parse().unwrap()]),
+            Some(vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))]),
+            Some(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4))),
+        );
+
+        let active = interface.configure().expect("configure must succeed");
+
+        assert_eq!(mock.configure_routes_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(mock.configure_dns_calls.load(Ordering::SeqCst), 1);
+
+        drop(active);
+
+        assert_eq!(mock.cleanup_dns_calls.load(Ordering::SeqCst), 1);
         assert_eq!(mock.down_calls.load(Ordering::SeqCst), 1);
     }
 }
