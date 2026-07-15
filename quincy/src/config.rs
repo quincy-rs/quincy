@@ -348,11 +348,11 @@ impl fmt::Display for Bandwidth {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let bits_per_second = self.0 * 8;
 
-        if bits_per_second > 0 && bits_per_second % 1_000_000_000 == 0 {
+        if bits_per_second > 0 && bits_per_second.is_multiple_of(1_000_000_000) {
             write!(f, "{} gbps", bits_per_second / 1_000_000_000)
-        } else if bits_per_second > 0 && bits_per_second % 1_000_000 == 0 {
+        } else if bits_per_second > 0 && bits_per_second.is_multiple_of(1_000_000) {
             write!(f, "{} mbps", bits_per_second / 1_000_000)
-        } else if bits_per_second > 0 && bits_per_second % 1_000 == 0 {
+        } else if bits_per_second > 0 && bits_per_second.is_multiple_of(1_000) {
             write!(f, "{} kbps", bits_per_second / 1_000)
         } else {
             write!(f, "{} bps", bits_per_second)

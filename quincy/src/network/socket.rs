@@ -96,10 +96,10 @@ fn try_set_buffer_size(
     label: &str,
 ) -> Result<()> {
     if try_set_fn(socket, requested, set_fn, label)? {
-        if let Ok(actual) = get_fn(socket) {
-            if actual < requested {
-                warn!("Unable to set desired {label}. Desired: {requested}, Actual: {actual}",);
-            }
+        if let Ok(actual) = get_fn(socket)
+            && actual < requested
+        {
+            warn!("Unable to set desired {label}. Desired: {requested}, Actual: {actual}",);
         }
         return Ok(());
     }

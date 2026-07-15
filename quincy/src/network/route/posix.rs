@@ -80,13 +80,13 @@ pub fn add_routes(
 
     for network in effective_networks {
         if let Err(add_err) = add_route(network, gateway) {
-            if let Some(ref token) = exclusion {
-                if let Err(rm_err) = remove_exclusion_route(token) {
-                    warn!(
-                        "failed to roll back exclusion route for {}: {rm_err}",
-                        token.destination
-                    );
-                }
+            if let Some(ref token) = exclusion
+                && let Err(rm_err) = remove_exclusion_route(token)
+            {
+                warn!(
+                    "failed to roll back exclusion route for {}: {rm_err}",
+                    token.destination
+                );
             }
             return Err(add_err);
         }
@@ -734,13 +734,13 @@ fn parse_linux_route_get(output: &str, address: &IpAddr) -> Result<NextHop> {
     // route installed via an unreachable/blackhole/prohibit/throw route
     // would either drop the server's traffic or fall through to a later
     // lookup that may now be captured by the tunnel, so we refuse outright.
-    if let Some(first) = tokens.first() {
-        if matches!(*first, "unreachable" | "blackhole" | "prohibit" | "throw") {
-            return Err(RouteError::NotFound {
-                destination: address.to_string(),
-            }
-            .into());
+    if let Some(first) = tokens.first()
+        && matches!(*first, "unreachable" | "blackhole" | "prohibit" | "throw")
+    {
+        return Err(RouteError::NotFound {
+            destination: address.to_string(),
         }
+        .into());
     }
 
     let interface = find_token_value(&tokens, "dev")

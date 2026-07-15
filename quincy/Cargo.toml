@@ -26,7 +26,7 @@ jemalloc = ["jemallocator"]
 quinn = { workspace = true }
 
 # Interfaces and networking
-tun-rs = { workspace = true }
+quincy-tun = { workspace = true }
 socket2 = { workspace = true }
 libc = { workspace = true }
 bytes = { workspace = true }

@@ -7,6 +7,7 @@ use crate::network::packet::Packet;
 use crate::network::route::{InstalledExclusionRoute, add_routes};
 use bytes::BytesMut;
 use ipnet::IpNet;
+use quincy_tun::{AsyncDevice, DeviceBuilder, ToIpv4Address};
 use std::net::IpAddr;
 #[cfg(unix)]
 use std::os::fd::{IntoRawFd, OwnedFd};
@@ -16,9 +17,8 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
-use tun_rs::{AsyncDevice, DeviceBuilder, ToIpv4Address};
 
-pub struct TunRsInterface {
+pub struct QuincyTunInterface {
     inner: Arc<AsyncDevice>,
     reader_channel: Mutex<Receiver<Packet>>,
     writer_channel: Sender<Packet>,
@@ -30,7 +30,7 @@ pub struct TunRsInterface {
     disable_on_teardown: bool,
 }
 
-impl TunRsInterface {
+impl QuincyTunInterface {
     fn from_async_device(
         interface: AsyncDevice,
         mtu: u16,
@@ -68,13 +68,13 @@ impl TunRsInterface {
     ///
     /// # Safety
     ///
-    /// `fd` must be a valid TUN file descriptor compatible with `tun-rs`, and
+    /// `fd` must be a valid TUN file descriptor compatible with `quincy-tun`, and
     /// must not be owned by any other platform object after ownership is passed
     /// to this function.
     #[cfg(unix)]
     pub unsafe fn from_fd(fd: OwnedFd, mtu: u16, tunnel_gateway: Option<IpAddr>) -> Result<Self> {
         // SAFETY: the caller guarantees that `fd` is a valid, exclusively-owned
-        // TUN fd. `into_raw_fd` transfers that ownership to `tun-rs`, which
+        // TUN fd. `into_raw_fd` transfers that ownership to `quincy-tun`, which
         // wraps the fd before fallible async registration and closes it on
         // either construction failure or eventual device drop.
         let interface = unsafe { AsyncDevice::from_fd(fd.into_raw_fd()) }
@@ -89,7 +89,7 @@ impl TunRsInterface {
     }
 }
 
-impl InterfaceIO for TunRsInterface {
+impl InterfaceIO for QuincyTunInterface {
     fn create_interface(
         interface_address: IpNet,
         mtu: u16,
@@ -295,7 +295,7 @@ impl InterfaceIO for TunRsInterface {
     }
 }
 
-impl TunRsInterface {
+impl QuincyTunInterface {
     /// Idempotent teardown shared by `InterfaceIO::down()` and `Drop`: aborts
     /// the I/O tasks and disables the TUN device. Subsequent calls are no-ops.
     fn teardown(&self) -> Result<()> {
@@ -325,7 +325,7 @@ impl TunRsInterface {
     }
 }
 
-impl Drop for TunRsInterface {
+impl Drop for QuincyTunInterface {
     fn drop(&mut self) {
         if let Err(e) = self.teardown() {
             warn!("TUN teardown during drop failed: {e}");
@@ -407,8 +407,8 @@ fn reader_task(
     reader_channel_tx: Sender<Packet>,
     mtu: usize,
 ) -> JoinHandle<Result<()>> {
+    use quincy_tun::{IDEAL_BATCH_SIZE, VIRTIO_NET_HDR_LEN};
     use std::iter;
-    use tun_rs::{IDEAL_BATCH_SIZE, VIRTIO_NET_HDR_LEN};
 
     let batch_size = (u16::MAX as usize / mtu).min(IDEAL_BATCH_SIZE);
 
@@ -483,7 +483,7 @@ fn writer_task(
     mut writer_channel_rx: Receiver<Packet>,
     mtu: usize,
 ) -> JoinHandle<Result<()>> {
-    use tun_rs::{GROTable, IDEAL_BATCH_SIZE, VIRTIO_NET_HDR_LEN};
+    use quincy_tun::{GROTable, IDEAL_BATCH_SIZE, VIRTIO_NET_HDR_LEN};
 
     let batch_size = (u16::MAX as usize / mtu).min(IDEAL_BATCH_SIZE);
     let send_buf_size = VIRTIO_NET_HDR_LEN * batch_size + batch_size * mtu;
@@ -555,7 +555,7 @@ mod tests {
         );
 
         // SAFETY: this only queries whether the captured descriptor number still
-        // refers to an open fd after ownership moved into `TunRsInterface::from_fd`.
+        // refers to an open fd after ownership moved into `QuincyTunInterface::from_fd`.
         let flags = unsafe { libc::fcntl(raw_fd, libc::F_GETFD) };
         let errno = std::io::Error::last_os_error().raw_os_error();
 
@@ -571,7 +571,7 @@ mod tests {
 
         // SAFETY: this intentionally passes a non-TUN fd to exercise the
         // rejection path after ownership has moved into `from_fd`.
-        let result = unsafe { TunRsInterface::from_fd(fd, 1500, None) };
+        let result = unsafe { QuincyTunInterface::from_fd(fd, 1500, None) };
         assert!(result.is_err());
 
         assert_fd_closed(raw_fd);

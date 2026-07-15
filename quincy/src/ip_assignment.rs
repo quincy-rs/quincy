@@ -114,10 +114,10 @@ fn validate_assignment_address(ipnet: IpNet) -> Result<()> {
         return Err(AuthError::IpAssignmentFailed.into());
     }
 
-    if let IpAddr::V4(v4) = addr {
-        if v4.is_broadcast() {
-            return Err(AuthError::IpAssignmentFailed.into());
-        }
+    if let IpAddr::V4(v4) = addr
+        && v4.is_broadcast()
+    {
+        return Err(AuthError::IpAssignmentFailed.into());
     }
 
     if ipnet.prefix_len() == 0 {

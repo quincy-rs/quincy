@@ -74,10 +74,10 @@ pub fn expand_path(path: &Path) -> PathBuf {
     let path_str = path.to_string_lossy();
 
     #[cfg(unix)]
-    if path_str.starts_with("~/") {
-        if let Ok(home) = env::var("HOME") {
-            return PathBuf::from(path_str.replacen("~", &home, 1));
-        }
+    if path_str.starts_with("~/")
+        && let Ok(home) = env::var("HOME")
+    {
+        return PathBuf::from(path_str.replacen("~", &home, 1));
     }
 
     #[cfg(windows)]

@@ -4,7 +4,7 @@ use std::process::exit;
 use clap::Parser;
 use quincy::Result;
 use quincy::config::{ClientConfig, FromPath};
-use quincy::network::interface::tun_rs::TunRsInterface;
+use quincy::network::interface::quincy_tun::QuincyTunInterface;
 use quincy::utils::tracing::log_subscriber;
 use quincy_client::client::QuincyClient;
 use tracing::error;
@@ -40,6 +40,6 @@ async fn run_client() -> Result<()> {
     tracing::subscriber::set_global_default(log_subscriber(&config.log.level))?;
 
     let mut client = QuincyClient::new(config);
-    client.start::<TunRsInterface>().await?;
+    client.start::<QuincyTunInterface>().await?;
     client.wait_for_shutdown().await
 }

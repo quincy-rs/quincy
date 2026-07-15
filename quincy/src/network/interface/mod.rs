@@ -1,6 +1,6 @@
 #![allow(async_fn_in_trait)]
 
-pub mod tun_rs;
+pub mod quincy_tun;
 
 use crate::Result;
 use crate::network::packet::Packet;
@@ -50,13 +50,13 @@ impl<I: InterfaceIO> RouteGuard<I> {
 
 impl<I: InterfaceIO> Drop for RouteGuard<I> {
     fn drop(&mut self) {
-        if let Some(exclusion) = &self.exclusion {
-            if let Err(e) = self.inner.remove_exclusion_route(exclusion) {
-                error!(
-                    "Failed to remove exclusion route for {}: {e}",
-                    exclusion.destination
-                );
-            }
+        if let Some(exclusion) = &self.exclusion
+            && let Err(e) = self.inner.remove_exclusion_route(exclusion)
+        {
+            error!(
+                "Failed to remove exclusion route for {}: {e}",
+                exclusion.destination
+            );
         }
     }
 }
@@ -90,10 +90,10 @@ impl<I: InterfaceIO> Drop for DnsGuard<I> {
     fn drop(&mut self) {
         let dns_servers = self.dns_servers.as_deref().unwrap_or_default();
 
-        if !dns_servers.is_empty() {
-            if let Err(e) = self.inner.cleanup_dns(dns_servers) {
-                error!("Failed to cleanup DNS servers: {e}");
-            }
+        if !dns_servers.is_empty()
+            && let Err(e) = self.inner.cleanup_dns(dns_servers)
+        {
+            error!("Failed to cleanup DNS servers: {e}");
         }
     }
 }
