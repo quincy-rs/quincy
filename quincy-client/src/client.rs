@@ -12,7 +12,7 @@ use quincy::constants::QUINN_RUNTIME;
 use quincy::error::ConfigError;
 use quincy::ip_assignment;
 #[cfg(unix)]
-use quincy::network::interface::tun_rs::TunRsInterface;
+use quincy::network::interface::quincy_tun::QuincyTunInterface;
 use quincy::network::interface::{Interface, InterfaceIO};
 use quincy::network::socket::bind_socket;
 use quincy::{QuincyError, Result};
@@ -134,14 +134,14 @@ impl QuincyClient {
     /// # Safety
     ///
     /// `create_tun_fd` must return a valid TUN file descriptor compatible with
-    /// `tun-rs`. The returned fd must not be owned by any platform SDK object
+    /// `quincy-tun`. The returned fd must not be owned by any platform SDK object
     /// after it is returned to Quincy.
     #[cfg(unix)]
     pub async unsafe fn start_with_tun_fd<F>(&mut self, create_tun_fd: F) -> Result<()>
     where
         F: FnOnce(ClientInterfaceConfig) -> Result<OwnedFd>,
     {
-        self.start_with_interface::<TunRsInterface, _>(move |interface_config| {
+        self.start_with_interface::<QuincyTunInterface, _>(move |interface_config| {
             let mtu = interface_config.mtu;
             let tunnel_gateway = interface_config.tunnel_gateway;
             let remote_address = Some(interface_config.remote_address);
@@ -149,8 +149,8 @@ impl QuincyClient {
 
             // SAFETY: `create_tun_fd` runs inside this unsafe API and must
             // return an exclusively-owned TUN fd that satisfies
-            // `TunRsInterface::from_fd`'s safety contract.
-            let interface = unsafe { TunRsInterface::from_fd(fd, mtu, tunnel_gateway)? };
+            // `QuincyTunInterface::from_fd`'s safety contract.
+            let interface = unsafe { QuincyTunInterface::from_fd(fd, mtu, tunnel_gateway)? };
 
             Ok(Interface::from_io(interface, None, None, remote_address))
         })

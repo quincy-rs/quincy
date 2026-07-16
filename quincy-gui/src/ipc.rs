@@ -73,10 +73,10 @@ impl IpcServer {
         #[cfg(unix)]
         {
             // Ensure the parent directory exists
-            if let Some(parent) = socket_path.parent() {
-                if !parent.exists() {
-                    fs::create_dir_all(parent)?;
-                }
+            if let Some(parent) = socket_path.parent()
+                && !parent.exists()
+            {
+                fs::create_dir_all(parent)?;
             }
 
             // Remove existing socket file if it exists

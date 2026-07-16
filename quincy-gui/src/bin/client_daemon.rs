@@ -2,7 +2,7 @@
 
 use clap::Parser;
 use quincy::config::{ClientConfig, FromPath};
-use quincy::network::interface::tun_rs::TunRsInterface;
+use quincy::network::interface::quincy_tun::QuincyTunInterface;
 use quincy::{QuincyError, Result};
 use quincy_client::client::QuincyClient;
 use quincy_gui::gui::GuiError;
@@ -85,7 +85,7 @@ impl ClientDaemon {
         let mut client = QuincyClient::new(config);
 
         // Start the client in a separate task so we can listen for cancellation
-        let start_future = client.start::<TunRsInterface>();
+        let start_future = client.start::<QuincyTunInterface>();
 
         tokio::select! {
             result = start_future => {
