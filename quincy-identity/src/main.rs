@@ -4,8 +4,8 @@
 //! operations for both Noise and TLS protocol modes.
 //!
 //! Usage:
-//!   quincy-identity noise genkey [--key-exchange standard|hybrid]
-//!   quincy-identity noise pubkey [--key-exchange standard|hybrid]
+//!   quincy-identity noise genkey [--key-exchange standard|hybrid|post-quantum]
+//!   quincy-identity noise pubkey [--key-exchange standard|hybrid|post-quantum]
 //!   quincy-identity tls gencert --out-cert <path> --out-key <path> [--cn <common-name>]
 //!   quincy-identity tls fingerprint --cert <path>
 
@@ -15,7 +15,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use quincy::config::NoiseKeyExchange;
 use rand_core::OsRng;
 use rcgen::{CertificateParams, KeyPair as RcgenKeyPair};
-use reishi_quinn::{KeyPair, PqKeyPair};
+use reishi_quinn::{
+    HybridKeyPair, HybridStaticSecret, KeyPair, PqKeyPair, PqStaticSecret, StaticSecret,
+};
 use rustls::pki_types::CertificateDer;
 use std::fs;
 use std::io::{self, BufRead, Write};
@@ -35,6 +37,7 @@ impl ValueEnum for KeyExchangeArg {
         &[
             KeyExchangeArg(NoiseKeyExchange::Standard),
             KeyExchangeArg(NoiseKeyExchange::Hybrid),
+            KeyExchangeArg(NoiseKeyExchange::PostQuantum),
         ]
     }
 
@@ -45,6 +48,9 @@ impl ValueEnum for KeyExchangeArg {
             }
             NoiseKeyExchange::Hybrid => {
                 Some(PossibleValue::new("hybrid").help("X25519 + ML-KEM-768 hybrid"))
+            }
+            NoiseKeyExchange::PostQuantum => {
+                Some(PossibleValue::new("post-quantum").help("ML-KEM-768"))
             }
         }
     }
@@ -147,6 +153,10 @@ fn noise_genkey(key_exchange: &NoiseKeyExchange) {
             println!("{}", BASE64_STANDARD.encode(kp.secret_bytes()));
         }
         NoiseKeyExchange::Hybrid => {
+            let kp = HybridKeyPair::generate(&mut OsRng);
+            println!("{}", BASE64_STANDARD.encode(kp.secret_bytes()));
+        }
+        NoiseKeyExchange::PostQuantum => {
             let kp = PqKeyPair::generate(&mut OsRng);
             println!("{}", BASE64_STANDARD.encode(kp.secret_bytes()));
         }
@@ -180,8 +190,11 @@ fn noise_pubkey(key_exchange: &NoiseKeyExchange) {
 
     match key_exchange {
         NoiseKeyExchange::Standard => {
-            let Ok(secret_bytes) = <[u8; 32]>::try_from(bytes.as_slice()) else {
-                eprintln!("Error: standard private key must be exactly 32 bytes");
+            let Ok(secret_bytes) = <[u8; StaticSecret::LEN]>::try_from(bytes.as_slice()) else {
+                eprintln!(
+                    "Error: standard private key must be exactly {} bytes",
+                    StaticSecret::LEN
+                );
                 process::exit(1);
             };
             let secret_bytes = Zeroizing::new(secret_bytes);
@@ -189,8 +202,24 @@ fn noise_pubkey(key_exchange: &NoiseKeyExchange) {
             println!("{}", BASE64_STANDARD.encode(kp.public.as_bytes()));
         }
         NoiseKeyExchange::Hybrid => {
-            let Ok(secret_bytes) = <[u8; 96]>::try_from(bytes.as_slice()) else {
-                eprintln!("Error: hybrid private key must be exactly 96 bytes");
+            let Ok(secret_bytes) = <[u8; HybridStaticSecret::LEN]>::try_from(bytes.as_slice())
+            else {
+                eprintln!(
+                    "Error: hybrid private key must be exactly {} bytes",
+                    HybridStaticSecret::LEN
+                );
+                process::exit(1);
+            };
+            let secret_bytes = Zeroizing::new(secret_bytes);
+            let kp = HybridKeyPair::from_secret_bytes(&secret_bytes);
+            println!("{}", BASE64_STANDARD.encode(kp.public.to_bytes()));
+        }
+        NoiseKeyExchange::PostQuantum => {
+            let Ok(secret_bytes) = <[u8; PqStaticSecret::LEN]>::try_from(bytes.as_slice()) else {
+                eprintln!(
+                    "Error: post-quantum private key must be exactly {} bytes",
+                    PqStaticSecret::LEN
+                );
                 process::exit(1);
             };
             let secret_bytes = Zeroizing::new(secret_bytes);

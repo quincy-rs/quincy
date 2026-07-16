@@ -291,6 +291,9 @@ impl QuincyServer {
                         self.users.collect_noise_public_keys(),
                     )),
                     NoiseKeyExchange::Hybrid => Some(AllowedNoiseKeys::Hybrid(
+                        self.users.collect_noise_hybrid_public_keys(),
+                    )),
+                    NoiseKeyExchange::PostQuantum => Some(AllowedNoiseKeys::PostQuantum(
                         self.users.collect_noise_pq_public_keys(),
                     )),
                 };

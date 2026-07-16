@@ -21,9 +21,10 @@ use quinn::{
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
 use reishi_quinn::{
-    KeyPair, NoiseConfigBuilder, PqKeyPair, PqNoiseConfigBuilder, PqPublicKey, PqStaticSecret,
-    PublicKey, REISHI_PQ_V1_QUIC_V1, REISHI_V1_QUIC_V1, StaticSecret, noise_handshake_token_key,
-    noise_hmac_key,
+    HybridKeyPair, HybridNoiseConfigBuilder, HybridPublicKey, HybridStaticSecret, KeyPair,
+    NoiseConfigBuilder, PqKeyPair, PqNoiseConfigBuilder, PqPublicKey, PqStaticSecret, PublicKey,
+    REISHI_PQ_HYBRID_V1_QUIC_V1, REISHI_PQ_KEM_V1_QUIC_V1, REISHI_V1_QUIC_V1, StaticSecret,
+    noise_handshake_token_key, noise_hmac_key,
 };
 use rustls::crypto::aws_lc_rs::kx_group::{MLKEM768, X25519MLKEM768};
 use rustls::crypto::{CryptoProvider, aws_lc_rs};
@@ -119,7 +120,7 @@ pub struct ServerNoiseConfig {
     /// The key exchange algorithm to use (default = Standard)
     #[serde(default = "default_noise_key_exchange")]
     pub key_exchange: NoiseKeyExchange,
-    /// Base64-encoded server private key (32 bytes for Standard, 96 bytes for Hybrid)
+    /// Base64-encoded server private key (32 bytes Standard, 128 Hybrid, 96 PQ)
     pub private_key: SecretString,
 }
 
@@ -131,7 +132,9 @@ pub enum AllowedNoiseKeys {
     /// Standard X25519 public keys
     Standard(HashSet<PublicKey>),
     /// Hybrid X25519 + ML-KEM-768 public keys
-    Hybrid(HashSet<PqPublicKey>),
+    Hybrid(HashSet<HybridPublicKey>),
+    /// PQ-only ML-KEM-768 public keys
+    PostQuantum(HashSet<PqPublicKey>),
 }
 
 /// Quincy client configuration.
@@ -195,7 +198,7 @@ pub struct ClientNoiseConfig {
     /// The key exchange algorithm to use (default = Standard)
     #[serde(default = "default_noise_key_exchange")]
     pub key_exchange: NoiseKeyExchange,
-    /// Base64-encoded server public key (32 bytes for Standard, 1216 bytes for Hybrid)
+    /// Base64-encoded server public key (32 bytes Standard, 1216 Hybrid, 1184 PQ)
     pub server_public_key: String,
     /// Base64-encoded client private key for persistent identity
     pub private_key: SecretString,
@@ -224,6 +227,19 @@ pub enum NoiseKeyExchange {
     /// X25519 + ML-KEM-768 hybrid
     #[serde(alias = "hybrid")]
     Hybrid,
+    /// ML-KEM-768
+    #[serde(alias = "post_quantum")]
+    PostQuantum,
+}
+
+impl NoiseKeyExchange {
+    fn quic_version(&self) -> u32 {
+        match self {
+            Self::Standard => REISHI_V1_QUIC_V1,
+            Self::Hybrid => REISHI_PQ_HYBRID_V1_QUIC_V1,
+            Self::PostQuantum => REISHI_PQ_KEM_V1_QUIC_V1,
+        }
+    }
 }
 
 /// QUIC connection configuration.
@@ -985,10 +1001,31 @@ impl ClientConfig {
                     })?;
 
                 let mut cfg = quinn::ClientConfig::new(Arc::new(client_config));
-                cfg.version(REISHI_V1_QUIC_V1);
+                cfg.version(noise.key_exchange.quic_version());
                 cfg
             }
             NoiseKeyExchange::Hybrid => {
+                let server_pub_bytes =
+                    decode_base64_key::<{ HybridPublicKey::LEN }>(&noise.server_public_key)?;
+                let server_public = HybridPublicKey::from_bytes(*server_pub_bytes);
+
+                let secret_bytes = decode_base64_key::<{ HybridStaticSecret::LEN }>(
+                    noise.private_key.expose_secret(),
+                )?;
+                let local_keypair = HybridKeyPair::from_secret_bytes(&secret_bytes);
+
+                let client_config = HybridNoiseConfigBuilder::new(local_keypair)
+                    .with_remote_public(server_public)
+                    .build_client_config()
+                    .map_err(|e| NoiseError::ConfigError {
+                        reason: format!("Failed to build hybrid Noise client config: {e}"),
+                    })?;
+
+                let mut cfg = quinn::ClientConfig::new(Arc::new(client_config));
+                cfg.version(noise.key_exchange.quic_version());
+                cfg
+            }
+            NoiseKeyExchange::PostQuantum => {
                 let server_pub_bytes =
                     decode_base64_key::<{ PqPublicKey::LEN }>(&noise.server_public_key)?;
                 let server_public = PqPublicKey::from_bytes(*server_pub_bytes);
@@ -1006,7 +1043,7 @@ impl ClientConfig {
                     })?;
 
                 let mut cfg = quinn::ClientConfig::new(Arc::new(client_config));
-                cfg.version(REISHI_PQ_V1_QUIC_V1);
+                cfg.version(noise.key_exchange.quic_version());
                 cfg
             }
         };
@@ -1134,7 +1171,9 @@ impl ServerConfig {
                     builder = builder.with_allowed_keys(keys);
                 } else if allowed_keys.is_some() {
                     return Err(NoiseError::ConfigError {
-                        reason: "Allowed keys use Hybrid mode, but server is configured for Standard Noise key exchange".to_string(),
+                        reason:
+                            "Allowed keys do not match the configured Standard Noise key exchange"
+                                .to_string(),
                     }
                     .into());
                 }
@@ -1151,18 +1190,20 @@ impl ServerConfig {
                 cfg
             }
             NoiseKeyExchange::Hybrid => {
-                let secret_bytes = decode_base64_key::<{ PqStaticSecret::LEN }>(
+                let secret_bytes = decode_base64_key::<{ HybridStaticSecret::LEN }>(
                     noise.private_key.expose_secret(),
                 )?;
-                let keypair = PqKeyPair::from_secret_bytes(&secret_bytes);
+                let keypair = HybridKeyPair::from_secret_bytes(&secret_bytes);
 
-                let mut builder = PqNoiseConfigBuilder::new(keypair);
+                let mut builder = HybridNoiseConfigBuilder::new(keypair);
 
                 if let Some(AllowedNoiseKeys::Hybrid(keys)) = allowed_keys {
                     builder = builder.with_allowed_keys(keys);
                 } else if allowed_keys.is_some() {
                     return Err(NoiseError::ConfigError {
-                        reason: "Allowed keys use Standard mode, but server is configured for Hybrid Noise key exchange".to_string(),
+                        reason:
+                            "Allowed keys do not match the configured Hybrid Noise key exchange"
+                                .to_string(),
                     }
                     .into());
                 }
@@ -1171,7 +1212,37 @@ impl ServerConfig {
                     builder
                         .build_server_config()
                         .map_err(|e| NoiseError::ConfigError {
-                            reason: format!("Failed to build PQ Noise server config: {e}"),
+                            reason: format!("Failed to build hybrid Noise server config: {e}"),
+                        })?;
+
+                let mut cfg = quinn::ServerConfig::with_crypto(Arc::new(server_config));
+                cfg.token_key(noise_handshake_token_key());
+                cfg
+            }
+            NoiseKeyExchange::PostQuantum => {
+                let secret_bytes = decode_base64_key::<{ PqStaticSecret::LEN }>(
+                    noise.private_key.expose_secret(),
+                )?;
+                let keypair = PqKeyPair::from_secret_bytes(&secret_bytes);
+
+                let mut builder = PqNoiseConfigBuilder::new(keypair);
+
+                if let Some(AllowedNoiseKeys::PostQuantum(keys)) = allowed_keys {
+                    builder = builder.with_allowed_keys(keys);
+                } else if allowed_keys.is_some() {
+                    return Err(NoiseError::ConfigError {
+                        reason: "Allowed keys do not match the configured PostQuantum Noise key exchange".to_string(),
+                    }
+                    .into());
+                }
+
+                let server_config =
+                    builder
+                        .build_server_config()
+                        .map_err(|e| NoiseError::ConfigError {
+                            reason: format!(
+                                "Failed to build post-quantum Noise server config: {e}"
+                            ),
                         })?;
 
                 let mut cfg = quinn::ServerConfig::with_crypto(Arc::new(server_config));
@@ -1214,11 +1285,7 @@ impl ConnectionConfig {
             None => EndpointConfig::default(),
             Some(kx) => {
                 let mut cfg = EndpointConfig::new(noise_hmac_key());
-                let version = match kx {
-                    NoiseKeyExchange::Standard => REISHI_V1_QUIC_V1,
-                    NoiseKeyExchange::Hybrid => REISHI_PQ_V1_QUIC_V1,
-                };
-                cfg.supported_versions(vec![version]);
+                cfg.supported_versions(vec![kx.quic_version()]);
                 cfg
             }
         };
@@ -1718,6 +1785,46 @@ mod tests {
 
         let key_96 = BASE64_STANDARD.encode([0u8; 96]);
         assert!(decode_base64_key::<96>(&key_96).is_ok());
+    }
+
+    #[test]
+    fn noise_key_lengths_match_reishi_suites() {
+        assert_eq!(StaticSecret::LEN, 32);
+        assert_eq!(PublicKey::LEN, 32);
+        assert_eq!(HybridStaticSecret::LEN, 128);
+        assert_eq!(HybridPublicKey::LEN, 1216);
+        assert_eq!(PqStaticSecret::LEN, 96);
+        assert_eq!(PqPublicKey::LEN, 1184);
+
+        let legacy_hybrid_key = BASE64_STANDARD.encode([0u8; 96]);
+        assert!(decode_base64_key::<{ HybridStaticSecret::LEN }>(&legacy_hybrid_key).is_err());
+    }
+
+    #[test]
+    fn noise_modes_select_their_wire_versions() {
+        assert_eq!(NoiseKeyExchange::Standard.quic_version(), REISHI_V1_QUIC_V1);
+        assert_eq!(
+            NoiseKeyExchange::Hybrid.quic_version(),
+            REISHI_PQ_HYBRID_V1_QUIC_V1
+        );
+        assert_eq!(
+            NoiseKeyExchange::PostQuantum.quic_version(),
+            REISHI_PQ_KEM_V1_QUIC_V1
+        );
+    }
+
+    #[test]
+    fn parse_post_quantum_noise_alias() {
+        #[derive(Deserialize)]
+        struct Config {
+            key_exchange: NoiseKeyExchange,
+        }
+
+        let config: Config = Figment::new()
+            .merge(Toml::string("key_exchange = \"post_quantum\""))
+            .extract()
+            .expect("valid post-quantum Noise mode");
+        assert_eq!(config.key_exchange, NoiseKeyExchange::PostQuantum);
     }
 
     #[test]

@@ -1,0 +1,16 @@
+name = "tun0"
+tunnel_network = "10.0.0.1/24"
+bind_address = "::"
+bind_port = 55160
+users_file = "tests/static/users.toml"
+
+[protocol]
+mode = "noise"
+key_exchange = "PostQuantum"
+private_key = "4gHMYbVUMuYBOQT3LgclGckjIHOamTTPXUGmcelCuQIh5B/Pza8pSd1bTd0TcTwAo4D/5sN7+MK8KOAKegZZdm76rwC7NvOnPoUolYAd6yS5/Vxh8l/493ADwtunHBn7"
+
+[connection]
+mtu = 1400
+
+[log]
+level = "info"
