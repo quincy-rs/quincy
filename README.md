@@ -1,6 +1,6 @@
 # Quincy
 [![Crates.io](https://img.shields.io/crates/v/quincy.svg)](https://crates.io/crates/quincy)
-[![Docker](https://img.shields.io/docker/v/m0dex/quincy?logo=docker&label=docker&color=blue)](https://hub.docker.com/r/m0dex/quincy)
+[![GHCR](https://img.shields.io/badge/GHCR-quincy-blue?logo=docker)](https://github.com/quincy-rs/quincy/pkgs/container/quincy)
 [![Documentation](https://docs.rs/quincy/badge.svg)](https://docs.rs/quincy/)
 [![Build status](https://github.com/quincy-rs/quincy/workflows/CI/badge.svg)](https://github.com/M0dEx/quincy/actions?query=workflow%3ACI)
 [![codecov](https://codecov.io/github/quincy-rs/quincy/graph/badge.svg?token=YRKG8VIGWQ)](https://codecov.io/github/quincy-rs/quincy)
@@ -65,9 +65,11 @@ cargo install --locked quincy-gui
 ```
 
 ### Docker
-Docker images are available on [Docker Hub](https://hub.docker.com/r/m0dex/quincy) in different flavours:
-- `m0dex/quincy:latest`: The latest version of Quincy
-- `m0dex/quincy:<version>`: A specific version of Quincy
+Docker images are available on [GitHub Container Registry](https://github.com/quincy-rs/quincy/pkgs/container/quincy) with tags for the latest, major, minor, and specific versions:
+- `ghcr.io/quincy-rs/quincy:latest`: The latest version of Quincy
+- `ghcr.io/quincy-rs/quincy:2`: The latest `2.x` release
+- `ghcr.io/quincy-rs/quincy:2.2`: The latest `2.2.x` release
+- `ghcr.io/quincy-rs/quincy:2.2.0`: A specific release
 
 **Note: it is not possible to use the `dns_servers` configuration option due to how Docker networking works**
 
@@ -79,7 +81,7 @@ docker run
   --device=/dev/net/tun # needed for creating the TUN interface
   -p "55555:55555" # server port-forwarding
   -v <configuration directory>:/etc/quincy # directory with the configuration files
-  m0dex/quincy:latest # or any of the other tags
+  ghcr.io/quincy-rs/quincy:latest # or any of the other tags
   quincy-server --config-path /etc/quincy/server.toml
 ```
 
