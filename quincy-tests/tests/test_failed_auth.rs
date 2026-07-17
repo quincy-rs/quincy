@@ -27,7 +27,12 @@ fn make_unauthorized(mut config: ClientConfig) -> ClientConfig {
                 }
                 quincy::config::NoiseKeyExchange::Hybrid => {
                     noise.private_key = SecretString::from(
-                        "GCVfVZ0xTQVeeQ6f0rm9tphcn8hk206KXpJn8QKYmI8tXgRRMTIUfgIWpDT+2q+Ylqg/MmeKBWGZdtk7LQYQz2nhTzWZjANZ0d3+tYwtlw6Hax8eU7ty80VT6xPlXVHh",
+                        "JJJGXJVJtTot1B/8wtKO4b6Alah+LkdYayZyl0qsP7PCrX0m+IymVNQ1V363d+ybz4P9TT+iYIQnXbOZFatZ6xpXf2zQfbKX1rAUNVQTFpfpJo/R+ko+hewF7gl+auaMA6oP6tEUdMek1k5grybpENKHpEAJzqPsboGSpQcq+lE=",
+                    );
+                }
+                quincy::config::NoiseKeyExchange::PostQuantum => {
+                    noise.private_key = SecretString::from(
+                        "9nUtSZ6jlOYRV8OgaYjmCrcbxTRFkVkc6DzcPXwTMnylMn8yI6PRgkWI+x4WoXNK21sd7SPJXfTMh8Gw0Y8AuyHiyPgiMkUf7ZCBCK3R7qI2u+waqEa2szz3LV1IcCiI",
                     );
                 }
             }
@@ -49,6 +54,7 @@ fn make_unauthorized(mut config: ClientConfig) -> ClientConfig {
 #[case("tests/static/configs/tls_postquantum")]
 #[case("tests/static/configs/noise_standard")]
 #[case("tests/static/configs/noise_hybrid")]
+#[case("tests/static/configs/noise_postquantum")]
 #[tokio::test]
 async fn test_failed_auth_unauthorized_identity(#[case] config_dir: &str) {
     struct Client;

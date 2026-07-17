@@ -12,7 +12,7 @@ use figment::{
     Figment,
     providers::{Format, Toml},
 };
-use reishi_quinn::{PqPublicKey, PublicKey};
+use reishi_quinn::{HybridPublicKey, PqPublicKey, PublicKey};
 use serde::Deserialize;
 use tracing::warn;
 
@@ -39,7 +39,9 @@ pub struct UsersFile {
     pub users: HashMap<String, UserEntry>,
     /// Index: X25519 public key -> username.
     noise_key_to_user: HashMap<PublicKey, String>,
-    /// Index: PQ public key -> username.
+    /// Index: hybrid public key -> username.
+    noise_hybrid_key_to_user: HashMap<HybridPublicKey, String>,
+    /// Index: PQ-only public key -> username.
     noise_pq_key_to_user: HashMap<PqPublicKey, String>,
     /// Index: certificate fingerprint -> username.
     cert_fingerprint_to_user: HashMap<String, String>,
@@ -156,6 +158,7 @@ impl UsersFile {
     /// detected, or if a fingerprint has an invalid format.
     fn from_raw(raw: RawUsersFile) -> Result<Self> {
         let mut noise_key_to_user = HashMap::new();
+        let mut noise_hybrid_key_to_user = HashMap::new();
         let mut noise_pq_key_to_user = HashMap::new();
         let mut cert_fingerprint_to_user = HashMap::new();
 
@@ -178,7 +181,22 @@ impl UsersFile {
                     decoded = true;
                 }
 
-                // Try as PQ key (validated by from_bytes after length-checked decode)
+                // Try as a hybrid X25519 + ML-KEM key (exactly 1216 bytes)
+                if let Ok(bytes) = decode_base64_key::<{ HybridPublicKey::LEN }>(key_b64) {
+                    let hybrid_pubkey = HybridPublicKey::from_bytes(*bytes);
+                    if let Some(existing) = noise_hybrid_key_to_user.get(&hybrid_pubkey) {
+                        return Err(AuthError::InvalidUserStore {
+                            reason: format!(
+                                "duplicate Noise hybrid key for users '{existing}' and '{username}'"
+                            ),
+                        }
+                        .into());
+                    }
+                    noise_hybrid_key_to_user.insert(hybrid_pubkey, username.clone());
+                    decoded = true;
+                }
+
+                // Try as a PQ-only key (exactly 1184 bytes)
                 if let Ok(bytes) = decode_base64_key::<{ PqPublicKey::LEN }>(key_b64) {
                     let pq_pubkey = PqPublicKey::from_bytes(*bytes);
                     if let Some(existing) = noise_pq_key_to_user.get(&pq_pubkey) {
@@ -196,8 +214,9 @@ impl UsersFile {
                 if !decoded {
                     warn!(
                         "Ignoring unrecognized key for user '{username}': \
-                         not a valid X25519 ({} bytes) or PQ ({} bytes) public key",
+                         not a valid X25519 ({} bytes), hybrid ({} bytes), or PQ ({} bytes) public key",
                         PublicKey::LEN,
+                        HybridPublicKey::LEN,
                         PqPublicKey::LEN,
                     );
                 }
@@ -250,6 +269,7 @@ impl UsersFile {
         Ok(Self {
             users: raw.users,
             noise_key_to_user,
+            noise_hybrid_key_to_user,
             noise_pq_key_to_user,
             cert_fingerprint_to_user,
         })
@@ -266,7 +286,14 @@ impl UsersFile {
         self.noise_key_to_user.get(pubkey).map(|s| s.as_str())
     }
 
-    /// Looks up a username by their Noise hybrid PQ public key.
+    /// Looks up a username by their Noise hybrid public key.
+    pub fn find_user_by_noise_hybrid_pubkey(&self, pubkey: &HybridPublicKey) -> Option<&str> {
+        self.noise_hybrid_key_to_user
+            .get(pubkey)
+            .map(|s| s.as_str())
+    }
+
+    /// Looks up a username by their Noise PQ-only public key.
     ///
     /// ### Arguments
     /// - `pq_pubkey` - the PQ public key to search for
@@ -300,7 +327,12 @@ impl UsersFile {
         self.noise_key_to_user.keys().cloned().collect()
     }
 
-    /// Collects all authorized hybrid PQ public keys from all users.
+    /// Collects all authorized hybrid public keys from all users.
+    pub fn collect_noise_hybrid_public_keys(&self) -> HashSet<HybridPublicKey> {
+        self.noise_hybrid_key_to_user.keys().cloned().collect()
+    }
+
+    /// Collects all authorized PQ-only public keys from all users.
     ///
     /// ### Returns
     /// A set of all valid PQ public keys across all users.
@@ -320,6 +352,17 @@ impl UsersFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn zero_key(len: usize) -> String {
+        let mut encoded = "AAAA".repeat(len / 3);
+        encoded.push_str(match len % 3 {
+            0 => "",
+            1 => "AA==",
+            2 => "AAA=",
+            _ => unreachable!(),
+        });
+        encoded
+    }
 
     const SAMPLE_USERS_TOML: &str = r#"
         [users.alice]
@@ -426,8 +469,43 @@ mod tests {
     fn indices_built_for_empty_users() {
         let users = UsersFile::parse("").expect("valid TOML");
         assert!(users.noise_key_to_user.is_empty());
+        assert!(users.noise_hybrid_key_to_user.is_empty());
         assert!(users.noise_pq_key_to_user.is_empty());
         assert!(users.cert_fingerprint_to_user.is_empty());
+    }
+
+    #[test]
+    fn indexes_all_noise_key_types_by_exact_length() {
+        let hybrid_key = zero_key(HybridPublicKey::LEN);
+        let pq_key = zero_key(PqPublicKey::LEN);
+        let wrong_length_key = zero_key(PqPublicKey::LEN - 1);
+        let toml = format!(
+            r#"
+            [users.hybrid]
+            authorized_keys = ["{hybrid_key}"]
+
+            [users.pq]
+            authorized_keys = ["{pq_key}"]
+
+            [users.ignored]
+            authorized_keys = ["{wrong_length_key}"]
+            "#
+        );
+
+        let users = UsersFile::parse(&toml).expect("valid users file");
+        assert_eq!(users.noise_key_to_user.len(), 0);
+        assert_eq!(users.noise_hybrid_key_to_user.len(), 1);
+        assert_eq!(users.noise_pq_key_to_user.len(), 1);
+        assert_eq!(
+            users.find_user_by_noise_hybrid_pubkey(&HybridPublicKey::from_bytes(
+                [0; HybridPublicKey::LEN]
+            )),
+            Some("hybrid")
+        );
+        assert_eq!(
+            users.find_user_by_noise_pq_pubkey(&PqPublicKey::from_bytes([0; PqPublicKey::LEN])),
+            Some("pq")
+        );
     }
 
     #[test]
@@ -463,6 +541,27 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("duplicate Noise X25519 key"), "error: {err}");
+    }
+
+    #[test]
+    fn duplicate_hybrid_and_pq_noise_keys_rejected() {
+        for (len, description) in [
+            (HybridPublicKey::LEN, "duplicate Noise hybrid key"),
+            (PqPublicKey::LEN, "duplicate Noise PQ key"),
+        ] {
+            let key = zero_key(len);
+            let toml = format!(
+                r#"
+                [users.alice]
+                authorized_keys = ["{key}"]
+
+                [users.bob]
+                authorized_keys = ["{key}"]
+                "#
+            );
+            let err = UsersFile::parse(&toml).unwrap_err().to_string();
+            assert!(err.contains(description), "error: {err}");
+        }
     }
 
     #[test]

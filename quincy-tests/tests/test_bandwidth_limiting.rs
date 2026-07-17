@@ -35,6 +35,7 @@ const MIN_THROTTLE_DURATION: Duration = Duration::from_millis(500);
 #[case("tests/static/configs/tls_postquantum")]
 #[case("tests/static/configs/noise_standard")]
 #[case("tests/static/configs/noise_hybrid")]
+#[case("tests/static/configs/noise_postquantum")]
 #[tokio::test]
 async fn test_bandwidth_limiting(#[case] config_dir: &str) {
     struct Client;

@@ -7,7 +7,7 @@ users_file = "tests/static/users.toml"
 [protocol]
 mode = "noise"
 key_exchange = "Hybrid"
-private_key = "wh4uIPejgT77CP/URVlRHt3bRgW3IPqerfAsacsa2ebXBjlHupvGa53SgQ+1+fGWVE3H6JWWHCmF5akLQ/VAf61FRL07i0VkoHuNJnSb+yOYljACDpPLmibjGCQjV11l"
+private_key = "MsgADFO574/Q4Dn8lIHmceWOyxRZUP313rAuqGYtTQyXeD9lIgRe52LT5y/cc9TPKKvLgOGl5N4i9wEyQ3fbGqIPalyTLwE1tL5mvH0N2KVU+HT9RxwdnZUGv6dvFk/oU62fvEo8UQdSYVdLAk1UUit1oWCKQjpFbcNeKGxW5EM="
 
 [connection]
 mtu = 1400

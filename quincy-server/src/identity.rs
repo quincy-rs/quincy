@@ -9,7 +9,7 @@ use crate::users::UsersFile;
 use quincy::config::ServerProtocolConfig;
 use quincy::error::{AuthError, Result};
 use quinn::Connection;
-use reishi_quinn::PeerIdentity;
+use reishi_quinn::{PeerIdentity, PeerPublicKey};
 use rustls::pki_types::CertificateDer;
 
 /// Extracts the peer identity from the connection and resolves the username.
@@ -48,22 +48,19 @@ pub fn identify_peer(
 /// Resolves a Noise peer identity to a username.
 ///
 /// Downcasts the peer identity to `PeerIdentity` and looks up the public key
-/// (standard X25519 or hybrid PQ) in the users file.
+/// authenticated key in the corresponding users-file index.
 fn identify_noise_peer(peer_identity: Box<dyn Any>, users: &UsersFile) -> Result<String> {
     let noise_identity = peer_identity
         .downcast_ref::<PeerIdentity>()
         .ok_or(AuthError::HandshakeRejected)?;
 
-    if let Some(pq_pubkey) = &noise_identity.pq_public_key {
-        return users
-            .find_user_by_noise_pq_pubkey(pq_pubkey)
-            .map(|user| user.to_string())
-            .ok_or(AuthError::UserUnknown.into());
-    }
+    let user = match &noise_identity.public_key {
+        PeerPublicKey::Classical(key) => users.find_user_by_noise_pubkey(key),
+        PeerPublicKey::Hybrid(key) => users.find_user_by_noise_hybrid_pubkey(key),
+        PeerPublicKey::PostQuantum(key) => users.find_user_by_noise_pq_pubkey(key),
+    };
 
-    users
-        .find_user_by_noise_pubkey(&noise_identity.public_key)
-        .map(|user| user.to_string())
+    user.map(|user| user.to_string())
         .ok_or(AuthError::UserUnknown.into())
 }
 
@@ -84,4 +81,67 @@ fn identify_tls_peer(peer_identity: Box<dyn Any>, users: &UsersFile) -> Result<S
         .find_user_by_cert_fingerprint(&fingerprint)
         .map(|s| s.to_string())
         .ok_or(AuthError::UserUnknown.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reishi_quinn::{HybridPublicKey, PqPublicKey, PublicKey};
+
+    fn zero_key(len: usize) -> String {
+        let mut encoded = "AAAA".repeat(len / 3);
+        encoded.push_str(match len % 3 {
+            0 => "",
+            1 => "AA==",
+            2 => "AAA=",
+            _ => unreachable!(),
+        });
+        encoded
+    }
+
+    #[test]
+    fn resolves_typed_noise_identities() {
+        let standard = zero_key(PublicKey::LEN);
+        let hybrid = zero_key(HybridPublicKey::LEN);
+        let pq = zero_key(PqPublicKey::LEN);
+        let users = UsersFile::parse(&format!(
+            r#"
+            [users.standard]
+            authorized_keys = ["{standard}"]
+
+            [users.hybrid]
+            authorized_keys = ["{hybrid}"]
+
+            [users.pq]
+            authorized_keys = ["{pq}"]
+            "#
+        ))
+        .expect("valid users file");
+
+        let identities = [
+            (
+                PeerPublicKey::Classical(PublicKey::from_bytes([0; PublicKey::LEN])),
+                "standard",
+            ),
+            (
+                PeerPublicKey::Hybrid(HybridPublicKey::from_bytes([0; HybridPublicKey::LEN])),
+                "hybrid",
+            ),
+            (
+                PeerPublicKey::PostQuantum(PqPublicKey::from_bytes([0; PqPublicKey::LEN])),
+                "pq",
+            ),
+        ];
+
+        for (public_key, expected_user) in identities {
+            let identity = PeerIdentity {
+                public_key,
+                handshake_hash: [0; 32],
+            };
+            assert_eq!(
+                identify_noise_peer(Box::new(identity), &users).unwrap(),
+                expected_user
+            );
+        }
+    }
 }

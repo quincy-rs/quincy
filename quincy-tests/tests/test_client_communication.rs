@@ -14,6 +14,7 @@ use std::path::Path;
 #[case("tests/static/configs/tls_postquantum")]
 #[case("tests/static/configs/noise_standard")]
 #[case("tests/static/configs/noise_hybrid")]
+#[case("tests/static/configs/noise_postquantum")]
 #[tokio::test]
 async fn test_client_communication(#[case] config_dir: &str) {
     struct ClientA;

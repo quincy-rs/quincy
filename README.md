@@ -271,9 +271,13 @@ Noise mode uses the Noise IK handshake pattern instead of TLS. Both the server a
 - **No certificates needed**: deployment is simpler in environments where managing a PKI or obtaining certificates from a CA is impractical.
 - **Improved detection evasion**: traffic does not contain a standard TLS ClientHello, making it harder for DPI systems to fingerprint and block the connection.
 
-The server identifies connecting clients by matching their public key against the entries in the [users file](#users). Two key exchange algorithms are supported:
-- `Standard`: X25519
-- `Hybrid`: X25519 + ML-KEM-768
+The server identifies connecting clients by matching their public key against the entries in the [users file](#users). Three key exchange algorithms are supported:
+
+| Mode | Key exchange | Private key | Public key |
+| --- | --- | ---: | ---: |
+| `Standard` | X25519 | 32 bytes | 32 bytes |
+| `Hybrid` | X25519 + ML-KEM-768 | 128 bytes | 1216 bytes |
+| `PostQuantum` | ML-KEM-768 | 96 bytes | 1184 bytes |
 
 #### Key management
 Using `quincy-identity`, you can generate keypairs for both the server and the client:
@@ -287,6 +291,10 @@ quincy-identity noise pubkey
 # For hybrid key exchange, pass --key-exchange hybrid to both commands
 quincy-identity noise genkey --key-exchange hybrid
 quincy-identity noise genkey --key-exchange hybrid | quincy-identity noise pubkey --key-exchange hybrid
+
+# For PQ-only key exchange, pass --key-exchange post-quantum to both commands
+quincy-identity noise genkey --key-exchange post-quantum
+quincy-identity noise genkey --key-exchange post-quantum | quincy-identity noise pubkey --key-exchange post-quantum
 ```
 
 Both the server and each client need their own keypair. Place the keys in the respective configuration files:
@@ -308,7 +316,9 @@ server_public_key = "<base64 server public key>"
 private_key = "<base64 client private key>"
 ```
 
-**Note: The `key_exchange` value must match on both the server and client.**
+**The `key_exchange` value must match on both the server and client.** Noise remains `Standard` by default.
+
+Reishi 0.4 retired the previous hybrid wire version, so Noise clients and servers must be upgraded together. Existing 96-byte hybrid private keys are rejected; rotate hybrid identities and update server pins and `authorized_keys` with the newly generated public keys. Mixed Quincy deployments using Reishi 0.3 and 0.4 cannot connect over Noise. TLS behavior is unchanged.
 
 ## Metrics
 The server can expose a Prometheus-compatible metrics endpoint. This feature is optional and requires the `metrics` build feature to be enabled:
