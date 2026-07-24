@@ -52,7 +52,7 @@ impl Layout {
     /// Main window width
     pub const WINDOW_WIDTH: f32 = 800.0;
     /// Main window height
-    pub const WINDOW_HEIGHT: f32 = 610.0;
+    pub const WINDOW_HEIGHT: f32 = 565.0;
     /// Editor modal width
     pub const EDITOR_WIDTH: f32 = 700.0;
     /// Editor modal height
