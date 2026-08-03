@@ -407,7 +407,7 @@ fn reader_task(
     reader_channel_tx: Sender<Packet>,
     mtu: usize,
 ) -> JoinHandle<Result<()>> {
-    use quincy_tun::{IDEAL_BATCH_SIZE, VIRTIO_NET_HDR_LEN};
+    use quincy_tun::{Error as TunError, IDEAL_BATCH_SIZE, OffloadError, VIRTIO_NET_HDR_LEN};
     use std::iter;
 
     let batch_size = (u16::MAX as usize / mtu).min(IDEAL_BATCH_SIZE);
@@ -434,9 +434,9 @@ fn reader_task(
 
             let num_packets = match num_packets {
                 Ok(num_packets) => Ok(num_packets),
-                // gso_split returns ErrTooManySegments after all batch_size output
-                // slots have been filled; the first batch_size segments are valid.
-                Err(e) if e.to_string() == "ErrTooManySegments" => Ok(batch_size),
+                Err(TunError::Offload(OffloadError::TooManyGsoSegments { completed_segments })) => {
+                    Ok(completed_segments)
+                }
                 Err(e) => Err(e),
             }
             .inspect_err(|e| error!("failed to receive packets from interface: {e}"))?;

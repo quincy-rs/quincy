@@ -29,7 +29,7 @@ quinn = { version = "^0.11.8", default-features = false, features = [
 ] }
 
 # Interfaces and networking
-quincy-tun = "^1.0.0"
+quincy-tun = "^2.0.0"
 socket2 = { version = "^0.6.0", features = ["all"] }
 libc = "^0.2"
 bytes = "^1.11"
