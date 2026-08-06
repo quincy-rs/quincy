@@ -64,6 +64,10 @@ pub enum QuincyError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// TUN operations that can fail during device I/O or packet offload processing
+    #[error("TUN error: {0}")]
+    Tun(#[from] quincy_tun::Error),
+
     /// Generic system errors for unrecoverable conditions
     #[error("System error: {message}")]
     System { message: String },
