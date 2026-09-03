@@ -8,22 +8,21 @@ mod metrics;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-#[cfg(feature = "metrics")]
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
-use quinn::{Endpoint, VarInt};
+use quinn::{Connection, Endpoint, Incoming, VarInt};
 use tokio::signal;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
+use tokio::time::timeout;
 use tracing::{debug, info, warn};
 
 use crate::server::address_pool::AddressPoolManager;
-use crate::server::connection::{Assigned, QuincyConnection};
+use crate::server::connection::{Assigned, Identified, QuincyConnection};
 use crate::server::session::{ConnectionSession, UserSessionRegistry};
 use crate::users::UsersFile;
 use quincy::Result;
@@ -43,6 +42,34 @@ type ConnectionQueues = Arc<DashMap<IpAddr, Sender<Bytes>>>;
 struct AssignmentResult {
     result: Result<QuincyConnection<Assigned>>,
     quic_connection: quinn::Connection,
+}
+
+/// Time allowed for a QUIC handshake to complete before the attempt is dropped.
+///
+/// A half-open connection attempt (a client that sent an Initial and then went
+/// silent) occupies a pending handshake slot until this timeout — or the
+/// transport-level idle timeout (`connection_timeout_s`) — fires. Legitimate
+/// handshakes complete within a few round trips, so 10 seconds is generous.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Maximum number of connection handshakes that may be pending at once.
+///
+/// Each pending handshake holds a Quinn connection state and a spawned task;
+/// the cap bounds memory use when an attacker floods the endpoint with Initial
+/// datagrams. Once the cap is reached, further attempts are ignored (no packet
+/// is sent in response, so this cannot be used for reflection).
+const MAX_PENDING_HANDSHAKES: usize = 256;
+
+/// Result of a spawned handshake task, reaped by the connection accept loop.
+enum HandshakeOutcome {
+    /// The handshake completed and the client was resolved to a username.
+    Identified {
+        connection: QuincyConnection<Identified>,
+        quic_connection: Connection,
+    },
+    /// The handshake or identification failed; already logged and the
+    /// connection closed inside the task.
+    Failed,
 }
 
 /// Represents a Quincy server encapsulating Quincy connections and TUN interface IO.
@@ -131,7 +158,13 @@ impl QuincyServer {
         result
     }
 
-    /// Handles incoming connections by spawning a new QuincyConnection instance for them.
+    /// Handles incoming connections.
+    ///
+    /// Each incoming connection is driven in a spawned task (handshake and
+    /// client identification), so a half-open connection attempt cannot stall
+    /// this loop. The loop itself only orchestrates: accepting connections,
+    /// reaping completed handshakes, running IP assignments, registering and
+    /// cleaning up client sessions, and shutdown.
     ///
     /// ### Arguments
     /// - `ingress_queue` - the queue for sending data to the TUN interface
@@ -151,6 +184,7 @@ impl QuincyServer {
 
         let mut assignment_tasks = FuturesUnordered::new();
         let mut connection_tasks = FuturesUnordered::new();
+        let mut handshake_tasks = FuturesUnordered::new();
 
         let shutdown = shutdown_signal();
         tokio::pin!(shutdown);
@@ -166,28 +200,44 @@ impl QuincyServer {
                         client_ip
                     );
 
-                    let quic_connection = match handshake.await {
-                        Ok(connection) => connection,
+                    if handshake_tasks.len() >= MAX_PENDING_HANDSHAKES {
+                        warn!(
+                            "Ignoring incoming connection from '{client_ip}': \
+                             too many pending handshakes"
+                        );
+                        handshake.ignore();
+                        continue;
+                    }
+
+                    let protocol = protocol.clone();
+                    let users = users.clone();
+                    let ingress = ingress_queue.clone();
+
+                    // Handshakes are driven in spawned tasks so that a
+                    // half-open connection attempt cannot stall the accept loop
+                    // (and with it, assignment processing and session cleanup).
+                    handshake_tasks.push(tokio::spawn(Self::handshake_and_identify(
+                        handshake,
+                        protocol,
+                        users,
+                        ingress,
+                    )));
+                }
+
+                // Handshake tasks
+                Some(outcome) = handshake_tasks.next() => {
+                    let outcome = match outcome {
+                        Ok(outcome) => outcome,
                         Err(e) => {
-                            warn!("Connection handshake with client '{client_ip}' failed: {e}");
+                            warn!("Handshake task panicked or was cancelled: {e}");
                             continue;
                         }
                     };
 
-                    let quic_connection_clone = quic_connection.clone();
-                    let connection = QuincyConnection::new(
-                        quic_connection,
-                        ingress_queue.clone(),
-                    );
-
-                    // Identify synchronously (reads peer_identity + HashMap lookup)
-                    let connection = match connection.identify(&protocol, &users) {
-                        Ok(conn) => conn,
-                        Err(e) => {
-                            warn!("Failed to identify client: {e}");
-                            quic_connection_clone.close(VarInt::from_u32(0x02), "Session establishment failed".as_bytes());
-                            continue;
-                        }
+                    // Failures were already logged and the connection closed
+                    // inside the task.
+                    let HandshakeOutcome::Identified { connection, quic_connection } = outcome else {
+                        continue;
                     };
 
                     let address_pool = address_pool.clone();
@@ -197,7 +247,7 @@ impl QuincyServer {
                         let result = connection.assign_ip(&address_pool, server_addr).await;
                         AssignmentResult {
                             result,
-                            quic_connection: quic_connection_clone,
+                            quic_connection,
                         }
                     });
                 }
@@ -271,12 +321,71 @@ impl QuincyServer {
                     shutdown_result?;
 
                     info!("Received shutdown signal, shutting down");
+                    let _ = abort_all(handshake_tasks).await;
                     let _ = abort_all(connection_tasks).await;
 
                     endpoint.close(VarInt::from_u32(0x01), "Server shutdown".as_bytes());
 
                     return Ok(());
                 }
+            }
+        }
+    }
+
+    /// Completes the QUIC handshake for an incoming connection and identifies the client.
+    ///
+    /// Runs inside a spawned task so a stalled (half-open) handshake cannot
+    /// block the connection accept loop. On handshake or identification
+    /// failure the connection is rejected with close code `0x02`; the caller
+    /// is notified via [`HandshakeOutcome::Failed`] (failures are logged here,
+    /// not by the accept loop).
+    ///
+    /// ### Arguments
+    /// - `handshake` - the incoming connection to complete
+    /// - `protocol` - the server protocol configuration
+    /// - `users` - the parsed users file
+    /// - `ingress_queue` - the queue for sending data to the TUN interface
+    async fn handshake_and_identify(
+        handshake: Incoming,
+        protocol: Arc<ServerProtocolConfig>,
+        users: Arc<UsersFile>,
+        ingress_queue: Sender<Packet>,
+    ) -> HandshakeOutcome {
+        let client_ip = handshake.remote_address().ip();
+
+        // `Incoming` only implements `IntoFuture`, hence the async block wrapper.
+        let quic_connection = match timeout(HANDSHAKE_TIMEOUT, async move { handshake.await }).await
+        {
+            Ok(Ok(connection)) => connection,
+            Ok(Err(e)) => {
+                warn!("Connection handshake with client '{client_ip}' failed: {e}");
+                return HandshakeOutcome::Failed;
+            }
+            Err(_) => {
+                warn!(
+                    "Connection handshake with client '{client_ip}' timed out \
+                         after {HANDSHAKE_TIMEOUT:?}"
+                );
+                return HandshakeOutcome::Failed;
+            }
+        };
+
+        let quic_connection_clone = quic_connection.clone();
+        let connection = QuincyConnection::new(quic_connection, ingress_queue);
+
+        // Identify the client (reads peer_identity + HashMap lookup)
+        match connection.identify(&protocol, &users) {
+            Ok(connection) => HandshakeOutcome::Identified {
+                connection,
+                quic_connection: quic_connection_clone,
+            },
+            Err(e) => {
+                warn!("Failed to identify client: {e}");
+                quic_connection_clone.close(
+                    VarInt::from_u32(0x02),
+                    "Session establishment failed".as_bytes(),
+                );
+                HandshakeOutcome::Failed
             }
         }
     }
