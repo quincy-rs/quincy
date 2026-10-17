@@ -227,8 +227,8 @@ impl QuincyConnection<Assigned> {
                 .await
                 .ok_or(QuincyError::system("Egress queue has been closed"))?;
 
-            if let Some(ref limiter) = rate_limiter {
-                let tokens = (data.len() as u32 / 1024)
+            if let Some(limiter) = &rate_limiter {
+                let tokens = (data.len() as u32)
                     .max(1)
                     .try_into()
                     .expect("token amount is always non-zero");
@@ -276,8 +276,8 @@ impl QuincyConnection<Assigned> {
                 continue;
             }
 
-            if let Some(ref limiter) = rate_limiter {
-                let tokens = (packet.len() as u32 / 1024)
+            if let Some(limiter) = &rate_limiter {
+                let tokens = (packet.len() as u32)
                     .max(1)
                     .try_into()
                     .expect("token amount is always non-zero");

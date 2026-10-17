@@ -6,7 +6,7 @@
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use governor::clock::DefaultClock;
@@ -82,15 +82,8 @@ impl UserSessionRegistry {
             .sessions
             .entry(username.to_string())
             .or_insert_with(|| {
-                let rate_limiter = bandwidth_limit.map(|bw| {
-                    let kib_per_sec = bw.kib_per_second();
-                    // kib_per_second() guarantees >= 1
-                    let rate = NonZeroU32::new(kib_per_sec).expect("kib_per_second returns >= 1");
-                    // Burst: at least 64 KiB or per-second rate, whichever is larger
-                    let burst = NonZeroU32::new(kib_per_sec.max(64)).expect("burst is >= 64");
-                    let quota = Quota::per_second(rate).allow_burst(burst);
-                    Arc::new(RateLimiter::direct(quota))
-                });
+                let rate_limiter =
+                    bandwidth_limit.map(|bw| Arc::new(RateLimiter::direct(bandwidth_quota(bw))));
 
                 info!(
                     "Created new session for user '{username}' (bandwidth limit: {})",
@@ -140,16 +133,32 @@ impl UserSessionRegistry {
     }
 }
 
+/// Builds the governor quota for a per-user bandwidth limit.
+///
+/// Tokens are one byte. Governor stores the replenish period as whole
+/// nanoseconds, so it is rounded up: rates are rounded down rather than
+/// exceeded. [`Bandwidth::MAX_BYTES_PER_SECOND`] bounds the configured rate.
+fn bandwidth_quota(bw: Bandwidth) -> Quota {
+    let bytes_per_sec = bw.bytes_per_second().min(Bandwidth::MAX_BYTES_PER_SECOND) as u32;
+    let rate = NonZeroU32::new(bytes_per_sec.max(1)).expect("rate is non-zero");
+    let period_ns = 1_000_000_000u64.div_ceil(u64::from(rate.get()));
+    // Burst: at least 64 KiB or one second of traffic, whichever is larger.
+    let burst = NonZeroU32::new(bytes_per_sec.max(64 * 1024)).expect("burst is non-zero");
+    Quota::with_period(Duration::from_nanos(period_ns))
+        .expect("period is non-zero")
+        .allow_burst(burst)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     use ipnet::IpNet;
 
     use quincy::config::Bandwidth;
 
-    use super::{ConnectionSession, UserSessionRegistry};
+    use super::{ConnectionSession, UserSessionRegistry, bandwidth_quota};
 
     /// Helper to create a `ConnectionSession` with the given IP string.
     fn make_session(ip: &str) -> ConnectionSession {
@@ -185,6 +194,23 @@ mod tests {
 
         assert_eq!(registry.active_connection_count(), 2);
         assert_eq!(registry.active_user_count(), 1);
+    }
+
+    #[test]
+    fn one_gbps_quota_is_not_clipped() {
+        let quota = bandwidth_quota(Bandwidth::from_bytes_per_second(125_000_000));
+
+        assert_eq!(quota.burst_size().get(), 125_000_000);
+        assert_eq!(quota.replenish_interval(), Duration::from_nanos(8));
+    }
+
+    #[test]
+    fn max_bandwidth_quota_uses_one_nanosecond_interval() {
+        let quota = bandwidth_quota(Bandwidth::from_bytes_per_second(
+            Bandwidth::MAX_BYTES_PER_SECOND,
+        ));
+
+        assert_eq!(quota.replenish_interval(), Duration::from_nanos(1));
     }
 
     #[test]

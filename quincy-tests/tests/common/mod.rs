@@ -91,6 +91,19 @@ pub fn dummy_packet(src: Ipv4Addr, dest: Ipv4Addr) -> Bytes {
     writer.into_inner().into()
 }
 
+/// Builds a dummy ICMP echo-request packet with a payload of `payload_len` bytes.
+#[allow(unused)]
+pub fn dummy_packet_with_size(src: Ipv4Addr, dest: Ipv4Addr, payload_len: usize) -> Bytes {
+    let payload = vec![0u8; payload_len];
+    let mut writer = BytesMut::new().writer();
+    PacketBuilder::ipv4(src.octets(), dest.octets(), 20)
+        .icmpv4_echo_request(0, 0)
+        .write(&mut writer, &payload)
+        .unwrap();
+
+    writer.into_inner().into()
+}
+
 impl<T: 'static + Send + Sync> InterfaceIO for TestInterface<T> {
     /// Creates a new interface by retrieving channels from the thread-local registry.
     fn create_interface(
