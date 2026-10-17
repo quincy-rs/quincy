@@ -1,5 +1,7 @@
+use futures::FutureExt;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
+use quincy::constants::PACKET_BUFFER_SIZE;
 use quincy::network::interface::{ActiveInterface, Interface, InterfaceIO};
 use quincy::utils::tasks::abort_all;
 use quincy::{QuincyError, Result};
@@ -137,9 +139,19 @@ impl ClientRelayer {
         debug!("Started inbound traffic task (QUIC tunnel -> interface)");
 
         loop {
-            let packet = connection.read_datagram().await?.into();
+            let mut packets = Vec::with_capacity(PACKET_BUFFER_SIZE);
+            packets.push(connection.read_datagram().await?.into());
 
-            interface.write_packet(packet).await?;
+            // Drain datagrams that are already buffered so the TUN writer can
+            // coalesce them into GSO super-packets.
+            while packets.len() < PACKET_BUFFER_SIZE {
+                match connection.read_datagram().now_or_never() {
+                    Some(result) => packets.push(result?.into()),
+                    None => break,
+                }
+            }
+
+            interface.write_packets(packets).await?;
         }
     }
 }

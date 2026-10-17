@@ -257,12 +257,26 @@ pub struct ConnectionConfig {
     /// Keep alive interval for connections in seconds (default = 25)
     #[serde(default = "default_keep_alive_interval_s")]
     pub keep_alive_interval_s: u64,
-    /// The size of the send buffer of the socket and Quinn endpoint (default = 2097152)
+    /// The size of the UDP socket send buffer in bytes (default = 2097152)
     #[serde(default = "default_buffer_size")]
     pub send_buffer_size: u64,
-    /// The size of the receive buffer of the socket and Quinn endpoint (default = 2097152)
+    /// The size of the UDP socket receive buffer in bytes (default = 2097152)
     #[serde(default = "default_buffer_size")]
     pub recv_buffer_size: u64,
+    /// Maximum bytes of outgoing QUIC datagrams queued per connection
+    /// (default = 4194304)
+    ///
+    /// When the buffer is full, the oldest queued datagram is dropped. Raise
+    /// this on high bandwidth-delay-product paths; the bound is per connection.
+    #[serde(default = "default_datagram_buffer_size")]
+    pub datagram_send_buffer_size: usize,
+    /// Maximum bytes of incoming QUIC datagrams queued per connection
+    /// (default = 4194304)
+    ///
+    /// When the buffer is full, incoming datagrams are dropped. Raise this on
+    /// high bandwidth-delay-product paths; the bound is per connection.
+    #[serde(default = "default_datagram_buffer_size")]
+    pub datagram_receive_buffer_size: usize,
 }
 
 /// Network configuration.
@@ -751,6 +765,8 @@ impl Default for ConnectionConfig {
             keep_alive_interval_s: default_keep_alive_interval_s(),
             send_buffer_size: default_buffer_size(),
             recv_buffer_size: default_buffer_size(),
+            datagram_send_buffer_size: default_datagram_buffer_size(),
+            datagram_receive_buffer_size: default_datagram_buffer_size(),
         }
     }
 }
@@ -779,6 +795,10 @@ fn default_bind_port() -> u16 {
 
 fn default_buffer_size() -> u64 {
     2097152
+}
+
+fn default_datagram_buffer_size() -> usize {
+    4 * 1024 * 1024
 }
 
 fn default_mtu() -> u16 {
@@ -1322,6 +1342,8 @@ impl ConnectionConfig {
         let mtu = self.mtu_with_overhead()?;
         transport_config.initial_mtu(mtu);
         transport_config.min_mtu(mtu);
+        transport_config.datagram_send_buffer_size(self.datagram_send_buffer_size);
+        transport_config.datagram_receive_buffer_size(Some(self.datagram_receive_buffer_size));
         transport_config.congestion_controller_factory(self.congestion_controller_factory());
 
         Ok(transport_config)
@@ -1420,6 +1442,8 @@ mod tests {
             keep_alive_interval_s = 20
             send_buffer_size = 4194304
             recv_buffer_size = 4194304
+            datagram_send_buffer_size = 8388608
+            datagram_receive_buffer_size = 8388608
 
             [log]
             level = "debug"
@@ -1452,6 +1476,8 @@ mod tests {
         assert_eq!(config.connection.keep_alive_interval_s, 20);
         assert_eq!(config.connection.send_buffer_size, 4194304);
         assert_eq!(config.connection.recv_buffer_size, 4194304);
+        assert_eq!(config.connection.datagram_send_buffer_size, 8388608);
+        assert_eq!(config.connection.datagram_receive_buffer_size, 8388608);
 
         match &config.protocol {
             ServerProtocolConfig::Tls(tls) => {
@@ -1614,6 +1640,11 @@ mod tests {
         assert_eq!(config.connection.keep_alive_interval_s, 20);
         assert_eq!(config.connection.send_buffer_size, 1048576);
         assert_eq!(config.connection.recv_buffer_size, 1048576);
+        assert_eq!(config.connection.datagram_send_buffer_size, 4 * 1024 * 1024);
+        assert_eq!(
+            config.connection.datagram_receive_buffer_size,
+            4 * 1024 * 1024
+        );
         assert_eq!(
             config.network.routes,
             vec![

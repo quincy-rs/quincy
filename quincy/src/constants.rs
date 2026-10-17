@@ -7,11 +7,19 @@ use rustls::crypto::aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256;
 /// Represents the maximum MTU overhead for QUIC, since the QUIC header is variable in size.
 pub const QUIC_MTU_OVERHEAD: u16 = 50;
 
-/// Packet buffer size for operations on the TUN interface.
-pub const PACKET_BUFFER_SIZE: usize = 4;
+/// Maximum number of packets drained per relay batch.
+///
+/// Matches the receive batch size used by `quinn-udp` on Linux so a single
+/// wakeup can move a full batch from the TUN to the tunnel (and vice versa).
+pub const PACKET_BUFFER_SIZE: usize = 64;
 
-/// Packet channel size used for communication between the TUN interface and QUIC tunnels.
-pub const PACKET_CHANNEL_SIZE: usize = 1024 * 1024;
+/// Packet channel capacity used for communication between the TUN interface
+/// and QUIC tunnels.
+///
+/// This bounds the backlog per queue. At the default MTU a full queue holds
+/// roughly 11 MiB, versus ~1.4 GiB at the previous 1M capacity. Ingress queues
+/// apply backpressure when full; egress queues drop packets.
+pub const PACKET_CHANNEL_SIZE: usize = 8 * 1024;
 
 /// Minimum socket buffer size (send/recv) that `bind_socket` will attempt
 /// before giving up and falling back to the OS default.

@@ -448,31 +448,34 @@ impl QuincyServer {
         debug!("Started tunnel outbound traffic task (interface -> connection queue)");
 
         loop {
-            let packet = interface.read_packet().await?;
-            let dest_addr = match packet.destination() {
-                Ok(addr) => addr,
-                Err(e) => {
-                    warn!("Received packet with malformed header structure: {e}");
-                    continue;
-                }
-            };
+            let packets = interface.read_packets().await?;
 
-            debug!("Destination address for packet: {dest_addr}");
+            for packet in packets {
+                let dest_addr = match packet.destination() {
+                    Ok(addr) => addr,
+                    Err(e) => {
+                        warn!("Received packet with malformed header structure: {e}");
+                        continue;
+                    }
+                };
 
-            let connection_queue = match connection_queues.get(&dest_addr) {
-                Some(connection_queue) => connection_queue,
-                None => continue,
-            };
+                debug!("Destination address for packet: {dest_addr}");
 
-            debug!("Found connection for IP {dest_addr}");
+                let connection_queue = match connection_queues.get(&dest_addr) {
+                    Some(connection_queue) => connection_queue,
+                    None => continue,
+                };
 
-            match connection_queue.try_send(packet.into()) {
-                Ok(()) => {}
-                Err(TrySendError::Full(_)) => {
-                    debug!("Dropping outbound packet for {dest_addr}: per-client queue full");
-                }
-                Err(TrySendError::Closed(_)) => {
-                    debug!("Dropping outbound packet for {dest_addr}: connection closed");
+                debug!("Found connection for IP {dest_addr}");
+
+                match connection_queue.try_send(packet.into()) {
+                    Ok(()) => {}
+                    Err(TrySendError::Full(_)) => {
+                        debug!("Dropping outbound packet for {dest_addr}: per-client queue full");
+                    }
+                    Err(TrySendError::Closed(_)) => {
+                        debug!("Dropping outbound packet for {dest_addr}: connection closed");
+                    }
                 }
             }
         }
