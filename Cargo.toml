@@ -3,7 +3,7 @@ members = ["quincy", "quincy-client", "quincy-identity", "quincy-server", "quinc
 resolver = "2"
 
 [workspace.package]
-version = "3.0.3"
+version = "3.1.0"
 authors = ["Jakub Kubík <jakub.kubik.it@protonmail.com>"]
 license = "AGPL-3.0-or-later"
 readme = "README.md"
@@ -16,12 +16,12 @@ categories = ["command-line-utilities", "network-programming"]
 
 [workspace.dependencies]
 # Internal crates
-quincy = { path = "quincy", version = "3.0.3" }
-quincy-client = { path = "quincy-client", version = "3.0.3" }
-quincy-server = { path = "quincy-server", version = "3.0.3" }
+quincy = { path = "quincy", version = "3.1.0" }
+quincy-client = { path = "quincy-client", version = "3.1.0" }
+quincy-server = { path = "quincy-server", version = "3.1.0" }
 
 # Quinn
-quinn = { version = "^0.11.8", default-features = false, features = [
+quinn = { version = "^0.11.12", default-features = false, features = [
     "log",
     "platform-verifier",
     "runtime-tokio",
@@ -54,11 +54,11 @@ serde = { version = "^1.0", features = ["derive"] }
 serde_json = "^1.0"
 
 # TLS
-rustls = { version = "^0.23.18", default-features = false, features = [
+rustls = { version = "^0.23.46", default-features = false, features = [
     "aws-lc-rs",
 ] }
 rustls-pemfile = "^2.0"
-aws-lc-rs = "^1.16"
+aws-lc-rs = "^1.18"
 
 # Noise
 reishi-quinn = { version = "^0.4.0", features = ["pq"] }
