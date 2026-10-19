@@ -344,6 +344,12 @@ impl Default for MetricsConfig {
 pub struct Bandwidth(u64);
 
 impl Bandwidth {
+    /// Maximum representable bandwidth in bytes per second.
+    ///
+    /// Governor needs a replenish interval of at least 1 ns per byte, so
+    /// larger limits cannot be represented and are rejected during parsing.
+    pub const MAX_BYTES_PER_SECOND: u64 = 1_000_000_000;
+
     /// Creates a new `Bandwidth` from a raw bytes-per-second value.
     pub const fn from_bytes_per_second(bytes_per_second: u64) -> Self {
         Self(bytes_per_second)
@@ -442,9 +448,10 @@ impl FromStr for Bandwidth {
         let bits_per_second = value * multiplier;
         let bytes_per_second = (bits_per_second as u64) / 8;
 
-        // Reject values that would overflow u32 when converted to KiB/s,
-        // since the rate limiter operates with u32 token counts.
-        let max_bytes_per_second = u32::MAX as u64 * 1024;
+        // The rate limiter charges one token per byte. Governor's GCRA clamps
+        // the replenish interval to at least 1 ns, so 1e9 byte tokens/s
+        // (8 Gbps) is the maximum representable rate without silent clipping.
+        let max_bytes_per_second = Bandwidth::MAX_BYTES_PER_SECOND;
         if bytes_per_second > max_bytes_per_second {
             return Err(ConfigError::InvalidValue {
                 field: "bandwidth".to_string(),
@@ -1890,10 +1897,11 @@ mod tests {
 
     #[test]
     fn parse_bandwidth_rejects_oversized_value() {
-        // 35184372088832 bps = 2^32 KiB/s, which overflows u32 in kib_per_second()
+        // 8 Gbps is 1e9 bytes/sec, the maximum governor can represent without
+        // clamping the replenish interval to its 1 ns floor.
+        assert!("8 gbps".parse::<Bandwidth>().is_ok());
+        assert!("9 gbps".parse::<Bandwidth>().is_err());
         assert!("35184372088832 bps".parse::<Bandwidth>().is_err());
-        // Just under the limit should still succeed
-        assert!("100 gbps".parse::<Bandwidth>().is_ok());
     }
 
     #[test]

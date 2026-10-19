@@ -1,6 +1,6 @@
 mod common;
 
-use common::{TestInterface, dummy_packet, setup_interface};
+use common::{TestInterface, dummy_packet_with_size, setup_interface};
 use quincy::config::{Bandwidth, ClientConfig, FromPath, ServerConfig};
 use quincy_client::client::QuincyClient;
 use quincy_server::server::QuincyServer;
@@ -11,22 +11,26 @@ use std::time::{Duration, Instant};
 
 /// Bandwidth limit used for the test: 32 KiB/sec (256 kbps).
 ///
-/// With this rate, the burst capacity is `max(32, 64) = 64` tokens (KiB).
-/// Each small test packet (36 bytes) costs 1 token due to the 1 KiB minimum.
+/// With this rate, the burst capacity is `max(32 KiB, 64 KiB) = 64 KiB`.
+/// Each packet is charged its full wire length (~1.2 KiB).
 const TEST_BANDWIDTH: Bandwidth = Bandwidth::from_bytes_per_second(32 * 1024);
+
+/// Payload size used to build the test packets. The resulting IPv4 packet is
+/// ~1.2 KiB, comfortably below the tunnel MTU.
+const TEST_PAYLOAD_LEN: usize = 1200;
 
 /// Number of packets to send in each direction.
 ///
-/// This must exceed the burst capacity (64 tokens) so that the rate limiter
-/// actually throttles. We send 96 packets: 64 fill the burst, 32 are rate-
-/// limited at 32 tokens/sec → ~1 second of throttling.
+/// 96 packets × ~1.2 KiB ≈ 118 KiB, which exceeds the 64 KiB burst capacity
+/// so the rate limiter actually throttles.
 const PACKETS_PER_DIRECTION: usize = 96;
 
 /// Minimum expected duration for the throttled portion of a single direction.
 ///
-/// With 32 excess tokens at 32 tokens/sec the theoretical minimum is 1 second.
-/// We use a generous lower bound to avoid flakiness from scheduling jitter
-/// and the 5 ms governor jitter.
+/// Direction 1 sends ~118 KiB: 64 KiB fill the burst, the remaining ~54 KiB
+/// take ~1.7 s at 32 KiB/s. Direction 2 is fully throttled at ~3.6 s. We use a
+/// generous lower bound to avoid flakiness from scheduling jitter and the 5 ms
+/// governor jitter.
 const MIN_THROTTLE_DURATION: Duration = Duration::from_millis(500);
 
 #[rstest]
@@ -64,7 +68,7 @@ async fn test_bandwidth_limiting(#[case] config_dir: &str) {
     // Packets enter the client's TUN, traverse QUIC, hit the server-side
     // rate limiter in `process_incoming_data`, then arrive at the server TUN.
     // This drains the burst capacity of the shared limiter.
-    let ingress_packet = dummy_packet(ip_client, ip_server);
+    let ingress_packet = dummy_packet_with_size(ip_client, ip_server, TEST_PAYLOAD_LEN);
 
     let start = Instant::now();
 
@@ -96,7 +100,7 @@ async fn test_bandwidth_limiting(#[case] config_dir: &str) {
     // egress queue, hit the rate limiter in `process_outgoing_data`, then
     // traverse QUIC to the client TUN. Because the burst was already drained
     // by direction 1, throttling kicks in immediately.
-    let egress_packet = dummy_packet(ip_server, ip_client);
+    let egress_packet = dummy_packet_with_size(ip_server, ip_client, TEST_PAYLOAD_LEN);
 
     let start = Instant::now();
 
@@ -117,8 +121,8 @@ async fn test_bandwidth_limiting(#[case] config_dir: &str) {
 
     let egress_elapsed = start.elapsed();
 
-    // The burst was already consumed by direction 1, so all 96 packets are
-    // rate-limited at 32 tokens/sec → theoretical ~3 seconds. We use a
+    // The burst was already consumed by direction 1, so all ~118 KiB are
+    // rate-limited at 32 KiB/s → theoretical ~3.6 seconds. We use a
     // generous lower bound.
     assert!(
         egress_elapsed > MIN_THROTTLE_DURATION,
