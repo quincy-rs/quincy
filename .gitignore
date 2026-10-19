@@ -108,3 +108,4 @@ target/
 lcov.info
 cobertura.xml
 coverage/
+perf/results/
