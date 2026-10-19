@@ -11,10 +11,11 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 cd "$REPO_ROOT"
 
+RUN_ID="$(date +%Y%m%d-%H%M%S)-$$"
 IMAGE="${QUINCY_PERF_IMAGE:-quincy-perf}"
-NETWORK="${QUINCY_PERF_NETWORK:-quincy-perf-net}"
-SERVER="quincy-perf-server"
-CLIENT="quincy-perf-client"
+NETWORK="${QUINCY_PERF_NETWORK:-quincy-perf-net-$RUN_ID}"
+SERVER="quincy-perf-server-$RUN_ID"
+CLIENT="quincy-perf-client-$RUN_ID"
 
 SERVER_IP="10.66.0.1"
 CLIENT_IP="10.66.0.2"
@@ -103,7 +104,7 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/quincy-perf.XXXXXX")
 CONFIG="$WORK/config"
 mkdir -p "$CONFIG"
 
-STAMP=$(date +%Y%m%d-%H%M%S)
+STAMP="$RUN_ID"
 RESULTS="${OUTPUT:-$REPO_ROOT/perf/results/$TUNNEL-$STAMP.tsv}"
 mkdir -p "$(dirname "$RESULTS")"
 
