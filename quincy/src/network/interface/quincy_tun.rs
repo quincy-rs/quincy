@@ -410,17 +410,15 @@ fn reader_task(
     use quincy_tun::{Error as TunError, IDEAL_BATCH_SIZE, OffloadError, VIRTIO_NET_HDR_LEN};
     use std::iter;
 
-    let batch_size = (u16::MAX as usize / mtu).min(IDEAL_BATCH_SIZE);
-
     let mut original_buffer = [0; VIRTIO_NET_HDR_LEN + u16::MAX as usize];
-    let mut sizes = vec![0; batch_size];
+    let mut sizes = vec![0; IDEAL_BATCH_SIZE];
 
     // Allocate bufs once; only consumed entries are replaced each iteration.
     let mut bufs = iter::repeat_with(|| unsafe {
         // SAFETY: the data is written to before it resized and read
         uninitialized_bytes_mut(mtu)
     })
-    .take(batch_size)
+    .take(IDEAL_BATCH_SIZE)
     .collect::<Vec<_>>();
 
     tokio::spawn(async move {
