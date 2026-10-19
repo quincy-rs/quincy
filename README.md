@@ -27,6 +27,7 @@ Quincy is a VPN client and server implementation using the [QUIC](https://en.wik
   - [Server](#server)
   - [Users](#users)
 - [Architecture](#architecture)
+- [Performance](#performance)
 - [Protocol modes](#protocol-modes)
   - [TLS](#tls)
   - [Noise](#noise)
@@ -206,6 +207,42 @@ The [`tokio`](https://github.com/tokio-rs/tokio) runtime is used to provide an e
 
 ### Architecture diagram
 [![Architecture diagram](docs/architecture_diagram.svg)](docs/architecture_diagram.svg)
+
+## Performance
+[`perf/run.sh`](perf/run.sh) measures tunnel throughput with iperf3 in Docker. Medians of three 10-second runs on an Apple Silicon macOS host, MTU 1400, Quincy in Noise mode. CPU is percent of one core per endpoint.
+
+**Quincy**
+
+| Test | Mbps | Loss % | Client CPU % | Server CPU % |
+| --- | ---: | ---: | ---: | ---: |
+| TCP up, 1 stream | 1991 | 0.0 | 102.3 | 127.8 |
+| TCP up, 4 streams | 1986 | 0.0 | 103.7 | 134.6 |
+| TCP down, 1 stream | 1938 | 0.0 | 126.5 | 103.1 |
+| TCP down, 4 streams | 2019 | 0.0 | 132.2 | 106.8 |
+| UDP up, 1 Gbps offered | 889 | 11.1 | 61.6 | 61.6 |
+| UDP down, 1 Gbps offered | 888 | 11.2 | 59.3 | 63.4 |
+
+**WireGuard**
+
+| Test | Mbps | Loss % | Client CPU % | Server CPU % |
+| --- | ---: | ---: | ---: | ---: |
+| TCP up, 1 stream | 2209 | 0.0 | 2.2 | 21.4 |
+| TCP up, 4 streams | 2271 | 0.0 | 2.5 | 23.4 |
+| TCP down, 1 stream | 2183 | 0.0 | 21.6 | 2.1 |
+| TCP down, 4 streams | 2304 | 0.0 | 25.4 | 2.4 |
+| UDP up, 1 Gbps offered | 993 | 0.7 | 44.2 | 7.7 |
+| UDP down, 1 Gbps offered | 994 | 0.5 | 8.1 | 44.2 |
+
+**OpenVPN**
+
+| Test | Mbps | Loss % | Client CPU % | Server CPU % |
+| --- | ---: | ---: | ---: | ---: |
+| TCP up, 1 stream | 1220 | 0.0 | 56.2 | 70.5 |
+| TCP up, 4 streams | 1224 | 0.0 | 60.6 | 87.2 |
+| TCP down, 1 stream | 1131 | 0.0 | 54.2 | 75.1 |
+| TCP down, 4 streams | 1113 | 0.0 | 59.8 | 77.5 |
+| UDP up, 1 Gbps offered | 831 | 16.9 | 61.0 | 40.9 |
+| UDP down, 1 Gbps offered | 862 | 13.8 | 42.4 | 54.8 |
 
 ## Protocol modes
 Quincy supports two cryptographic protocol modes for the QUIC tunnel: TLS and Noise. The mode is selected in the `[protocol]` section of both the server and client configuration files.
