@@ -78,6 +78,11 @@ while (( $# > 0 )); do
     esac
 done
 
+if ! [[ "$REPEATS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "invalid --repeats '$REPEATS' (expected a positive integer)" >&2
+    exit 2
+fi
+
 case "$TUNNEL" in
     quincy)    UNDERLAY_PORT=55555 ;;
     wireguard) UNDERLAY_PORT=51820 ;;
