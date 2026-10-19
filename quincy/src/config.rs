@@ -273,8 +273,9 @@ pub struct ConnectionConfig {
     /// Maximum bytes of incoming QUIC datagrams queued per connection
     /// (default = 4194304)
     ///
-    /// When the buffer is full, incoming datagrams are dropped. Raise this on
-    /// high bandwidth-delay-product paths; the bound is per connection.
+    /// When the buffer is full, the oldest buffered datagrams are dropped.
+    /// Raise this on high bandwidth-delay-product paths; the bound is per
+    /// connection.
     #[serde(default = "default_datagram_buffer_size")]
     pub datagram_receive_buffer_size: usize,
 }
