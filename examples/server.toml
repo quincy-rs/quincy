@@ -17,6 +17,12 @@ private_key = "HsRUK7PIxaIYVu+GQvfEL2OQM4Q6SJ+udEfmdQFd8TI="
 [connection]
 # The MTU used by the QUIC tunnel and the spawned TUN interface
 mtu = 1400
+# Maximum number of QUIC handshakes in flight at once (default = 256).
+# A full pool pre-empts its oldest pending handshake.
+max_pending_handshakes = 256
+# Maximum in-flight handshakes per client source address (default = 8).
+# IPv4 peers count per address, IPv6 peers per /64.
+max_pending_handshakes_per_source = 8
 
 [log]
 # The log level

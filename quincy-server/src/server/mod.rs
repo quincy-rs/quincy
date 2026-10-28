@@ -1,4 +1,5 @@
 pub mod address_pool;
+mod admission;
 mod connection;
 pub mod session;
 
@@ -19,9 +20,10 @@ use tokio::signal;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::time::timeout;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::server::address_pool::AddressPoolManager;
+use crate::server::admission::{AdmissionPermit, HandshakeAdmission};
 use crate::server::connection::{Assigned, Identified, QuincyConnection};
 use crate::server::session::{ConnectionSession, UserSessionRegistry};
 use crate::users::UsersFile;
@@ -51,14 +53,6 @@ struct AssignmentResult {
 /// transport-level idle timeout (`connection_timeout_s`) — fires. Legitimate
 /// handshakes complete within a few round trips, so 10 seconds is generous.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Maximum number of connection handshakes that may be pending at once.
-///
-/// Each pending handshake holds a Quinn connection state and a spawned task;
-/// the cap bounds memory use when an attacker floods the endpoint with Initial
-/// datagrams. Once the cap is reached, further attempts are ignored (no packet
-/// is sent in response, so this cannot be used for reflection).
-const MAX_PENDING_HANDSHAKES: usize = 256;
 
 /// Result of a spawned handshake task, reaped by the connection accept loop.
 enum HandshakeOutcome {
@@ -161,10 +155,14 @@ impl QuincyServer {
     /// Handles incoming connections.
     ///
     /// Each incoming connection is driven in a spawned task (handshake and
-    /// client identification), so a half-open connection attempt cannot stall
-    /// this loop. The loop itself only orchestrates: accepting connections,
-    /// reaping completed handshakes, running IP assignments, registering and
-    /// cleaning up client sessions, and shutdown.
+    /// client identification), so a half-open attempt cannot stall this loop.
+    /// A peer must prove return routability (QUIC Retry) before it takes one of
+    /// the handshake slots, which are bounded globally and per source network;
+    /// a full pool pre-empts its oldest pending handshake.
+    ///
+    /// The loop itself only orchestrates: accepting connections, reaping
+    /// completed handshakes, running IP assignments, registering and cleaning
+    /// up client sessions, and shutdown.
     ///
     /// ### Arguments
     /// - `ingress_queue` - the queue for sending data to the TUN interface
@@ -186,6 +184,21 @@ impl QuincyServer {
         let mut connection_tasks = FuturesUnordered::new();
         let mut handshake_tasks = FuturesUnordered::new();
 
+        // Retry tokens are signed with a per-process key, which a load-balanced
+        // `reuse_socket` deployment cannot survive: fall back to admission limits alone.
+        let require_address_validation = !self.config.reuse_socket;
+        if !require_address_validation {
+            warn!("reuse_socket is enabled: QUIC address validation (Retry) is disabled");
+        }
+
+        let admission = HandshakeAdmission::new(
+            self.config.connection.max_pending_handshakes.get(),
+            self.config
+                .connection
+                .max_pending_handshakes_per_source
+                .get(),
+        );
+
         let shutdown = shutdown_signal();
         tokio::pin!(shutdown);
 
@@ -200,34 +213,50 @@ impl QuincyServer {
                         client_ip
                     );
 
-                    if handshake_tasks.len() >= MAX_PENDING_HANDSHAKES {
-                        warn!(
-                            "Ignoring incoming connection from '{client_ip}': \
-                             too many pending handshakes"
-                        );
-                        handshake.ignore();
+                    // Unvalidated Initials cost one stateless Retry, never a slot.
+                    if require_address_validation && !handshake.remote_address_validated() {
+                        trace!("Requesting address validation from '{client_ip}'");
+
+                        match handshake.retry() {
+                            Ok(()) => {}
+                            Err(e) => {
+                                warn!(
+                                    "Cannot request address validation from '{client_ip}': {e}"
+                                );
+                                e.into_incoming().ignore();
+                            }
+                        }
+
                         continue;
                     }
 
-                    let protocol = protocol.clone();
-                    let users = users.clone();
-                    let ingress = ingress_queue.clone();
+                    let Some(permit) = admission.try_admit(handshake.remote_address()) else {
+                        warn!(
+                            "Ignoring incoming connection from '{client_ip}': \
+                             pending handshake limit reached"
+                        );
+                        handshake.ignore();
+                        continue;
+                    };
 
-                    // Handshakes are driven in spawned tasks so that a
-                    // half-open connection attempt cannot stall the accept loop
-                    // (and with it, assignment processing and session cleanup).
-                    handshake_tasks.push(tokio::spawn(Self::handshake_and_identify(
+                    let slot = permit.slot();
+                    let task = tokio::spawn(Self::handshake_and_identify(
                         handshake,
-                        protocol,
-                        users,
-                        ingress,
-                    )));
+                        protocol.clone(),
+                        users.clone(),
+                        ingress_queue.clone(),
+                        permit,
+                    ));
+                    admission.attach(&slot, task.abort_handle());
+                    handshake_tasks.push(task);
                 }
 
                 // Handshake tasks
                 Some(outcome) = handshake_tasks.next() => {
                     let outcome = match outcome {
                         Ok(outcome) => outcome,
+                        // Pre-empted to admit a newer connection, or aborted at shutdown.
+                        Err(e) if e.is_cancelled() => continue,
                         Err(e) => {
                             warn!("Handshake task panicked or was cancelled: {e}");
                             continue;
@@ -345,11 +374,13 @@ impl QuincyServer {
     /// - `protocol` - the server protocol configuration
     /// - `users` - the parsed users file
     /// - `ingress_queue` - the queue for sending data to the TUN interface
+    /// - `_permit` - the admission slot held for the duration of this task
     async fn handshake_and_identify(
         handshake: Incoming,
         protocol: Arc<ServerProtocolConfig>,
         users: Arc<UsersFile>,
         ingress_queue: Sender<Packet>,
+        _permit: AdmissionPermit,
     ) -> HandshakeOutcome {
         let client_ip = handshake.remote_address().ip();
 

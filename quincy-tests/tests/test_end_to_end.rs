@@ -1,26 +1,14 @@
 mod common;
 
-use common::{TestInterface, dummy_packet, setup_interface};
+use common::{TestInterface, dummy_packet, setup_interface, use_ephemeral_server_port};
 use quincy::QuincyError;
 use quincy::config::{ClientConfig, FromPath, ServerConfig};
 use quincy::network::interface::Interface;
 use quincy_client::client::QuincyClient;
 use quincy_server::server::QuincyServer;
 use rstest::rstest;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
-
-fn use_ephemeral_server_port(client_config: &mut ClientConfig, server_config: &mut ServerConfig) {
-    let listener = TcpListener::bind(SocketAddr::new(server_config.bind_address, 0))
-        .expect("reserve ephemeral server port");
-    let port = listener
-        .local_addr()
-        .expect("read reserved server port")
-        .port();
-
-    server_config.bind_port = port;
-    client_config.connection_string = format!("localhost:{port}");
-}
 
 #[cfg(unix)]
 fn assert_fd_closed(raw_fd: std::os::fd::RawFd) {
