@@ -24,6 +24,7 @@ ipnet = { workspace = true }
 libc = { workspace = true }
 bytes = { workspace = true }
 secrecy = { workspace = true }
+quinn = { workspace = true }
 
 rstest = "^0.25.0"
 etherparse = "^0.18.0"

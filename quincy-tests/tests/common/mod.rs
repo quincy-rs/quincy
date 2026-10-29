@@ -1,11 +1,12 @@
 use bytes::{BufMut, Bytes, BytesMut};
 use etherparse::PacketBuilder;
 use ipnet::IpNet;
+use quincy::config::{ClientConfig, ServerConfig};
 use quincy::network::{interface::InterfaceIO, packet::Packet, route::InstalledExclusionRoute};
 use std::any::TypeId;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::{Mutex, mpsc};
@@ -77,6 +78,27 @@ pub fn setup_interface<T: 'static>() -> TestChannels {
         tx: Arc::new(Mutex::new(test_tx)),
         rx: Arc::new(Mutex::new(test_rx)),
     }
+}
+
+/// Binds a freshly reserved ephemeral port to the server config and points the
+/// client at it.
+///
+/// Reserving the port through a TCP listener keeps concurrently running tests
+/// from picking the same UDP port.
+#[allow(unused)]
+pub fn use_ephemeral_server_port(
+    client_config: &mut ClientConfig,
+    server_config: &mut ServerConfig,
+) {
+    let listener = TcpListener::bind(SocketAddr::new(server_config.bind_address, 0))
+        .expect("reserve ephemeral server port");
+    let port = listener
+        .local_addr()
+        .expect("read reserved server port")
+        .port();
+
+    server_config.bind_port = port;
+    client_config.connection_string = format!("localhost:{port}");
 }
 
 /// Builds a dummy ICMP echo-request packet with the given source and destination.

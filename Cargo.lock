@@ -4095,6 +4095,7 @@ dependencies = [
  "quincy",
  "quincy-client",
  "quincy-server",
+ "quinn",
  "rstest",
  "secrecy",
  "tokio",

@@ -34,6 +34,7 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::net::IpAddr;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -278,6 +279,18 @@ pub struct ConnectionConfig {
     /// connection.
     #[serde(default = "default_datagram_buffer_size")]
     pub datagram_receive_buffer_size: usize,
+    /// Maximum number of QUIC handshakes in flight at once (default = 256)
+    ///
+    /// Server only. A full pool pre-empts its oldest pending handshake.
+    #[serde(default = "default_max_pending_handshakes")]
+    pub max_pending_handshakes: NonZeroUsize,
+    /// Maximum number of in-flight QUIC handshakes per client source address
+    /// (default = 8)
+    ///
+    /// Server only. IPv4 peers count per address, IPv6 peers per /64. Must not
+    /// exceed `max_pending_handshakes`.
+    #[serde(default = "default_max_pending_handshakes_per_source")]
+    pub max_pending_handshakes_per_source: NonZeroUsize,
 }
 
 /// Network configuration.
@@ -758,7 +771,21 @@ pub trait FromPath<T: DeserializeOwned + ConfigInit<T>> {
     }
 }
 
-impl ConfigInit<ServerConfig> for ServerConfig {}
+impl ConfigInit<ServerConfig> for ServerConfig {
+    /// Loads the server configuration and validates the handshake admission
+    /// limits, so no caller can start the server with inconsistent limits.
+    ///
+    /// ### Errors
+    /// - `ConfigError::InvalidValue` if the per-source handshake limit exceeds
+    ///   the global one
+    fn init(figment: Figment, _env_prefix: &str) -> Result<ServerConfig> {
+        let config: ServerConfig = figment.extract()?;
+        config.validate_handshake_limits()?;
+
+        Ok(config)
+    }
+}
+
 impl ConfigInit<ClientConfig> for ClientConfig {}
 
 impl FromPath<ServerConfig> for ServerConfig {}
@@ -775,6 +802,8 @@ impl Default for ConnectionConfig {
             recv_buffer_size: default_buffer_size(),
             datagram_send_buffer_size: default_datagram_buffer_size(),
             datagram_receive_buffer_size: default_datagram_buffer_size(),
+            max_pending_handshakes: default_max_pending_handshakes(),
+            max_pending_handshakes_per_source: default_max_pending_handshakes_per_source(),
         }
     }
 }
@@ -843,6 +872,16 @@ fn default_false_fn() -> bool {
 
 fn default_metrics_address() -> IpAddr {
     "127.0.0.1".parse().expect("Loopback address is valid")
+}
+
+/// Default maximum number of in-flight QUIC handshakes (256).
+fn default_max_pending_handshakes() -> NonZeroUsize {
+    NonZeroUsize::new(256).expect("256 is non-zero")
+}
+
+/// Default maximum number of in-flight QUIC handshakes per source network (8).
+fn default_max_pending_handshakes_per_source() -> NonZeroUsize {
+    NonZeroUsize::new(8).expect("8 is non-zero")
 }
 
 fn default_metrics_port() -> u16 {
@@ -1094,6 +1133,28 @@ impl ClientConfig {
 // --- Server config builders ---
 
 impl ServerConfig {
+    /// Validates the handshake admission limits against each other.
+    ///
+    /// Runs during configuration loading; zero values are already rejected by
+    /// [`NonZeroUsize`] deserialization.
+    ///
+    /// ### Errors
+    /// - `ConfigError::InvalidValue` if the per-source limit exceeds the global
+    ///   limit
+    pub fn validate_handshake_limits(&self) -> Result<()> {
+        if self.connection.max_pending_handshakes_per_source
+            > self.connection.max_pending_handshakes
+        {
+            return Err(ConfigError::InvalidValue {
+                field: "connection.max_pending_handshakes_per_source".to_string(),
+                reason: "must not exceed max_pending_handshakes".to_string(),
+            }
+            .into());
+        }
+
+        Ok(())
+    }
+
     /// Creates Quinn server configuration from this Quincy tunnel configuration.
     ///
     /// ### Arguments
@@ -1426,6 +1487,32 @@ mod tests {
     const CLIENT_CERT_PEM: &str = include_str!("../../quincy-tests/tests/static/client_cert.pem");
     const CLIENT_KEY_PEM: &str = include_str!("../../quincy-tests/tests/static/client_key.pem");
 
+    fn server_config_for_inline_identity() -> ServerConfig {
+        ServerConfig {
+            name: "quincy-server".to_string(),
+            interface_name: None,
+            bind_address: "127.0.0.1".parse().unwrap(),
+            bind_port: 55555,
+            reuse_socket: false,
+            tunnel_network: "10.0.0.1/24".parse().unwrap(),
+            users_file: PathBuf::from("users.toml"),
+            isolate_clients: true,
+            default_bandwidth_limit: None,
+            protocol: ServerProtocolConfig::Tls(ServerTlsConfig {
+                key_exchange: TlsKeyExchange::Standard,
+                certificate_file: None,
+                certificate: Some(SERVER_CERT_PEM.to_string()),
+                certificate_key_file: None,
+                certificate_key: Some(SecretString::from(SERVER_KEY_PEM)),
+            }),
+            connection: ConnectionConfig::default(),
+            log: LogConfig {
+                level: "info".to_string(),
+            },
+            metrics: MetricsConfig::default(),
+        }
+    }
+
     #[test]
     fn parse_server_config_tls() {
         let toml = r#"
@@ -1752,31 +1839,24 @@ mod tests {
 
     #[test]
     fn build_server_tls_config_with_inline_certificate_and_key() {
-        let config = ServerConfig {
-            name: "quincy-server".to_string(),
-            interface_name: None,
-            bind_address: "127.0.0.1".parse().unwrap(),
-            bind_port: 55555,
-            reuse_socket: false,
-            tunnel_network: "10.0.0.1/24".parse().unwrap(),
-            users_file: PathBuf::from("users.toml"),
-            isolate_clients: true,
-            default_bandwidth_limit: None,
-            protocol: ServerProtocolConfig::Tls(ServerTlsConfig {
-                key_exchange: TlsKeyExchange::Standard,
-                certificate_file: None,
-                certificate: Some(SERVER_CERT_PEM.to_string()),
-                certificate_key_file: None,
-                certificate_key: Some(SecretString::from(SERVER_KEY_PEM)),
-            }),
-            connection: ConnectionConfig::default(),
-            log: LogConfig {
-                level: "info".to_string(),
-            },
-            metrics: MetricsConfig::default(),
-        };
+        let config = server_config_for_inline_identity();
 
         assert!(config.as_quinn_server_config(None, None).is_ok());
+    }
+
+    #[test]
+    fn validate_handshake_limits_rejects_per_source_above_global() {
+        let mut config = server_config_for_inline_identity();
+
+        assert!(config.validate_handshake_limits().is_ok());
+
+        config.connection.max_pending_handshakes = NonZeroUsize::new(4).unwrap();
+        config.connection.max_pending_handshakes_per_source = NonZeroUsize::new(8).unwrap();
+
+        assert!(matches!(
+            config.validate_handshake_limits(),
+            Err(crate::QuincyError::Config(ConfigError::InvalidValue { .. }))
+        ));
     }
 
     #[test]
