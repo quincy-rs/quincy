@@ -22,6 +22,18 @@ pub struct IpAssignment {
     pub server_address: IpNet,
 }
 
+/// Minimum IPv4 prefix length accepted for an assigned tunnel endpoint.
+///
+/// Shorter prefixes would install an overly broad on-link route, so they are
+/// rejected before a TUN interface is created.
+const MINIMUM_ASSIGNMENT_PREFIX_V4: u8 = 8;
+
+/// Minimum IPv6 prefix length accepted for an assigned tunnel endpoint.
+///
+/// Shorter prefixes would install an overly broad on-link route, so they are
+/// rejected before a TUN interface is created.
+const MINIMUM_ASSIGNMENT_PREFIX_V6: u8 = 64;
+
 /// Sends an IP assignment to the client over a QUIC uni-directional stream.
 ///
 /// Opens a new uni-stream on the connection, serializes the assignment as JSON,
@@ -99,14 +111,15 @@ pub async fn recv_ip_assignment(
 
 /// Validates that an IP assignment address is safe for use as a tunnel endpoint.
 ///
-/// Rejects loopback, unspecified, multicast, and broadcast addresses,
-/// as well as networks with a zero prefix length (which would capture all traffic).
+/// Rejects loopback, unspecified, multicast, and broadcast addresses, as well as
+/// prefixes shorter than the family-specific minimum (`/8` for IPv4, `/64` for
+/// IPv6), since those would install an overly broad on-link route.
 ///
 /// ### Arguments
 /// - `ipnet` - the IP network to validate
 ///
 /// ### Errors
-/// Returns an error if the address is invalid for tunnel use.
+/// Returns an error if the address or prefix is invalid for tunnel use.
 fn validate_assignment_address(ipnet: IpNet) -> Result<()> {
     let addr = ipnet.addr();
 
@@ -120,7 +133,12 @@ fn validate_assignment_address(ipnet: IpNet) -> Result<()> {
         return Err(AuthError::IpAssignmentFailed.into());
     }
 
-    if ipnet.prefix_len() == 0 {
+    let minimum_prefix = match addr {
+        IpAddr::V4(_) => MINIMUM_ASSIGNMENT_PREFIX_V4,
+        IpAddr::V6(_) => MINIMUM_ASSIGNMENT_PREFIX_V6,
+    };
+
+    if ipnet.prefix_len() < minimum_prefix {
         return Err(AuthError::IpAssignmentFailed.into());
     }
 
@@ -130,14 +148,16 @@ fn validate_assignment_address(ipnet: IpNet) -> Result<()> {
 /// Validates that an IP assignment contains safe, usable addresses.
 ///
 /// Rejects assignments where either address is loopback, unspecified,
-/// multicast, or broadcast. Also validates that addresses share the same
-/// subnet and have non-zero prefix lengths.
+/// multicast, or broadcast, or whose prefix is shorter than the family-specific
+/// minimum. Also requires the client and server to describe exactly the same
+/// network: identical prefix lengths and identical networks.
 ///
 /// ### Arguments
 /// - `assignment` - the IP assignment to validate
 ///
 /// ### Errors
-/// Returns an error if the assignment contains unsafe addresses.
+/// Returns an error if the assignment contains unsafe addresses or inconsistent
+/// client/server networks.
 fn validate_assignment(assignment: &IpAssignment) -> Result<()> {
     let client = assignment.client_address;
     let server = assignment.server_address;
@@ -145,8 +165,7 @@ fn validate_assignment(assignment: &IpAssignment) -> Result<()> {
     validate_assignment_address(client)?;
     validate_assignment_address(server)?;
 
-    // Validate that client and server are in the same subnet
-    if !client.contains(&server.addr()) || !server.contains(&client.addr()) {
+    if client.prefix_len() != server.prefix_len() || client.network() != server.network() {
         return Err(AuthError::IpAssignmentFailed.into());
     }
 
@@ -251,6 +270,38 @@ mod tests {
             let ipnet = make_ipv6("fd00::1", 0);
             let result = validate_assignment_address(ipnet);
             assert!(result.is_err());
+        }
+
+        #[test]
+        fn accepts_ipv4_minimum_prefix() {
+            let ipnet = make_ipv4("10.0.0.1", 8);
+            assert!(validate_assignment_address(ipnet).is_ok());
+        }
+
+        #[test]
+        fn rejects_ipv4_prefix_below_minimum() {
+            let ipnet = make_ipv4("10.0.0.1", 7);
+            let result = validate_assignment_address(ipnet);
+            assert!(matches!(
+                result.unwrap_err(),
+                QuincyError::Auth(AuthError::IpAssignmentFailed)
+            ));
+        }
+
+        #[test]
+        fn accepts_ipv6_minimum_prefix() {
+            let ipnet = make_ipv6("fd00::1", 64);
+            assert!(validate_assignment_address(ipnet).is_ok());
+        }
+
+        #[test]
+        fn rejects_ipv6_prefix_below_minimum() {
+            let ipnet = make_ipv6("fd00::1", 63);
+            let result = validate_assignment_address(ipnet);
+            assert!(matches!(
+                result.unwrap_err(),
+                QuincyError::Auth(AuthError::IpAssignmentFailed)
+            ));
         }
     }
 
@@ -377,6 +428,89 @@ mod tests {
             };
             let result = validate_assignment(&assignment);
             assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_reported_asymmetric_short_prefix() {
+            let assignment = IpAssignment {
+                client_address: make_ipv4("10.0.0.2", 1),
+                server_address: make_ipv4("10.0.0.1", 24),
+            };
+            let result = validate_assignment(&assignment);
+            assert!(matches!(
+                result.unwrap_err(),
+                QuincyError::Auth(AuthError::IpAssignmentFailed)
+            ));
+        }
+
+        #[test]
+        fn rejects_symmetric_ipv4_short_prefix() {
+            let assignment = IpAssignment {
+                client_address: make_ipv4("10.0.0.2", 1),
+                server_address: make_ipv4("10.0.0.1", 1),
+            };
+            let result = validate_assignment(&assignment);
+            assert!(matches!(
+                result.unwrap_err(),
+                QuincyError::Auth(AuthError::IpAssignmentFailed)
+            ));
+        }
+
+        #[test]
+        fn rejects_symmetric_ipv6_short_prefix() {
+            let assignment = IpAssignment {
+                client_address: make_ipv6("fd00::2", 1),
+                server_address: make_ipv6("fd00::1", 1),
+            };
+            let result = validate_assignment(&assignment);
+            assert!(matches!(
+                result.unwrap_err(),
+                QuincyError::Auth(AuthError::IpAssignmentFailed)
+            ));
+        }
+
+        #[test]
+        fn rejects_ipv6_asymmetric_prefix() {
+            let assignment = IpAssignment {
+                client_address: make_ipv6("fd00::2", 64),
+                server_address: make_ipv6("fd00::1", 65),
+            };
+            let result = validate_assignment(&assignment);
+            assert!(matches!(
+                result.unwrap_err(),
+                QuincyError::Auth(AuthError::IpAssignmentFailed)
+            ));
+        }
+
+        #[test]
+        fn rejects_mismatched_prefix_lengths_in_same_network() {
+            let assignment = IpAssignment {
+                client_address: make_ipv4("10.0.0.2", 24),
+                server_address: make_ipv4("10.0.0.1", 16),
+            };
+            let result = validate_assignment(&assignment);
+            assert!(matches!(
+                result.unwrap_err(),
+                QuincyError::Auth(AuthError::IpAssignmentFailed)
+            ));
+        }
+
+        #[test]
+        fn accepts_ipv4_minimum_prefix_assignment() {
+            let assignment = IpAssignment {
+                client_address: make_ipv4("10.0.0.2", 8),
+                server_address: make_ipv4("10.0.0.1", 8),
+            };
+            assert!(validate_assignment(&assignment).is_ok());
+        }
+
+        #[test]
+        fn accepts_ipv6_minimum_prefix_assignment() {
+            let assignment = IpAssignment {
+                client_address: make_ipv6("fd00::2", 64),
+                server_address: make_ipv6("fd00::1", 64),
+            };
+            assert!(validate_assignment(&assignment).is_ok());
         }
     }
 }

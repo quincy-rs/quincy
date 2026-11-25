@@ -773,14 +773,18 @@ pub trait FromPath<T: DeserializeOwned + ConfigInit<T>> {
 
 impl ConfigInit<ServerConfig> for ServerConfig {
     /// Loads the server configuration and validates the handshake admission
-    /// limits, so no caller can start the server with inconsistent limits.
+    /// limits and tunnel network, so no caller can start the server with
+    /// inconsistent limits or a tunnel network broader than clients accept.
     ///
     /// ### Errors
     /// - `ConfigError::InvalidValue` if the per-source handshake limit exceeds
     ///   the global one
+    /// - `ConfigError::InvalidValue` if the tunnel network is shorter than an
+    ///   IPv4 `/8` or an IPv6 `/64`
     fn init(figment: Figment, _env_prefix: &str) -> Result<ServerConfig> {
         let config: ServerConfig = figment.extract()?;
         config.validate_handshake_limits()?;
+        config.validate_tunnel_network()?;
 
         Ok(config)
     }
@@ -1148,6 +1152,30 @@ impl ServerConfig {
             return Err(ConfigError::InvalidValue {
                 field: "connection.max_pending_handshakes_per_source".to_string(),
                 reason: "must not exceed max_pending_handshakes".to_string(),
+            }
+            .into());
+        }
+
+        Ok(())
+    }
+
+    /// Validates that the tunnel network is not broader than the assignment
+    /// policy clients accept, so the server fails at startup instead of handing
+    /// out addresses that would install an overly broad on-link route.
+    ///
+    /// ### Errors
+    /// - `ConfigError::InvalidValue` if an IPv4 network is shorter than `/8`
+    ///   or an IPv6 network is shorter than `/64`
+    fn validate_tunnel_network(&self) -> Result<()> {
+        let (minimum, reason) = match &self.tunnel_network {
+            IpNet::V4(_) => (8, "IPv4 tunnel network must be at least a /8"),
+            IpNet::V6(_) => (64, "IPv6 tunnel network must be at least a /64"),
+        };
+
+        if self.tunnel_network.prefix_len() < minimum {
+            return Err(ConfigError::InvalidValue {
+                field: "tunnel_network".to_string(),
+                reason: reason.to_string(),
             }
             .into());
         }
@@ -1660,6 +1688,87 @@ mod tests {
             }
             _ => panic!("Expected TLS protocol config"),
         }
+    }
+
+    /// Renders a complete minimal server configuration with the given tunnel
+    /// network, for tests that exercise startup validation.
+    fn server_toml_with_tunnel_network(tunnel_network: &str) -> String {
+        format!(
+            r#"
+            name = "quincy-server"
+            tunnel_network = "{tunnel_network}"
+            users_file = "/path/to/users.toml"
+
+            [protocol]
+            mode = "noise"
+            key_exchange = "Standard"
+            private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+            [log]
+            level = "info"
+            "#
+        )
+    }
+
+    /// Initializes a server configuration through [`ServerConfig::init`], so
+    /// tests run the startup validation that `Figment::extract()` bypasses.
+    fn init_server_config_from_toml(toml: &str) -> Result<ServerConfig> {
+        ServerConfig::init(Figment::new().merge(Toml::string(toml)), "QUINCY_TEST_")
+    }
+
+    #[test]
+    fn init_server_config_accepts_ipv4_tunnel_network() {
+        let config =
+            init_server_config_from_toml(&server_toml_with_tunnel_network("10.0.0.1/24")).unwrap();
+
+        assert_eq!(
+            config.tunnel_network,
+            "10.0.0.1/24".parse::<IpNet>().unwrap()
+        );
+    }
+
+    #[test]
+    fn init_server_config_accepts_ipv6_tunnel_network() {
+        let config =
+            init_server_config_from_toml(&server_toml_with_tunnel_network("fd00::1/64")).unwrap();
+
+        assert_eq!(
+            config.tunnel_network,
+            "fd00::1/64".parse::<IpNet>().unwrap()
+        );
+    }
+
+    #[test]
+    fn init_server_config_accepts_ipv4_minimum_tunnel_network() {
+        let config =
+            init_server_config_from_toml(&server_toml_with_tunnel_network("10.0.0.1/8")).unwrap();
+
+        assert_eq!(
+            config.tunnel_network,
+            "10.0.0.1/8".parse::<IpNet>().unwrap()
+        );
+    }
+
+    #[test]
+    fn init_server_config_rejects_ipv4_tunnel_network_below_minimum() {
+        assert!(matches!(
+            init_server_config_from_toml(&server_toml_with_tunnel_network("10.0.0.1/7")),
+            Err(crate::QuincyError::Config(ConfigError::InvalidValue {
+                field,
+                ..
+            })) if field == "tunnel_network"
+        ));
+    }
+
+    #[test]
+    fn init_server_config_rejects_ipv6_tunnel_network_below_minimum() {
+        assert!(matches!(
+            init_server_config_from_toml(&server_toml_with_tunnel_network("fd00::1/63")),
+            Err(crate::QuincyError::Config(ConfigError::InvalidValue {
+                field,
+                ..
+            })) if field == "tunnel_network"
+        ));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 # Name of the server instance (currently not used as the name of the interface)
 name = "tun0"
-# The address of the tunnel endpoint and base address of the address pool available to clients
+# The address of the tunnel endpoint and base address of the address pool available to clients.
+# IPv4 networks must be /8 or longer; IPv6 networks must be /64 or longer.
 tunnel_network = "10.0.0.1/24"
 # Path to the TOML users file for authentication
 users_file = "examples/users.toml"
